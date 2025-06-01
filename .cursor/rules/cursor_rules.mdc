@@ -3,51 +3,297 @@ description: Guidelines for creating and maintaining Cursor rules to ensure cons
 globs: .cursor/rules/*.mdc
 alwaysApply: true
 ---
+# Cursor Rules Creation Guide
 
-- **Required Rule Structure:**
-  ```markdown
-  ---
-  description: Clear, one-line description of what the rule enforces
-  globs: path/to/files/*.ext, other/path/**/*
-  alwaysApply: boolean
-  ---
+This guide provides the comprehensive template and structure for creating consistent, effective Cursor rules.
 
-  - **Main Points in Bold**
-    - Sub-points with details
-    - Examples and explanations
-  ```
+## Rule Template Structure
 
-- **File References:**
-  - Use `[filename](mdc:path/to/file)` ([filename](mdc:filename)) to reference files
-  - Example: [prisma.mdc](mdc:.cursor/rules/prisma.mdc) for rule references
-  - Example: [schema.prisma](mdc:prisma/schema.prisma) for code references
+### Required Header Format
 
-- **Code Examples:**
-  - Use language-specific code blocks
-  ```typescript
-  // ✅ DO: Show good examples
-  const goodExample = true;
+```markdown
+---
+description: Clear, one-line description of what the rule enforces
+globs: path/to/files/*.ext, other/path/**/*
+alwaysApply: boolean
+---
+
+> You are an expert in <framework/technology>. You focus on producing clear, readable code using the latest stable versions and best practices.
+```
+
+### Complete Rule Template
+
+Use this template when creating new framework-specific rules:
+
+```markdown
+---
+description: <Framework> development patterns and best practices
+globs: **/*.ts, **/*.tsx, **/*.js, **/*.jsx
+alwaysApply: false
+---
+
+> You are an expert in <Framework>, TypeScript, and modern development. You focus on producing clear, readable code using the latest stable versions and best practices.
+
+## <Framework> Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Component A   │    │   Component B    │    │   Component C   │
+│   Description   │───▶│   Description    │───▶│   Description   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+project-root/
+├── src/
+│   ├── components/      # Component files
+│   ├── services/        # Service implementations
+│   ├── utils/          # Utility functions
+│   └── types/          # Type definitions
+├── tests/              # Test files
+└── config/            # Configuration files
+```
+
+## Core Implementation Patterns
+
+### Basic Setup Pattern
+
+```typescript
+// ✅ DO: Use proper framework initialization
+import { Framework } from "<framework>";
+
+interface Config {
+  property: string;
+  options?: boolean;
+}
+
+const config: Config = {
+  property: "value",
+  options: true
+};
+
+const instance = new Framework(config);
+
+// ❌ DON'T: Use minimal initialization
+const badInstance = new Framework("value");
+```
+
+### Error Handling
+
+```typescript
+// ✅ DO: Implement comprehensive error handling
+class FrameworkError extends Error {
+  constructor(message: string, public code: string) {
+    super(message);
+    this.name = "FrameworkError";
+  }
+}
+
+try {
+  const result = await operation();
+  return result;
+} catch (error) {
+  if (error instanceof ValidationError) {
+    throw new FrameworkError("Validation failed", "VALIDATION_ERROR");
+  }
+  throw error;
+}
+
+// ❌ DON'T: Use generic error handling
+try {
+  return await operation();
+} catch (error) {
+  throw error; // No error enrichment
+}
+```
+
+## Advanced Patterns
+
+### Performance Optimization
+
+```typescript
+// ✅ DO: Implement caching and optimization
+class OptimizedService {
+  private cache = new Map<string, any>();
   
-  // ❌ DON'T: Show anti-patterns
-  const badExample = false;
-  ```
+  async getData(key: string): Promise<any> {
+    if (this.cache.has(key)) {
+      return this.cache.get(key);
+    }
+    
+    const data = await fetchData(key);
+    this.cache.set(key, data);
+    return data;
+  }
+}
 
-- **Rule Content Guidelines:**
-  - Start with high-level overview
-  - Include specific, actionable requirements
-  - Show examples of correct implementation
-  - Reference existing code when possible
-  - Keep rules DRY by referencing other rules
+// ❌ DON'T: Ignore performance implications
+async function getData(key: string) {
+  return await fetchData(key); // No caching
+}
+```
 
-- **Rule Maintenance:**
-  - Update rules when new patterns emerge
-  - Add examples from actual codebase
-  - Remove outdated patterns
-  - Cross-reference related rules
+### Type Safety
 
-- **Best Practices:**
-  - Use bullet points for clarity
-  - Keep descriptions concise
-  - Include both DO and DON'T examples
-  - Reference actual code over theoretical examples
-  - Use consistent formatting across rules 
+```typescript
+// ✅ DO: Use comprehensive typing
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1),
+  email: z.string().email()
+});
+
+type User = z.infer<typeof UserSchema>;
+
+function validateUser(data: unknown): User {
+  return UserSchema.parse(data);
+}
+
+// ❌ DON'T: Use loose typing
+function processUser(data: any) {
+  return data; // No validation
+}
+```
+
+## Testing Patterns
+
+### Unit Testing
+
+```typescript
+// ✅ DO: Comprehensive testing
+describe("Component", () => {
+  let component: Component;
+  
+  beforeEach(() => {
+    component = new Component(testConfig);
+  });
+  
+  it("should handle valid input", async () => {
+    const result = await component.process(validInput);
+    expect(result).toEqual(expectedOutput);
+  });
+  
+  it("should throw on invalid input", async () => {
+    await expect(component.process(invalidInput))
+      .rejects.toThrow(ValidationError);
+  });
+});
+
+// ❌ DON'T: Minimal testing
+it("should work", () => {
+  expect(component).toBeDefined();
+});
+```
+
+## Security Patterns
+
+```typescript
+// ✅ DO: Implement security measures
+import { escape } from "html-escaper";
+
+function sanitizeInput(input: string): string {
+  return escape(input.replace(/<script|javascript:/gi, ""));
+}
+
+// ❌ DON'T: Skip security validation
+function processInput(input: string) {
+  return input; // No sanitization
+}
+```
+
+## Best Practices Summary
+
+### Code Organization
+- Use consistent project structure
+- Separate concerns into modules
+- Implement proper dependency injection
+
+### Error Handling
+- Create specific error types
+- Provide meaningful error messages
+- Handle edge cases gracefully
+
+### Performance
+- Implement caching strategies
+- Use lazy loading where appropriate
+- Monitor performance metrics
+
+### Security
+- Validate all inputs
+- Sanitize user data
+- Use secure authentication
+
+## References
+- [Framework Documentation](mdc:link)
+- [TypeScript Best Practices](mdc:link)
+- [Testing Guidelines](mdc:link)
+```
+
+## Rule Creation Guidelines
+
+### File References
+- Use `[filename](mdc:path/to/file)` to reference files
+- Example: [uv.mdc](mdc:.cursor/rules/uv.mdc) for rule references
+- Example: [pyproject.toml](mdc:pyproject.toml) for code references
+
+### Code Examples Format
+```typescript
+// ✅ DO: Show good examples with clear explanations
+const goodExample = true;
+
+// ❌ DON'T: Show anti-patterns with reasons why
+const badExample = false;
+```
+
+### Content Structure Requirements
+
+1. **Start with Architecture Flow** - Visual diagram showing component relationships
+2. **Project Structure** - Clear directory layout
+3. **Core Patterns** - Basic implementation examples
+4. **Advanced Patterns** - Complex scenarios and optimizations
+5. **Testing Patterns** - Unit and integration test examples
+6. **Security Patterns** - Security considerations and implementations
+7. **Best Practices Summary** - Key takeaways organized by category
+8. **References** - Links to official documentation
+
+### Framework-Specific Rules
+
+When creating rules for specific frameworks:
+
+- **Remove** framework placeholders (`<Framework>`, `<DATE>`) 
+- **Use** TypeScript over JavaScript when possible
+- **Focus** on framework-specific patterns (not general web development)
+- **Avoid** well-known patterns that LLMs already understand
+- **Include** latest version features and best practices
+- **Add** real-world examples from actual projects
+
+### Rule Quality Standards
+
+- **Clear Descriptions**: One-line descriptions that explain the rule's purpose
+- **Proper Globs**: Accurate file patterns for rule application
+- **Actionable Content**: Specific, implementable guidance
+- **Current Practices**: Latest stable version features
+- **Complete Examples**: Full code blocks with context
+- **Anti-patterns**: Clear "DON'T" examples with explanations
+
+### Maintenance Guidelines
+
+- **Update Regularly**: Keep rules current with framework updates
+- **Add Examples**: Use real codebase examples when possible
+- **Remove Outdated**: Delete deprecated patterns
+- **Cross-Reference**: Link related rules using MDC references
+- **Test Rules**: Verify rules work with actual projects
+
+### Template Usage Process
+
+1. **Copy** the complete template structure
+2. **Replace** all placeholders with framework-specific content
+3. **Customize** sections relevant to the framework
+4. **Add** framework-specific patterns and optimizations
+5. **Include** real examples from the framework's ecosystem
+6. **Test** the rule with actual framework projects
+7. **Document** any framework-specific configurations or setups 
