@@ -1,3 +1,24 @@
 {
-    "files.autoSave": "onFocusChange"
+    "files.autoSave": "onFocusChange",
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/node_modules/*/**": true,
+        "**/.hg/store/**": true
+    },
+    "typescript.preferences.quoteStyle": "double",
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit"
+    },
+    "editor.formatOnSave": true,
+    "workbench.startupEditor": "readme",
+    "task.allowAutomaticTasks": "on",
+    "task.showDecorations": true,
+    "workbench.colorCustomizations": {
+        "statusBar.background": "#005f87",
+        "statusBar.noFolderBackground": "#005f87",
+        "statusBar.debuggingBackground": "#005f87"
+    },
+    "workbench.tips.enabled": true,
+    "window.titleBarStyle": "custom"
 }

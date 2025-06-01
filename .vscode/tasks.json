@@ -2,30 +2,77 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Update Cursor Rules",
+            "label": "📦 Install Cursor Rules",
             "type": "shell",
             "command": "curl -s https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/cursor.sh | bash",
             "presentation": {
                 "reveal": "always",
                 "panel": "new",
-                "focus": true
+                "focus": true,
+                "showReuseMessage": false
             },
             "problemMatcher": [],
             "group": {
                 "kind": "build",
                 "isDefault": true
-            }
+            },
+            "detail": "Install AIFlowML Cursor Rules to this project"
         },
         {
-            "label": "Share New Rules",
+            "label": "🔄 Update Cursor Rules",
+            "type": "shell",
+            "command": "if [ -d '.cursor/rules' ]; then curl -s https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/cursor.sh | bash; else echo '❌ No .cursor/rules directory found. Use \"Install Cursor Rules\" first.'; fi",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true,
+                "showReuseMessage": false
+            },
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Update existing Cursor Rules (only if already installed)"
+        },
+        {
+            "label": "🧠 Smart Cursor Rules Check",
+            "type": "shell",
+            "command": "curl -s https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/check_cursor_rules.sh | bash",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true,
+                "showReuseMessage": false
+            },
+            "problemMatcher": [],
+            "group": "test",
+            "detail": "Smart check with optional installation prompt"
+        },
+        {
+            "label": "🚀 Share New Rules",
             "type": "shell",
             "command": "curl -s https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/cursor_push.sh | bash",
             "presentation": {
                 "reveal": "always",
                 "panel": "new",
-                "focus": true
+                "focus": true,
+                "showReuseMessage": false
             },
-            "problemMatcher": []
+            "problemMatcher": [],
+            "group": "build",
+            "detail": "Contribute new rules back to the shared repository"
+        },
+        {
+            "label": "✅ Check Cursor Rules Status",
+            "type": "shell",
+            "command": "if [ -d '.cursor/rules' ]; then echo '✅ Cursor Rules installed'; echo 'Rules found:'; ls -la .cursor/rules/ | grep -E '\\.(mdc|md)$' | wc -l | xargs echo 'Total files:'; echo 'Last updated:'; stat -c '%y' .cursor/rules 2>/dev/null || stat -f '%Sm' .cursor/rules 2>/dev/null || echo 'Unknown'; else echo '❌ Cursor Rules not installed. Run \"Install Cursor Rules\" task.'; fi",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true,
+                "showReuseMessage": false
+            },
+            "problemMatcher": [],
+            "group": "test",
+            "detail": "Check if Cursor Rules are installed and show status"
         }
     ]
-} 
+}
