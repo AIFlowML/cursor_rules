@@ -2,6 +2,15 @@
 
 This repository contains a collection of Cursor rules used by AIFlowML for various projects. These rules help ensure consistent coding standards and provide AI assistants with project-specific knowledge.
 
+## 🎥 See It In Action!
+
+<video width="100%" controls>
+  <source src="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4" type="video/mp4">
+  Your browser does not support the video tag. <a href="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4">Click here to download the video</a>.
+</video>
+
+*Watch how simple it is to install and use cursor rules in your VS Code projects!*
+
 ## One-Command Installation
 
 Set up cursor rules in your project with a single command:

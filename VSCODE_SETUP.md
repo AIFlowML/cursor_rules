@@ -1,5 +1,14 @@
 # VS Code Cursor Rules Integration
 
+## 🎥 Watch How Easy It Is!
+
+<video width="100%" controls>
+  <source src="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4" type="video/mp4">
+  Your browser does not support the video tag. <a href="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4">Click here to download the video</a>.
+</video>
+
+*See the complete installation process in action - it's just a few clicks in VS Code!*
+
 This guide shows you how to easily manage Cursor Rules in VS Code projects.
 
 ## 🚀 Quick Setup
