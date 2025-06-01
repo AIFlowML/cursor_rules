@@ -22,15 +22,20 @@ echo "📁 Created temporary directory: $TEMP_DIR"
 
 # Clone the repository
 echo "🔄 Cloning the repository..."
-git clone --quiet https://github.com/AIFlowML/cursor_rules.git "$TEMP_DIR"
+if ! git clone --quiet https://github.com/AIFlowML/cursor_rules.git "$TEMP_DIR"; then
+    echo "❌ Error: Failed to clone repository. Please check your internet connection."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
 cd "$TEMP_DIR"
 
 # Get the current directory (where the user ran the script)
 PROJECT_DIR=$(pwd)
-if [ -n "$INIT_CWD" ]; then  # For npm scripts
-    PROJECT_DIR="$INIT_CWD"
-elif [ -n "$1" ]; then  # If a path is provided as an argument
-    PROJECT_DIR="$1"
+# Override if running from npm scripts or if path provided as argument
+if [ -n "$INIT_CWD" ]; then  
+    PROJECT_DIR="$INIT_CWD"  # For npm scripts
+elif [ -n "$1" ]; then  
+    PROJECT_DIR="$1"  # If a path is provided as an argument
 fi
 
 echo "🎯 Installing to: $PROJECT_DIR"

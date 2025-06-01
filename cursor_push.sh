@@ -25,7 +25,17 @@ echo "📁 Created temporary directory: $TEMP_DIR"
 
 # Clone the repository
 echo "🔄 Cloning the repository..."
-git clone --quiet git@github.com:AIFlowML/cursor_rules.git "$TEMP_DIR"
+if ! git clone --quiet git@github.com:AIFlowML/cursor_rules.git "$TEMP_DIR" 2>/dev/null; then
+    echo "❌ Error: Failed to clone repository via SSH."
+    echo "💡 Make sure you have:"
+    echo "   1. SSH keys configured for GitHub"
+    echo "   2. Added your SSH key to your GitHub account"
+    echo "   3. Write access to the AIFlowML/cursor_rules repository"
+    echo ""
+    echo "To set up SSH keys, visit: https://docs.github.com/en/authentication/connecting-to-github-with-ssh"
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
 cd "$TEMP_DIR"
 
 # Create a new branch with timestamp
