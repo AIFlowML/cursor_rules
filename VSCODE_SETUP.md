@@ -2,10 +2,15 @@
 
 ## 🎥 Watch How Easy It Is!
 
+![Cursor Rules Demo](./assets/cursor.mp4)
+
+<!-- For GitHub Pages and local viewing -->
 <video width="100%" controls>
-  <source src="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4" type="video/mp4">
-  Your browser does not support the video tag. <a href="https://raw.githubusercontent.com/AIFlowML/cursor_rules/main/assets/cursor.mp4">Click here to download the video</a>.
+  <source src="./assets/cursor.mp4" type="video/mp4">
+  Your browser does not support the video tag. <a href="./assets/cursor.mp4">Download the demo video</a>.
 </video>
+
+[📹 **Click here to watch the demo video**](./assets/cursor.mp4)
 
 *See the complete installation process in action - it's just a few clicks in VS Code!*
 
