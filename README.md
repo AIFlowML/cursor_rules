@@ -4,8 +4,7 @@ This repository contains a collection of Cursor rules used by AIFlowML for vario
 
 ## 🎥 See It In Action!
 
-<!-- TO UPDATE: Drag and drop the video file from assets/cursor.mp4 into this area when editing on GitHub.com -->
-<!-- This will generate a GitHub attachment URL that works properly -->
+https://github.com/user-attachments/assets/bba88f6a-6672-4aa6-a78e-4d74ab0619ec
 
 **📹 [Click here to view the demo video](./assets/cursor.mp4)** *(Download and watch locally)*
 
