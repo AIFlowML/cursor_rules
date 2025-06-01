@@ -4,15 +4,12 @@ This repository contains a collection of Cursor rules used by AIFlowML for vario
 
 ## 🎥 See It In Action!
 
-![Cursor Rules Demo](./assets/cursor.mp4)
+<!-- TO UPDATE: Drag and drop the video file from assets/cursor.mp4 into this area when editing on GitHub.com -->
+<!-- This will generate a GitHub attachment URL that works properly -->
 
-<!-- For GitHub Pages and local viewing -->
-<video width="100%" controls>
-  <source src="./assets/cursor.mp4" type="video/mp4">
-  Your browser does not support the video tag. <a href="./assets/cursor.mp4">Download the demo video</a>.
-</video>
+**📹 [Click here to view the demo video](./assets/cursor.mp4)** *(Download and watch locally)*
 
-[📹 **Click here to watch the demo video**](./assets/cursor.mp4)
+> **Note**: To properly embed the video on GitHub, the video needs to be uploaded via GitHub's drag-and-drop feature in the web editor. The video file is available in the `assets/` folder for local viewing.
 
 *Watch how simple it is to install and use cursor rules in your VS Code projects!*
 
