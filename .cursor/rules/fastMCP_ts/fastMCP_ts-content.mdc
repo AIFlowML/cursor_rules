@@ -1,0 +1,980 @@
+---
+description: FastMCP TypeScript content handling
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript content handling, streaming patterns, and multimedia processing. You focus on creating responsive, interactive tools with rich content types and real-time feedback.
+
+## Content Handling Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Content Type  │    │   Content Helper │    │   Tool Return   │
+│   Definition    │───▶│   Functions      │───▶│   Format        │
+│                 │    │                  │    │                 │
+│ - Text Content  │    │ - imageContent() │    │ - String Return │
+│ - Image Content │    │ - audioContent() │    │ - Object Return │
+│ - Audio Content │    │ - Validation     │    │ - Mixed Content │
+│ - Resource Ref  │    │ - MIME Detection │    │ - Stream Output │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Streaming     │    │   Progress       │    │   Client        │
+│   Implementation│    │   Reporting      │    │   Reception     │
+│   streamContent │    │   reportProgress │    │   Rendering     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Content Type Definitions
+
+### Text Content Patterns
+
+```typescript
+import { FastMCP } from "fastmcp";
+import { z } from "zod";
+
+// ✅ DO: Structured text content with formatting
+server.addTool({
+  name: "format-text",
+  description: "Format text with various styling options",
+  parameters: z.object({
+    text: z.string().min(1),
+    format: z.enum(["markdown", "html", "plain", "code"]),
+    language: z.string().optional(),
+    includeMetadata: z.boolean().default(false)
+  }),
+  
+  execute: async (args, context) => {
+    const { text, format, language, includeMetadata } = args;
+    const { log } = context;
+    
+    log.info("Formatting text", { format, length: text.length });
+    
+    switch (format) {
+      case "markdown":
+        return {
+          content: [
+            { type: "text", text: "# Formatted Content\n\n" },
+            { type: "text", text: `\`\`\`${language || 'text'}\n${text}\n\`\`\`` },
+            ...(includeMetadata ? [{
+              type: "text" as const,
+              text: `\n\n**Metadata:**\n- Length: ${text.length} characters\n- Format: ${format}`
+            }] : [])
+          ]
+        };
+        
+      case "html":
+        return {
+          content: [
+            { type: "text", text: "## HTML Preview\n\n" },
+            { type: "text", text: "```html\n" + escapeHtml(text) + "\n```" }
+          ]
+        };
+        
+      case "code":
+        return {
+          content: [
+            { type: "text", text: `## Code (${language || 'text'})\n\n` },
+            { type: "text", text: `\`\`\`${language || 'text'}\n${text}\n\`\`\`` }
+          ]
+        };
+        
+      default:
+        return text;
+    }
+  }
+});
+
+// ✅ DO: Multi-line content with proper formatting
+server.addTool({
+  name: "generate-report",
+  description: "Generate formatted reports with multiple sections",
+  parameters: z.object({
+    title: z.string(),
+    sections: z.array(z.object({
+      heading: z.string(),
+      content: z.string(),
+      type: z.enum(["text", "list", "table", "code"])
+    })),
+    includeTimestamp: z.boolean().default(true)
+  }),
+  
+  execute: async (args) => {
+    const { title, sections, includeTimestamp } = args;
+    
+    const content = [
+      { type: "text" as const, text: `# ${title}\n\n` }
+    ];
+    
+    if (includeTimestamp) {
+      content.push({
+        type: "text" as const,
+        text: `*Generated: ${new Date().toISOString()}*\n\n`
+      });
+    }
+    
+    for (const section of sections) {
+      content.push({
+        type: "text" as const,
+        text: `## ${section.heading}\n\n`
+      });
+      
+      switch (section.type) {
+        case "list":
+          const items = section.content.split('\n').filter(Boolean);
+          content.push({
+            type: "text" as const,
+            text: items.map(item => `- ${item}`).join('\n') + '\n\n'
+          });
+          break;
+          
+        case "table":
+          content.push({
+            type: "text" as const,
+            text: formatAsTable(section.content) + '\n\n'
+          });
+          break;
+          
+        case "code":
+          content.push({
+            type: "text" as const,
+            text: `\`\`\`\n${section.content}\n\`\`\`\n\n`
+          });
+          break;
+          
+        default:
+          content.push({
+            type: "text" as const,
+            text: section.content + '\n\n'
+          });
+      }
+    }
+    
+    return { content };
+  }
+});
+```
+
+### Image Content Patterns
+
+```typescript
+import { imageContent } from "fastmcp";
+import { readFile } from "fs/promises";
+import { createCanvas } from "canvas";
+
+// ✅ DO: Image processing with multiple sources
+server.addTool({
+  name: "process-image",
+  description: "Process images from various sources with transformations",
+  parameters: z.object({
+    source: z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("url"),
+        url: z.string().url()
+      }),
+      z.object({
+        type: z.literal("path"),
+        path: z.string()
+      }),
+      z.object({
+        type: z.literal("base64"),
+        data: z.string()
+      })
+    ]),
+    transformations: z.array(z.enum(["resize", "grayscale", "blur", "rotate"])).default([]),
+    outputFormat: z.enum(["png", "jpeg", "webp"]).default("png")
+  }),
+  
+  annotations: {
+    readOnlyHint: true,
+    openWorldHint: true,  // May fetch from URLs
+    title: "Image Processor"
+  },
+  
+  execute: async (args, context) => {
+    const { source, transformations, outputFormat } = args;
+    const { log, reportProgress } = context;
+    
+    log.info("Processing image", { sourceType: source.type, transformations });
+    
+    try {
+      // Load image based on source type
+      let imageBuffer: Buffer;
+      
+      switch (source.type) {
+        case "url":
+          await reportProgress({ progress: 1, total: 4 });
+          const response = await fetch(source.url);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image: ${response.statusText}`);
+          }
+          imageBuffer = Buffer.from(await response.arrayBuffer());
+          break;
+          
+        case "path":
+          await reportProgress({ progress: 1, total: 4 });
+          imageBuffer = await readFile(source.path);
+          break;
+          
+        case "base64":
+          await reportProgress({ progress: 1, total: 4 });
+          imageBuffer = Buffer.from(source.data, 'base64');
+          break;
+      }
+      
+      // Apply transformations
+      await reportProgress({ progress: 2, total: 4 });
+      const processedBuffer = await applyImageTransformations(
+        imageBuffer, 
+        transformations, 
+        outputFormat
+      );
+      
+      await reportProgress({ progress: 3, total: 4 });
+      
+      // Return processed image
+      const imageContentResult = await imageContent({ buffer: processedBuffer });
+      
+      await reportProgress({ progress: 4, total: 4 });
+      
+      return {
+        content: [
+          { 
+            type: "text", 
+            text: `✅ Image processed successfully\n\n` +
+                  `**Transformations:** ${transformations.join(', ') || 'none'}\n` +
+                  `**Output Format:** ${outputFormat}\n` +
+                  `**Size:** ${Math.round(processedBuffer.length / 1024)}KB\n\n`
+          },
+          imageContentResult
+        ]
+      };
+      
+    } catch (error) {
+      log.error("Image processing failed", { error: error.message });
+      throw new UserError(`Image processing failed: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Generate dynamic images
+server.addTool({
+  name: "generate-chart",
+  description: "Generate charts and graphs as images",
+  parameters: z.object({
+    chartType: z.enum(["bar", "line", "pie", "scatter"]),
+    data: z.array(z.object({
+      label: z.string(),
+      value: z.number()
+    })),
+    width: z.number().min(100).max(2000).default(800),
+    height: z.number().min(100).max(2000).default(600),
+    title: z.string().optional(),
+    theme: z.enum(["light", "dark"]).default("light")
+  }),
+  
+  annotations: {
+    readOnlyHint: true,
+    openWorldHint: false,
+    title: "Chart Generator"
+  },
+  
+  execute: async (args, context) => {
+    const { chartType, data, width, height, title, theme } = args;
+    const { log } = context;
+    
+    log.info("Generating chart", { chartType, dataPoints: data.length });
+    
+    try {
+      // Generate chart using canvas
+      const canvas = createCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+      
+      // Set theme colors
+      const colors = theme === 'dark' 
+        ? { background: '#1a1a1a', text: '#ffffff', accent: '#4a9eff' }
+        : { background: '#ffffff', text: '#000000', accent: '#2563eb' };
+      
+      // Draw background
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, width, height);
+      
+      // Draw title if provided
+      if (title) {
+        ctx.fillStyle = colors.text;
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(title, width / 2, 40);
+      }
+      
+      // Draw chart based on type
+      switch (chartType) {
+        case "bar":
+          await drawBarChart(ctx, data, { width, height, colors, title });
+          break;
+        case "line":
+          await drawLineChart(ctx, data, { width, height, colors, title });
+          break;
+        case "pie":
+          await drawPieChart(ctx, data, { width, height, colors, title });
+          break;
+        case "scatter":
+          await drawScatterChart(ctx, data, { width, height, colors, title });
+          break;
+      }
+      
+      // Convert to buffer
+      const buffer = canvas.toBuffer('image/png');
+      
+      // Return chart image
+      return {
+        content: [
+          { 
+            type: "text", 
+            text: `📊 Generated ${chartType} chart\n\n` +
+                  `**Data points:** ${data.length}\n` +
+                  `**Dimensions:** ${width}x${height}\n` +
+                  `**Theme:** ${theme}\n\n`
+          },
+          await imageContent({ buffer })
+        ]
+      };
+      
+    } catch (error) {
+      log.error("Chart generation failed", { error: error.message });
+      throw new UserError(`Chart generation failed: ${error.message}`);
+    }
+  }
+});
+```
+
+### Audio Content Patterns
+
+```typescript
+import { audioContent } from "fastmcp";
+
+// ✅ DO: Audio processing and conversion
+server.addTool({
+  name: "process-audio",
+  description: "Process audio files with various transformations",
+  parameters: z.object({
+    source: z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("url"),
+        url: z.string().url()
+      }),
+      z.object({
+        type: z.literal("path"),
+        path: z.string()
+      })
+    ]),
+    operations: z.array(z.enum(["normalize", "trim", "convert", "compress"])).default([]),
+    outputFormat: z.enum(["mp3", "wav", "ogg", "m4a"]).default("mp3"),
+    quality: z.enum(["low", "medium", "high"]).default("medium")
+  }),
+  
+  timeoutMs: 60000,  // Audio processing can take time
+  
+  execute: async (args, context) => {
+    const { source, operations, outputFormat, quality } = args;
+    const { log, reportProgress } = context;
+    
+    log.info("Processing audio", { sourceType: source.type, operations });
+    
+    try {
+      // Load audio
+      await reportProgress({ progress: 1, total: 5 });
+      
+      let audioBuffer: Buffer;
+      if (source.type === "url") {
+        const response = await fetch(source.url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio: ${response.statusText}`);
+        }
+        audioBuffer = Buffer.from(await response.arrayBuffer());
+      } else {
+        audioBuffer = await readFile(source.path);
+      }
+      
+      await reportProgress({ progress: 2, total: 5 });
+      
+      // Apply operations
+      let processedBuffer = audioBuffer;
+      for (const operation of operations) {
+        await reportProgress({ progress: 3, total: 5 });
+        processedBuffer = await applyAudioOperation(processedBuffer, operation);
+      }
+      
+      // Convert format if needed
+      await reportProgress({ progress: 4, total: 5 });
+      if (outputFormat !== "mp3") {  // Assume input is MP3
+        processedBuffer = await convertAudioFormat(processedBuffer, outputFormat, quality);
+      }
+      
+      await reportProgress({ progress: 5, total: 5 });
+      
+      // Return processed audio
+      const audioContentResult = await audioContent({ buffer: processedBuffer });
+      
+      return {
+        content: [
+          { 
+            type: "text", 
+            text: `🎵 Audio processed successfully\n\n` +
+                  `**Operations:** ${operations.join(', ') || 'none'}\n` +
+                  `**Output Format:** ${outputFormat}\n` +
+                  `**Quality:** ${quality}\n` +
+                  `**Size:** ${Math.round(processedBuffer.length / 1024)}KB\n\n`
+          },
+          audioContentResult
+        ]
+      };
+      
+    } catch (error) {
+      log.error("Audio processing failed", { error: error.message });
+      throw new UserError(`Audio processing failed: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Generate synthetic audio
+server.addTool({
+  name: "text-to-speech",
+  description: "Convert text to speech audio",
+  parameters: z.object({
+    text: z.string().min(1).max(1000),
+    voice: z.enum(["male", "female", "neutral"]).default("neutral"),
+    speed: z.number().min(0.5).max(2.0).default(1.0),
+    language: z.string().default("en-US"),
+    outputFormat: z.enum(["mp3", "wav"]).default("mp3")
+  }),
+  
+  annotations: {
+    readOnlyHint: true,
+    openWorldHint: true,  // May use external TTS service
+    title: "Text-to-Speech Converter"
+  },
+  
+  timeoutMs: 30000,
+  
+  execute: async (args, context) => {
+    const { text, voice, speed, language, outputFormat } = args;
+    const { log } = context;
+    
+    log.info("Converting text to speech", { 
+      textLength: text.length, 
+      voice, 
+      language 
+    });
+    
+    try {
+      // Generate speech using TTS service
+      const audioBuffer = await generateSpeech({
+        text,
+        voice,
+        speed,
+        language,
+        format: outputFormat
+      });
+      
+      return {
+        content: [
+          { 
+            type: "text", 
+            text: `🗣️ Text converted to speech\n\n` +
+                  `**Text:** "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"\n` +
+                  `**Voice:** ${voice}\n` +
+                  `**Speed:** ${speed}x\n` +
+                  `**Language:** ${language}\n\n`
+          },
+          await audioContent({ buffer: audioBuffer })
+        ]
+      };
+      
+    } catch (error) {
+      log.error("TTS conversion failed", { error: error.message });
+      throw new UserError(`Text-to-speech conversion failed: ${error.message}`);
+    }
+  }
+});
+```
+
+### Streaming Implementation Patterns
+
+```typescript
+// ✅ DO: Real-time streaming with adaptive chunks
+server.addTool({
+  name: "live-data-stream",
+  description: "Stream live data with real-time updates",
+  parameters: z.object({
+    source: z.enum(["logs", "metrics", "events", "feed"]),
+    duration: z.number().min(5).max(300).default(30),
+    updateInterval: z.number().min(100).max(5000).default(1000),
+    format: z.enum(["json", "text", "table"]).default("text")
+  }),
+  
+  annotations: {
+    streamingHint: true,
+    readOnlyHint: true,
+    openWorldHint: true,
+    title: "Live Data Streamer"
+  },
+  
+  timeoutMs: 320000,  // Slightly longer than max duration
+  
+  execute: async (args, context) => {
+    const { source, duration, updateInterval, format } = args;
+    const { streamContent, reportProgress, log } = context;
+    
+    log.info("Starting live data stream", { source, duration, updateInterval });
+    
+    // Stream initial status
+    await streamContent({
+      type: "text",
+      text: `🔴 **LIVE:** Streaming ${source} data for ${duration} seconds\n\n`
+    });
+    
+    const startTime = Date.now();
+    const endTime = startTime + (duration * 1000);
+    let updateCount = 0;
+    
+    try {
+      while (Date.now() < endTime) {
+        // Fetch current data
+        const data = await fetchLiveData(source);
+        updateCount++;
+        
+        // Format data based on format preference
+        let formattedData: string;
+        switch (format) {
+          case "json":
+            formattedData = `\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
+            break;
+          case "table":
+            formattedData = formatDataAsTable(data);
+            break;
+          default:
+            formattedData = formatDataAsText(data);
+        }
+        
+        // Stream update
+        await streamContent({
+          type: "text",
+          text: `**Update #${updateCount}** (${new Date().toLocaleTimeString()})\n` +
+                `${formattedData}\n\n`
+        });
+        
+        // Report progress
+        const elapsed = Date.now() - startTime;
+        await reportProgress({
+          progress: elapsed,
+          total: duration * 1000
+        });
+        
+        // Wait for next update
+        await new Promise(resolve => setTimeout(resolve, updateInterval));
+      }
+      
+      // Stream completion message
+      await streamContent({
+        type: "text",
+        text: `✅ **Stream Complete** - Streamed ${updateCount} updates over ${duration} seconds`
+      });
+      
+      log.info("Live stream completed", { updateCount, duration });
+      
+      // Return void since all content was streamed
+      return;
+      
+    } catch (error) {
+      await streamContent({
+        type: "text",
+        text: `❌ **Stream Error:** ${error.message}`
+      });
+      
+      log.error("Live stream failed", { error: error.message, updateCount });
+      throw new UserError(`Live stream failed: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Batch processing with streaming progress
+server.addTool({
+  name: "batch-file-processor",
+  description: "Process multiple files with streaming progress updates",
+  parameters: z.object({
+    filePaths: z.array(z.string()).min(1).max(100),
+    operation: z.enum(["analyze", "convert", "validate", "compress"]),
+    outputDir: z.string().optional(),
+    continueOnError: z.boolean().default(true)
+  }),
+  
+  annotations: {
+    streamingHint: true,
+    readOnlyHint: false,
+    title: "Batch File Processor"
+  },
+  
+  timeoutMs: 600000,  // 10 minutes for large batches
+  
+  execute: async (args, context) => {
+    const { filePaths, operation, outputDir, continueOnError } = args;
+    const { streamContent, reportProgress, log } = context;
+    
+    log.info("Starting batch processing", { 
+      fileCount: filePaths.length, 
+      operation 
+    });
+    
+    // Stream initial status
+    await streamContent({
+      type: "text",
+      text: `🚀 **Batch Processing Started**\n\n` +
+            `**Operation:** ${operation}\n` +
+            `**Files:** ${filePaths.length}\n` +
+            `**Continue on Error:** ${continueOnError}\n\n`
+    });
+    
+    const results = {
+      processed: 0,
+      successful: 0,
+      failed: 0,
+      errors: [] as { file: string; error: string }[]
+    };
+    
+    // Process each file
+    for (let i = 0; i < filePaths.length; i++) {
+      const filePath = filePaths[i];
+      const fileName = filePath.split('/').pop() || filePath;
+      
+      try {
+        // Stream current file being processed
+        await streamContent({
+          type: "text",
+          text: `📄 **Processing:** ${fileName} (${i + 1}/${filePaths.length})\n`
+        });
+        
+        // Process file
+        const result = await processFile(filePath, operation, outputDir);
+        
+        // Stream success
+        await streamContent({
+          type: "text",
+          text: `✅ **Success:** ${fileName} - ${result.summary}\n`
+        });
+        
+        results.successful++;
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        results.errors.push({ file: fileName, error: errorMessage });
+        
+        // Stream error
+        await streamContent({
+          type: "text",
+          text: `❌ **Failed:** ${fileName} - ${errorMessage}\n`
+        });
+        
+        results.failed++;
+        
+        if (!continueOnError) {
+          log.error("Batch processing stopped on error", { 
+            file: filePath, 
+            error: errorMessage 
+          });
+          break;
+        }
+      }
+      
+      results.processed++;
+      
+      // Update progress
+      await reportProgress({
+        progress: i + 1,
+        total: filePaths.length
+      });
+    }
+    
+    // Stream final summary
+    await streamContent({
+      type: "text",
+      text: `\n## 📊 **Processing Summary**\n\n` +
+            `- **Total Files:** ${filePaths.length}\n` +
+            `- **Processed:** ${results.processed}\n` +
+            `- **Successful:** ${results.successful}\n` +
+            `- **Failed:** ${results.failed}\n\n`
+    });
+    
+    if (results.errors.length > 0) {
+      await streamContent({
+        type: "text",
+        text: `### ❌ **Errors:**\n\n` +
+              results.errors.map(e => `- **${e.file}:** ${e.error}`).join('\n') + '\n'
+      });
+    }
+    
+    log.info("Batch processing completed", results);
+    
+    // Return final status
+    return `Batch processing completed: ${results.successful}/${filePaths.length} files processed successfully`;
+  }
+});
+```
+
+### Progress Reporting Patterns
+
+```typescript
+// ✅ DO: Detailed progress reporting with context
+server.addTool({
+  name: "complex-calculation",
+  description: "Perform complex calculations with detailed progress",
+  parameters: z.object({
+    algorithm: z.enum(["fibonacci", "prime", "factorial", "matrix"]),
+    size: z.number().min(1).max(10000),
+    showSteps: z.boolean().default(false)
+  }),
+  
+  execute: async (args, context) => {
+    const { algorithm, size, showSteps } = args;
+    const { reportProgress, streamContent, log } = context;
+    
+    log.info("Starting complex calculation", { algorithm, size });
+    
+    if (showSteps) {
+      await streamContent({
+        type: "text",
+        text: `🔢 **Starting ${algorithm} calculation for size ${size}**\n\n`
+      });
+    }
+    
+    let result: any;
+    
+    switch (algorithm) {
+      case "fibonacci":
+        result = await calculateFibonacci(size, async (current, total) => {
+          await reportProgress({ 
+            progress: current, 
+            total: total 
+          });
+          
+          if (showSteps && current % Math.max(1, Math.floor(total / 20)) === 0) {
+            await streamContent({
+              type: "text",
+              text: `📊 Progress: ${Math.round((current / total) * 100)}% - Computing F(${current})\n`
+            });
+          }
+        });
+        break;
+        
+      case "prime":
+        result = await findPrimes(size, async (current, total, found) => {
+          await reportProgress({ 
+            progress: current, 
+            total: total 
+          });
+          
+          if (showSteps && found.length % 100 === 0) {
+            await streamContent({
+              type: "text",
+              text: `🔍 Found ${found.length} primes up to ${current}\n`
+            });
+          }
+        });
+        break;
+        
+      case "matrix":
+        result = await matrixCalculation(size, async (step, totalSteps, operation) => {
+          await reportProgress({ 
+            progress: step, 
+            total: totalSteps 
+          });
+          
+          if (showSteps) {
+            await streamContent({
+              type: "text",
+              text: `🧮 Step ${step}/${totalSteps}: ${operation}\n`
+            });
+          }
+        });
+        break;
+    }
+    
+    return {
+      content: [
+        { 
+          type: "text", 
+          text: `✅ **Calculation Complete**\n\n` +
+                `**Algorithm:** ${algorithm}\n` +
+                `**Size:** ${size}\n` +
+                `**Result:** ${JSON.stringify(result, null, 2)}\n`
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Multi-stage progress with substeps
+server.addTool({
+  name: "multi-stage-process",
+  description: "Process with multiple stages and substeps",
+  parameters: z.object({
+    stages: z.array(z.string()).min(1),
+    itemsPerStage: z.number().min(1).max(1000).default(100)
+  }),
+  
+  annotations: {
+    streamingHint: true,
+    title: "Multi-Stage Processor"
+  },
+  
+  execute: async (args, context) => {
+    const { stages, itemsPerStage } = args;
+    const { reportProgress, streamContent, log } = context;
+    
+    const totalItems = stages.length * itemsPerStage;
+    let processedItems = 0;
+    
+    await streamContent({
+      type: "text",
+      text: `🏗️ **Multi-Stage Process Started**\n\n` +
+            `**Stages:** ${stages.length}\n` +
+            `**Items per stage:** ${itemsPerStage}\n` +
+            `**Total items:** ${totalItems}\n\n`
+    });
+    
+    for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
+      const stageName = stages[stageIndex];
+      
+      await streamContent({
+        type: "text",
+        text: `## 📋 **Stage ${stageIndex + 1}: ${stageName}**\n\n`
+      });
+      
+      // Process items in current stage
+      for (let itemIndex = 0; itemIndex < itemsPerStage; itemIndex++) {
+        // Simulate processing
+        await processStageItem(stageName, itemIndex);
+        
+        processedItems++;
+        
+        // Report overall progress
+        await reportProgress({
+          progress: processedItems,
+          total: totalItems
+        });
+        
+        // Stream substep progress periodically
+        if ((itemIndex + 1) % Math.max(1, Math.floor(itemsPerStage / 10)) === 0) {
+          const stageProgress = Math.round(((itemIndex + 1) / itemsPerStage) * 100);
+          await streamContent({
+            type: "text",
+            text: `  ⚡ Stage progress: ${stageProgress}% (${itemIndex + 1}/${itemsPerStage})\n`
+          });
+        }
+      }
+      
+      await streamContent({
+        type: "text",
+        text: `  ✅ **Stage ${stageIndex + 1} Complete**\n\n`
+      });
+    }
+    
+    await streamContent({
+      type: "text",
+      text: `🎉 **All stages completed successfully!**\n` +
+            `**Total processed:** ${processedItems} items`
+    });
+    
+    return;
+  }
+});
+```
+
+## Common Anti-Patterns
+
+```typescript
+// ❌ DON'T: Return raw binary data as string
+server.addTool({
+  name: "bad-image-tool",
+  execute: async (args) => {
+    const buffer = await readFile("image.png");
+    return buffer.toString();  // Will be corrupted
+  }
+});
+
+// ❌ DON'T: Stream without proper formatting
+server.addTool({
+  name: "bad-streaming",
+  annotations: { streamingHint: true },
+  execute: async (args, { streamContent }) => {
+    for (let i = 0; i < 100; i++) {
+      await streamContent({ type: "text", text: i.toString() });  // No formatting
+    }
+  }
+});
+
+// ❌ DON'T: Ignore MIME types for content
+server.addTool({
+  name: "bad-content",
+  execute: async () => {
+    return {
+      content: [{
+        type: "image",
+        data: "invalid-base64",
+        mimeType: "wrong-type"  // Should be image/*
+      }]
+    };
+  }
+});
+
+// ❌ DON'T: Mix streaming and return incorrectly
+server.addTool({
+  name: "confused-streaming",
+  annotations: { streamingHint: true },
+  execute: async (args, { streamContent }) => {
+    await streamContent({ type: "text", text: "Starting..." });
+    return "This will appear after streaming";  // Confusing UX
+  }
+});
+```
+
+## Performance Optimization
+
+- Use appropriate streaming chunk sizes (not too small, not too large)
+- Implement progress reporting for operations > 2 seconds
+- Cache processed content when possible
+- Use lazy loading for large content
+- Optimize image/audio processing with proper quality settings
+- Stream content incrementally rather than buffering everything
+
+## Testing Patterns
+
+```typescript
+// ✅ DO: Test content generation and streaming
+describe("Content Tools", () => {
+  it("should generate valid image content", async () => {
+    const result = await executeImageTool({
+      source: { type: "path", path: "test.png" }
+    });
+    
+    expect(result.content).toHaveLength(2);
+    expect(result.content[1].type).toBe("image");
+    expect(result.content[1].data).toMatch(/^[A-Za-z0-9+/]+=*$/);
+  });
+  
+  it("should stream content progressively", async () => {
+    const streamedContent = [];
+    const mockStreamContent = jest.fn((content) => {
+      streamedContent.push(content);
+      return Promise.resolve();
+    });
+    
+    await executeStreamingTool(
+      { duration: 5 },
+      { streamContent: mockStreamContent }
+    );
+    
+    expect(mockStreamContent).toHaveBeenCalledTimes(6); // Initial + 5 updates
+  });
+});

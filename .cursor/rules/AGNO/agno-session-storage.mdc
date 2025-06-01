@@ -1,0 +1,106 @@
+---
+description: Rule to handle the session storage in the agents in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Session Storage
+
+## Core Principles
+- Use Session Storage to persist agent sessions and state across execution cycles
+- Enable multi-turn conversations and stateful operations in production environments
+- Implement database storage for chat history inspection and evaluation
+- Choose the appropriate storage backend based on application requirements
+
+## Implementation Patterns
+
+### Basic Storage Configuration
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    # Specify storage backend
+    storage=SqliteStorage(
+        table_name="agent_sessions",
+        db_file="path/to/data.db"
+    ),
+    # Enable chat history in messages
+    add_history_to_messages=True,
+    num_history_runs=3,
+)
+```
+
+### Fixed Session Continuation
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.postgres import PostgresStorage
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    # Fixed session ID for continuation
+    session_id="user_123_session_456",
+    storage=PostgresStorage(
+        table_name="agent_sessions",
+        db_url="postgresql://user:pass@localhost:5432/dbname"
+    ),
+    add_history_to_messages=True,
+)
+```
+
+### Dynamic Session Management
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+storage = SqliteStorage(table_name="agent_sessions", db_file="data.db")
+
+def get_or_create_session(user_id):
+    # Check if user has an existing session
+    existing_sessions = storage.get_sessions_for_user(user_id)
+    if existing_sessions:
+        return existing_sessions[0]["session_id"]
+    # Create new session ID if none exists
+    return f"session_{user_id}_{int(time.time())}"
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    session_id=get_or_create_session("user_123"),
+    storage=storage,
+)
+```
+
+## Available Storage Backends
+
+| Backend | Class | Use Case |
+|---------|-------|----------|
+| SQLite | `SqliteStorage` | Local development, simple applications |
+| PostgreSQL | `PostgresStorage` | Production systems, higher volume |
+| MongoDB | `MongoStorage` | NoSQL preference, document storage |
+| File | `FileStorage` | Simple debugging, lightweight applications |
+
+## Schema Upgrade Management
+- Use `auto_upgrade_schema=True` for automatic schema upgrades
+- Alternatively, call `storage.upgrade_schema()` for manual updates
+- Implement migration strategies for production environments
+
+## Best Practices
+- Specify fixed session IDs for consistent multi-turn conversations
+- Implement proper session cleanup for inactive or completed conversations
+- Add appropriate indexing for production databases
+- Use pooled connections for high-volume applications
+- Implement proper error handling for storage operations
+- Consider data privacy and retention policies
+- Implement proper backup strategies for production databases
+
+## Common Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `storage` | `AgentStorage` | Storage driver instance |
+| `session_id` | `str` | Unique identifier for the session |
+| `add_history_to_messages` | `bool` | Include session history in messages |
+| `num_history_runs` | `int` | Number of previous runs to include in history |

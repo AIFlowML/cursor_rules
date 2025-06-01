@@ -1,0 +1,343 @@
+---
+description: AGNO provides native support for multimodal interactions, allowing agents to process and generate not just text, but also images, audio, and video. This rule outlines how to implement multimodal capabilities in AGNO agents.
+globs: 
+alwaysApply: false
+---
+# AGNO Multimodal Capabilities
+
+AGNO provides native support for multimodal interactions, allowing agents to process and generate not just text, but also images, audio, and video. This rule outlines how to implement multimodal capabilities in AGNO agents.
+
+## Multimodal Input Support
+
+AGNO agents can accept various types of inputs:
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.tools.reasoning import ReasoningTools
+
+# Create a multimodal agent using Claude
+multimodal_agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),  # Supports image understanding
+    tools=[ReasoningTools(add_instructions=True)],
+    instructions=[
+        "Analyze both text and images provided by the user",
+        "Describe image content in detail when present",
+        "Reference visual elements in your responses when relevant",
+    ],
+    markdown=True,
+)
+
+# Process an image input
+from pathlib import Path
+image_path = Path("data/sample_image.jpg")
+with open(image_path, "rb") as f:
+    image_data = f.read()
+
+# Process text and image together
+response = multimodal_agent.run(
+    "What can you tell me about this image?", 
+    images=[image_data]  # Pass images as a list
+)
+```
+
+## Image Processing
+
+### Working with Image Data
+
+AGNO supports multiple ways to provide image data:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+vision_agent = Agent(
+    model=OpenAIChat(id="gpt-4-vision-preview"),  # Vision-capable model
+    instructions=["Analyze images and provide detailed descriptions"],
+)
+
+# Method 1: From file path
+response = vision_agent.run(
+    "What's in this image?",
+    images=["data/image1.jpg"]  # File path as string
+)
+
+# Method 2: From binary data
+with open("data/image2.png", "rb") as f:
+    image_bytes = f.read()
+response = vision_agent.run(
+    "Describe this image in detail",
+    images=[image_bytes]  # Binary data
+)
+
+# Method 3: From URL
+response = vision_agent.run(
+    "What does this diagram show?",
+    images=["https://example.com/diagram.jpg"]  # Image URL
+)
+
+# Method 4: Multiple images
+response = vision_agent.run(
+    "Compare these two images",
+    images=["data/image1.jpg", "data/image2.jpg"]  # Multiple images
+)
+```
+
+### Image Analysis with Tools
+
+Combine image understanding with other tools:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+# Create an agent that can analyze images and search for information
+image_analysis_agent = Agent(
+    model=OpenAIChat(id="gpt-4-vision-preview"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        DuckDuckGoTools(),
+    ],
+    instructions=[
+        "First analyze any images provided by the user",
+        "If needed, search for additional information about items in the image",
+        "Provide a comprehensive analysis combining visual and found information",
+    ],
+    markdown=True,
+)
+
+# Process an image and potentially search for related information
+response = image_analysis_agent.run(
+    "What is this building and when was it constructed?",
+    images=["data/architecture.jpg"]
+)
+```
+
+## Multimodal Output Generation
+
+AGNO can also generate multimodal outputs using appropriate models:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.dall_e import DallETools
+
+# Create an agent that can generate images
+image_generation_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DallETools()],
+    instructions=[
+        "Use DALL-E to generate images when relevant to the user's request",
+        "Create detailed prompts for image generation",
+    ],
+    markdown=True,
+)
+
+# Generate an image based on user request
+response = image_generation_agent.run(
+    "Create an image of a futuristic city with flying cars and vertical gardens"
+)
+```
+
+## Audio Processing
+
+AGNO supports audio processing capabilities:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.audio import AudioTranscriptionTools, TextToSpeechTools
+
+# Create an agent that can process audio and generate speech
+audio_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        AudioTranscriptionTools(),  # For transcribing audio to text
+        TextToSpeechTools(),        # For converting text to speech
+    ],
+    instructions=[
+        "Transcribe audio inputs and respond appropriately",
+        "Generate audio responses when requested",
+    ],
+)
+
+# Process audio input
+with open("data/recording.mp3", "rb") as f:
+    audio_data = f.read()
+
+response = audio_agent.run(
+    "Transcribe this audio and summarize its content",
+    audio=[audio_data]
+)
+
+# Generate audio output
+text_response = audio_agent.run("Convert this response to speech")
+audio_response = audio_agent.tools["text_to_speech"].convert(
+    text=text_response.content,
+    voice="alloy"  # Specify voice style
+)
+```
+
+## Combined Multimodal Agent
+
+Create a fully multimodal agent that can handle various input and output types:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.dall_e import DallETools
+from agno.tools.audio import AudioTranscriptionTools, TextToSpeechTools
+
+# Create a comprehensive multimodal agent
+multimodal_agent = Agent(
+    model=OpenAIChat(id="gpt-4-vision-preview"),  # Support image input
+    tools=[
+        ReasoningTools(add_instructions=True),
+        DallETools(),                 # Image generation
+        AudioTranscriptionTools(),    # Audio transcription
+        TextToSpeechTools(),          # Text-to-speech
+    ],
+    instructions=[
+        "Process text, image, and audio inputs",
+        "Generate text, image, and audio outputs as appropriate",
+        "Use reasoning to determine the best output modality for each response",
+    ],
+    markdown=True,
+)
+
+# Process mixed-modal input
+response = multimodal_agent.run(
+    "What's happening in this image? Can you also generate a similar image but at night?",
+    images=["data/city_day.jpg"]
+)
+```
+
+## Structured Multimodal Responses
+
+Combine structured outputs with multimodal content:
+
+```python
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.dall_e import DallETools
+
+# Define a structured response model with image URLs
+class ImageAnalysisResult(BaseModel):
+    description: str = Field(..., description="Detailed description of the analyzed image")
+    identified_objects: List[str] = Field(..., description="List of objects identified in the image")
+    main_colors: List[str] = Field(..., description="Main colors present in the image")
+    style_assessment: str = Field(..., description="Assessment of the image style or aesthetic")
+    similar_images: Optional[List[str]] = Field(None, description="URLs of generated similar images")
+
+# Create a structured multimodal agent
+structured_vision_agent = Agent(
+    model=OpenAIChat(id="gpt-4-vision-preview"),
+    tools=[DallETools()],
+    response_model=ImageAnalysisResult,
+    instructions=[
+        "Analyze the provided image comprehensively",
+        "Identify objects, colors, and style",
+        "Generate similar images if requested",
+    ],
+)
+
+# Process image with structured response
+response = structured_vision_agent.run(
+    "Analyze this image and generate a similar one with different lighting",
+    images=["data/sample_image.jpg"]
+)
+
+# Access structured data with image URLs
+result = response.content
+print(f"Description: {result.description}")
+print(f"Objects: {', '.join(result.identified_objects)}")
+print(f"Colors: {', '.join(result.main_colors)}")
+print(f"Style: {result.style_assessment}")
+if result.similar_images:
+    print(f"Similar images: {result.similar_images}")
+```
+
+## Best Practices for Multimodal Agents
+
+1. **Model Selection**:
+   - Use vision-capable models for image inputs (GPT-4 Vision, Claude 3)
+   - Match model capabilities to your multimodal needs
+
+2. **Input Preparation**:
+   - Optimize images before sending (resize large images)
+   - Send images in appropriate formats (JPEG, PNG)
+   - Consider image quality vs. token usage tradeoffs
+
+3. **Instructions for Multimodal Models**:
+   - Give clear instructions for how to handle different modalities
+   - Specify output format expectations for different media types
+   - Provide examples of desired multimodal interactions
+
+4. **Performance Considerations**:
+   - Multimodal processing uses more tokens and compute
+   - Cache results when possible
+   - Consider async processing for large media files
+
+5. **User Experience**:
+   - Provide fallback text descriptions for image outputs
+   - Consider accessibility needs for multimodal interactions
+   - Be explicit about which modalities are being processed
+
+## Example: Advanced Image Analysis Agent
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.dall_e import DallETools
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+# Create advanced image analysis agent
+image_expert = Agent(
+    model=OpenAIChat(id="gpt-4-vision-preview"),
+    tools=[
+        ReasoningTools(add_instructions=True, chain_of_thought=True),
+        DallETools(),
+        DuckDuckGoTools(),
+    ],
+    instructions=[
+        "Provide expert analysis of images with the following steps:",
+        "1. Describe the image contents in detail",
+        "2. Identify any notable objects, people, or elements",
+        "3. Analyze composition, style, and technical aspects",
+        "4. Research relevant information about identified elements",
+        "5. Generate similar or modified images when requested",
+    ],
+    markdown=True,
+)
+
+# Function to handle image analysis with progress tracking
+def analyze_image(image_path, query):
+    print(f"Analyzing image: {image_path}")
+    print("Processing...")
+    
+    with open(image_path, "rb") as f:
+        image_data = f.read()
+    
+    response = image_expert.print_response(
+        f"{query}",
+        images=[image_data],
+        stream=True,
+        show_full_reasoning=True,
+    )
+    
+    print("\nAnalysis complete!")
+    return response
+
+# Example usage
+analyze_image(
+    "data/artwork.jpg",
+    "Analyze this artwork's style and composition. What art movement does it belong to? Can you generate a similar image in a different style?"
+)
+```

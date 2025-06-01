@@ -1,0 +1,613 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Python Testing Best Practices
+
+## Overview
+This rule provides comprehensive guidance for testing Python applications before production deployment. It covers test-driven development (TDD), different types of tests, using both mock and real data, and implementing testing loops to ensure code quality.
+
+## Test Types and Structure
+
+### Project Testing Structure
+```
+project_name/
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py             # Shared fixtures and configurations
+│   ├── unit/                   # Unit tests directory
+│   │   ├── __init__.py
+│   │   ├── test_module1.py
+│   │   └── test_module2.py
+│   ├── integration/            # Integration tests directory
+│   │   ├── __init__.py
+│   │   ├── test_api.py
+│   │   └── test_db.py
+│   ├── functional/             # Functional/E2E tests
+│   │   ├── __init__.py
+│   │   └── test_workflows.py
+│   └── fixtures/               # Test data and fixtures
+│       ├── data/
+│       └── mocks/
+└── src/
+    └── project_name/           # Main application code
+```
+
+### Testing Types
+1. **Unit Tests**: Test individual components in isolation
+2. **Integration Tests**: Test interactions between components
+3. **Functional Tests**: Test entire features/workflows
+4. **Performance Tests**: Test system under load
+5. **Security Tests**: Test for vulnerabilities
+
+## Test-Driven Development (TDD)
+Follow the TDD cycle:
+1. Write a failing test
+2. Write minimal code to make it pass
+3. Refactor
+4. Repeat
+
+```python
+# Step 1: Write the test first
+def test_calculate_total():
+    # Arrange
+    items = [10, 20, 30]
+    
+    # Act
+    result = calculate_total(items)
+    
+    # Assert
+    assert result == 60
+
+# Step 2: Implement the function to make the test pass
+def calculate_total(items):
+    return sum(items)
+```
+
+## Test Data Strategies
+
+### Mock Data vs Real Data
+
+#### When to Use Mock Data
+- Unit testing
+- Testing edge cases and error handling
+- CI/CD pipeline tests
+- When real data access is slow or unreliable
+- When testing external service integrations
+
+#### When to Use Real Data
+- Integration tests for database interactions
+- Performance testing
+- Data migration testing
+- Final verification before production
+- When mock data cannot adequately simulate real-world conditions
+
+### Decision Process
+Before implementing tests, ask:
+1. What am I testing? (Unit, integration, functional)
+2. What dependencies does this component have?
+3. Can these dependencies be reasonably mocked?
+4. What are the trade-offs of using mock vs. real data?
+
+```python
+# Example decision function to help determine testing approach
+def determine_test_approach(component_type, has_external_deps, performance_critical):
+    """
+    Helper to determine whether to use mocks or real data.
+    
+    Args:
+        component_type: "unit", "integration", or "functional"
+        has_external_deps: Boolean
+        performance_critical: Boolean
+        
+    Returns:
+        "mock", "real", or "hybrid"
+    """
+    if component_type == "unit":
+        return "mock"
+    
+    if component_type == "integration" and has_external_deps:
+        return "hybrid"
+    
+    if performance_critical:
+        return "real"
+        
+    return "hybrid"
+```
+
+## Mock Testing Techniques
+
+### Using pytest-mock
+```python
+def test_user_service_with_mock(mocker):
+    # Arrange
+    mock_db = mocker.patch('app.services.db_service')
+    mock_db.get_user.return_value = {"id": 1, "name": "Test User"}
+    
+    # Act
+    user_service = UserService(mock_db)
+    result = user_service.get_user_by_id(1)
+    
+    # Assert
+    assert result["name"] == "Test User"
+    mock_db.get_user.assert_called_once_with(1)
+```
+
+### Using unittest.mock
+```python
+from unittest.mock import Mock, patch
+
+@patch('app.services.db_service')
+def test_user_service(mock_db):
+    # Arrange
+    mock_db.get_user.return_value = {"id": 1, "name": "Test User"}
+    
+    # Act
+    user_service = UserService(mock_db)
+    result = user_service.get_user_by_id(1)
+    
+    # Assert
+    assert result["name"] == "Test User"
+    mock_db.get_user.assert_called_once_with(1)
+```
+
+### Mock HTTP Requests
+```python
+import responses
+
+@responses.activate
+def test_api_client():
+    # Setup mock response
+    responses.add(
+        responses.GET,
+        "https://api.example.com/users/1",
+        json={"id": 1, "name": "Test User"},
+        status=200
+    )
+    
+    # Act
+    client = APIClient()
+    result = client.get_user(1)
+    
+    # Assert
+    assert result["name"] == "Test User"
+    assert len(responses.calls) == 1
+```
+
+## Real Data Testing Techniques
+
+### Database Testing with Real Data
+
+#### Using pytest-postgresql
+```python
+def test_user_repository_real_data(postgresql):
+    # Setup
+    connection = postgresql.cursor().connection
+    # Create schema and insert test data
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);
+            INSERT INTO users (name) VALUES ('Real Test User');
+        """)
+    connection.commit()
+    
+    # Act
+    repo = UserRepository(connection)
+    user = repo.get_by_id(1)
+    
+    # Assert
+    assert user["name"] == "Real Test User"
+```
+
+#### Using a Test Database
+```python
+import pytest
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+@pytest.fixture(scope="session")
+def db_engine():
+    # Use environment variable to determine test mode
+    if os.getenv("USE_REAL_DB") == "True":
+        # Connect to real test database
+        connection_string = os.getenv("TEST_DB_URL")
+    else:
+        # Use SQLite in-memory for mock testing
+        connection_string = "sqlite:///:memory:"
+    
+    engine = create_engine(connection_string)
+    yield engine
+    engine.dispose()
+
+@pytest.fixture
+def db_session(db_engine):
+    # Create tables
+    Base.metadata.create_all(db_engine)
+    
+    # Create session
+    Session = sessionmaker(bind=db_engine)
+    session = Session()
+    
+    # Add test data
+    session.add(User(name="Test User"))
+    session.commit()
+    
+    yield session
+    
+    # Cleanup
+    session.close()
+    if str(db_engine.url) == "sqlite:///:memory:":
+        Base.metadata.drop_all(db_engine)
+
+def test_user_service_with_db(db_session):
+    # Act
+    service = UserService(db_session)
+    user = service.get_user_by_name("Test User")
+    
+    # Assert
+    assert user is not None
+    assert user.name == "Test User"
+```
+
+### API Testing with Real Endpoints
+
+```python
+import pytest
+import os
+
+@pytest.fixture
+def api_client():
+    from app.client import APIClient
+    
+    # Check environment to determine if we should use real API
+    if os.getenv("USE_REAL_API") == "True":
+        client = APIClient(base_url=os.getenv("API_BASE_URL"))
+    else:
+        # Use mock server
+        client = APIClient(base_url="http://mock-server")
+        # Configure mock responses
+        
+    return client
+
+def test_get_user(api_client):
+    # Act
+    user = api_client.get_user(1)
+    
+    # Assert
+    assert user["id"] == 1
+    assert "name" in user
+```
+
+## Testing Loops and Iteration
+
+### Continuous Testing Workflow
+1. **Write initial tests**: Start with unit tests for core functionality
+2. **Implement code**: Write the minimal code to make tests pass
+3. **Run tests locally**: Verify all tests pass in your development environment
+4. **Fix failing tests**: Iterate until all tests pass
+5. **Add edge cases**: Expand test coverage to handle edge cases
+6. **Integration testing**: Test component interactions
+7. **Run in CI**: Ensure tests pass in the CI environment
+8. **Real data validation**: Run select tests against real data
+9. **Performance testing**: Verify system performance
+10. **Repeat**: Continue this cycle for each feature or change
+
+### Test-Fix-Retest Loop
+Implement a structured approach for fixing failing tests:
+
+```python
+def test_fix_loop(max_iterations=5):
+    """Example of a test-fix-retest loop approach."""
+    iteration = 0
+    tests_passed = False
+    
+    while not tests_passed and iteration < max_iterations:
+        iteration += 1
+        print(f"Iteration {iteration} of test-fix-retest loop")
+        
+        # Run the tests
+        test_result = run_tests()
+        
+        if test_result.all_passed:
+            tests_passed = True
+            print("All tests passed!")
+            break
+        
+        # Analyze failures
+        failures = test_result.failures
+        for failure in failures:
+            print(f"Analyzing failure: {failure.test_name}")
+            print(f"Error message: {failure.error_message}")
+            
+            # Fix the issue
+            fix_issue(failure)
+        
+        print(f"Fixed {len(failures)} issues, retesting...")
+    
+    if not tests_passed:
+        print(f"Failed to fix all issues after {max_iterations} iterations")
+        return False
+    
+    return True
+```
+
+## Mocking vs. Real Data Decision Guide
+
+### User Decision Prompts
+When setting up a test suite, ask the user the following questions:
+
+1. **Test Purpose**: "What is the primary purpose of these tests?"
+   - [ ] Unit testing of isolated components
+   - [ ] Integration testing of component interactions
+   - [ ] End-to-end functional testing
+   - [ ] Performance/load testing
+
+2. **Data Sensitivity**: "Does your application deal with sensitive data?"
+   - [ ] Yes, contains PII or confidential information
+   - [ ] No, only public or non-sensitive data
+
+3. **Database Requirements**: "What are your database testing requirements?"
+   - [ ] Need to test exact database interactions and queries
+   - [ ] Can test with a database abstraction layer
+   - [ ] Only need to verify business logic, not database queries
+
+4. **Performance Considerations**: "Is performance a critical factor to test?"
+   - [ ] Yes, need to test actual performance metrics
+   - [ ] No, functional correctness is the main concern
+
+5. **Test Environment**: "What test environments are available?"
+   - [ ] Dedicated test database with real structure
+   - [ ] Development environment only
+   - [ ] CI/CD pipeline with limited resources
+
+### Recommendation Matrix
+
+| Test Type | Data Sensitivity | DB Requirements | Performance Critical | Recommended Approach |
+|-----------|------------------|-----------------|----------------------|----------------------|
+| Unit      | Any              | Any             | No                   | Mock data           |
+| Integration | Low           | Low/Medium      | No                   | Mock data           |
+| Integration | Any           | High            | Yes                  | Real data           |
+| Functional | Low            | Low             | No                   | Mock data           |
+| Functional | Any            | Any             | Yes                  | Real data           |
+| Performance | Any           | Any             | Yes                  | Real data           |
+
+## Setting Up Test Environment
+
+### Configuration for Flexible Testing
+Create a configuration system that allows switching between mock and real data:
+
+```python
+# tests/conftest.py
+import os
+import pytest
+from pathlib import Path
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--use-real-data",
+        action="store_true",
+        default=False,
+        help="Run tests with real data connections"
+    )
+    parser.addoption(
+        "--real-db-url",
+        action="store",
+        default=os.getenv("TEST_DB_URL", ""),
+        help="Database URL for real data testing"
+    )
+
+@pytest.fixture(scope="session")
+def use_real_data(request):
+    """Determine if tests should use real data."""
+    return request.config.getoption("--use-real-data")
+
+@pytest.fixture(scope="session")
+def db_connection(use_real_data, request):
+    """Database connection fixture that adapts based on test mode."""
+    if use_real_data:
+        db_url = request.config.getoption("--real-db-url")
+        if not db_url:
+            pytest.skip("No real database URL provided")
+        
+        # Connect to real database
+        from sqlalchemy import create_engine
+        engine = create_engine(db_url)
+        connection = engine.connect()
+        
+        yield connection
+        
+        connection.close()
+        engine.dispose()
+    else:
+        # Use in-memory SQLite database
+        from sqlalchemy import create_engine
+        engine = create_engine("sqlite:///:memory:")
+        connection = engine.connect()
+        
+        # Create test schema
+        from app.models import Base
+        Base.metadata.create_all(engine)
+        
+        yield connection
+        
+        connection.close()
+        engine.dispose()
+```
+
+### Running Tests with Different Configurations
+
+```bash
+# Run with mock data (default)
+pytest tests/
+
+# Run with real data
+pytest tests/ --use-real-data --real-db-url="postgresql://user:pass@localhost/testdb"
+
+# Run specific test types
+pytest tests/unit/
+pytest tests/integration/ --use-real-data
+```
+
+## Best Practices for Testing Loops
+
+### Iterative Testing Approach
+
+1. **Test Small, Isolated Units First**
+   - Start with unit tests for core functionality
+   - Use mocks for external dependencies
+   - Focus on code paths and business logic
+
+2. **Gradually Integrate Components**
+   - Move to integration tests for component interactions
+   - Replace mocks with real implementations where necessary
+   - Test data flows between components
+
+3. **Test Complete Workflows**
+   - End-to-end tests for critical user journeys
+   - Use real data for these tests when possible
+   - Verify system behavior as a whole
+
+4. **Performance and Load Testing**
+   - Only after functional correctness is verified
+   - Always use real data and infrastructure
+   - Test under expected and peak load conditions
+
+### Automating the Testing Loop
+
+```python
+import subprocess
+import time
+import json
+from pathlib import Path
+
+def run_test_cycle(cycle_name, test_paths, use_real_data=False, max_retries=3):
+    """
+    Run a full test cycle with retries for failing tests.
+    
+    Args:
+        cycle_name: Name of this test cycle
+        test_paths: List of test paths to run
+        use_real_data: Whether to use real data
+        max_retries: Maximum number of retry attempts
+    
+    Returns:
+        dict: Test results with statistics
+    """
+    results_dir = Path(f"test_results/{cycle_name}")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Starting test cycle: {cycle_name}")
+    
+    all_results = {
+        "cycle_name": cycle_name,
+        "start_time": time.time(),
+        "use_real_data": use_real_data,
+        "paths": test_paths,
+        "runs": [],
+    }
+    
+    remaining_tests = test_paths.copy()
+    retry_count = 0
+    
+    while remaining_tests and retry_count < max_retries:
+        if retry_count > 0:
+            print(f"Retry #{retry_count} for {len(remaining_tests)} failing tests")
+        
+        run_results = []
+        still_failing = []
+        
+        for test_path in remaining_tests:
+            print(f"Running tests in: {test_path}")
+            
+            # Prepare command
+            cmd = ["pytest", test_path, "-v"]
+            if use_real_data:
+                cmd.extend(["--use-real-data"])
+            
+            # Run tests
+            process = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True
+            )
+            
+            # Process results
+            passed = process.returncode == 0
+            run_results.append({
+                "path": test_path,
+                "passed": passed,
+                "output": process.stdout,
+                "error": process.stderr if not passed else None
+            })
+            
+            if not passed:
+                still_failing.append(test_path)
+        
+        # Update all results
+        all_results["runs"].append({
+            "retry": retry_count,
+            "results": run_results,
+            "pass_rate": (len(remaining_tests) - len(still_failing)) / len(remaining_tests)
+        })
+        
+        # Save interim results
+        with open(results_dir / f"run_{retry_count}.json", "w") as f:
+            json.dump(all_results, f, indent=2)
+        
+        # Update for next iteration
+        remaining_tests = still_failing
+        retry_count += 1
+        
+        if still_failing:
+            print(f"{len(still_failing)} tests still failing. Fixing and retrying...")
+            time.sleep(1)  # Give time to read output
+        else:
+            print("All tests passing!")
+    
+    # Finalize results
+    all_results["end_time"] = time.time()
+    all_results["duration"] = all_results["end_time"] - all_results["start_time"]
+    all_results["all_passed"] = len(remaining_tests) == 0
+    
+    # Save final results
+    with open(results_dir / "final_results.json", "w") as f:
+        json.dump(all_results, f, indent=2)
+    
+    return all_results
+
+# Example usage
+if __name__ == "__main__":
+    # Define test cycle
+    cycle = {
+        "name": "api_integration_cycle",
+        "paths": [
+            "tests/unit/test_api_client.py",
+            "tests/integration/test_api_integration.py"
+        ],
+        "use_real_data": False  # Change to True for real data testing
+    }
+    
+    # Run the cycle
+    results = run_test_cycle(
+        cycle["name"], 
+        cycle["paths"],
+        cycle["use_real_data"]
+    )
+    
+    # Report results
+    if results["all_passed"]:
+        print(f"All tests passed after {len(results['runs'])} iterations")
+    else:
+        print(f"Some tests still failing after {len(results['runs'])} iterations")
+        for path in results["remaining_tests"]:
+            print(f"  - {path}")
+```
+
+## References
+1. [pytest Documentation](mdc:https:/docs.pytest.org)
+2. [Python Testing with pytest by Brian Okken](mdc:https:/pragprog.com/titles/bopytest2/python-testing-with-pytest-second-edition)
+3. [Martin Fowler on Test Doubles](mdc:https:/martinfowler.com/bliki/TestDouble.html)
+4. [Microsoft Python Testing Best Practices](mdc:https:/docs.microsoft.com/en-us/azure/devops/pipelines/languages/python)
+5. [Python Testing Best Practices](mdc:https:/python-best-practices.readthedocs.io/en/latest/testing.html)

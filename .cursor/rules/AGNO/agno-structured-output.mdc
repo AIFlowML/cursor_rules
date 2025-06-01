@@ -1,0 +1,63 @@
+---
+description: Rule to handle the structured output in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Structured Output
+
+## Core Principles
+- Use Pydantic models to define structured outputs for your agents
+- Implement proper field descriptions using `Field(..., description="...")`
+- Add validation rules to ensure output quality
+- Use `response_model` parameter in Agent initialization to specify the expected output structure
+
+## Implementation Patterns
+
+### Model Definition
+```python
+from pydantic import BaseModel, Field
+
+class MyStructuredOutput(BaseModel):
+    field1: str = Field(..., description="Clear description of field1")
+    field2: int = Field(..., description="Description of what field2 represents")
+    optional_field: Optional[str] = Field(None, description="Optional field description")
+```
+
+### Agent Configuration
+```python
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=MyStructuredOutput,
+    # For OpenAI models, use JSON mode for more reliable outputs
+    use_json_mode=True,
+)
+```
+
+### Accessing Structured Outputs
+```python
+response = agent.run("Your prompt here")
+structured_data = response.structured_response
+field1_value = structured_data.field1
+```
+
+## Best Practices
+- Define clear field descriptions to guide the model
+- Use type annotations for all fields including complex types
+- Consider nested models for complex structures
+- Use enums for fields with fixed options
+- Provide default values for optional fields
+- Handle validation errors gracefully
+- Test structured outputs with varied inputs
+
+## JSON Mode vs. Structured Output
+- Use `use_json_mode=True` with OpenAI models for more reliable structured outputs
+- Without JSON mode, use `response_model` parameter to parse model outputs 
+- Combine with proper error handling for production applications
+
+## Parameter Tables
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `response_model` | `Type[BaseModel]` | Pydantic model class that defines the expected response structure |
+| `use_json_mode` | `bool` | Enable JSON mode for more reliable structured outputs with OpenAI models |
+| `structured_output_delimiter` | `str` | Custom delimiter for structured outputs (default: None)

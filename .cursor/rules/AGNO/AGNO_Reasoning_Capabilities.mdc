@@ -1,0 +1,208 @@
+---
+description: Reasoning is a first-class citizen in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Reasoning Capabilities
+
+Reasoning is a first-class citizen in AGNO, enabling agents to "think" before responding and "analyze" the results of their actions. This significantly improves the agent's ability to solve complex problems requiring sequential tool calls and multi-step reasoning.
+
+## Reasoning Approaches in AGNO
+
+AGNO provides several approaches to implementing reasoning in agents:
+
+1. **ReasoningTools**: Adds specific reasoning capabilities through tools
+2. **Chain-of-Thought Prompting**: Uses prompt engineering for step-by-step reasoning
+3. **Reasoning Models**: Uses dedicated models for reasoning processes
+
+## Using ReasoningTools
+
+The simplest way to add reasoning to your agent is by using the `ReasoningTools` class:
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        # Add reasoning capabilities
+        ReasoningTools(add_instructions=True),
+        # Add other domain-specific tools
+        YFinanceTools(stock_price=True, company_info=True),
+    ],
+    instructions=[
+        "First think carefully about what information you need",
+        "Break down complex problems into steps",
+        "Analyze your results before finalizing your response",
+    ],
+    markdown=True,
+)
+
+# Enable visualization of reasoning process
+agent.print_response(
+    "Analyze the financial health of NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
+```
+
+### ReasoningTools Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `add_instructions` | `bool` | False | Add reasoning instructions to the agent |
+| `chain_of_thought` | `bool` | False | Enable chain-of-thought reasoning |
+| `analyze` | `bool` | True | Enable analysis functionality |
+| `think` | `bool` | True | Enable thinking functionality |
+| `reflection` | `bool` | False | Enable reflection on previous steps |
+
+## Visualizing Reasoning Process
+
+You can display the reasoning process in the agent's response:
+
+```python
+# Show full reasoning in the response
+agent.print_response(
+    "Your query here",
+    show_full_reasoning=True,  # Show the full reasoning process
+)
+
+# Stream reasoning steps as they happen
+agent.print_response(
+    "Your query here",
+    stream=True,  # Stream the response
+    stream_intermediate_steps=True,  # Show each reasoning step
+)
+
+# Show reasoning in a human-readable format
+agent.print_response(
+    "Your query here",
+    show_reasoning_stream=True,  # Format reasoning for human readability
+)
+```
+
+## Chain-of-Thought Implementation
+
+You can implement chain-of-thought reasoning through specific instructions:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+cot_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=[
+        "Break down complex problems into steps",
+        "For each step, explain your reasoning and conclusions",
+        "After completing all steps, summarize your overall findings",
+        "Format your chain of thought as numbered steps for clarity",
+    ],
+    markdown=True,
+)
+
+cot_agent.print_response("Solve this problem: If a train travels at 120 km/h and another train travels at 80 km/h in the opposite direction, how long will it take for them to be 500 km apart if they start at the same station?")
+```
+
+## Multi-Step Reasoning with Tool Calls
+
+For complex problems requiring multiple tool calls, reasoning becomes especially important:
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.newspaper4k import Newspaper4kTools
+
+research_agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True, chain_of_thought=True),
+        DuckDuckGoTools(),
+        Newspaper4kTools(),
+    ],
+    instructions=[
+        "First reason about what information you need to solve the problem",
+        "Break down your research into logical steps",
+        "After each tool call, analyze the results before proceeding",
+        "If you need additional information, determine the best way to obtain it",
+        "Synthesize all information into a comprehensive response",
+    ],
+    markdown=True,
+)
+
+# The agent will use reasoning to guide its search and analysis process
+research_agent.print_response(
+    "Research the environmental impact of electric vehicles compared to conventional vehicles",
+    stream=True,
+    show_full_reasoning=True,
+)
+```
+
+## Best Practices for Agent Reasoning
+
+1. **Enable ReasoningTools**:
+   - Add `ReasoningTools(add_instructions=True)` to your agent's tools
+   - For complex reasoning, enable `chain_of_thought=True`
+
+2. **Provide Clear Reasoning Instructions**:
+   - Include explicit instructions for breaking down problems
+   - Guide the reasoning process with specific steps
+
+3. **Use Appropriate Visualization**:
+   - For debugging and development: `show_full_reasoning=True`
+   - For end-users: Consider using `show_reasoning_stream=True` with formatting
+
+4. **Choose the Right Model**:
+   - Reasoning works best with powerful models (Claude 3.5/3.7, GPT-4o)
+   - Simpler models may need more explicit reasoning instructions
+
+5. **Balance Depth and Performance**:
+   - Deeper reasoning improves quality but increases latency and cost
+   - For production, tune reasoning depth based on task complexity
+
+## Example: Financial Reasoning Agent
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+financial_reasoning_agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(
+            add_instructions=True,
+            chain_of_thought=True,
+            analyze=True,
+            reflect=True,
+        ),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+            financial_data=True,
+        ),
+    ],
+    instructions=[
+        "Break down financial analysis into clear reasoning steps",
+        "Consider multiple factors: fundamentals, market trends, news sentiment",
+        "Explain your reasoning for each conclusion",
+        "Present data in tables when appropriate",
+        "Provide a balanced assessment highlighting both risks and opportunities",
+    ],
+    markdown=True,
+)
+
+financial_reasoning_agent.print_response(
+    "Should I invest in TSLA stock right now? Provide a detailed analysis.",
+    stream=True,
+    show_full_reasoning=True,
+)
+```

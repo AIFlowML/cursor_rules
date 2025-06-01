@@ -1,0 +1,991 @@
+---
+description: FastMCP Python v2.0 tools
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 tools, Pydantic validation, async/await patterns, and MCP protocol tool development. You focus on creating robust, type-safe tools with proper validation, error handling, and return value processing.
+
+## FastMCP Tools Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   @mcp.tool()   │    │   Pydantic       │    │   Tool          │
+│   Decorator     │───▶│   Schema         │───▶│   Registration  │
+│                 │    │   Generation     │    │                 │
+│ - Function scan │    │ - Type hints     │    │ - Name/desc     │
+│ - Metadata      │    │ - Field validate │    │ - Parameters    │
+│ - Registration  │    │ - JSON schema    │    │ - Execution     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Tool          │    │   Context        │    │   Return Value  │
+│   Execution     │    │   Injection      │    │   Processing    │
+│   & Validation  │    │   & Logging      │    │   & Conversion  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_tools_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py        # Package initialization
+│   │   ├── server.py          # Main server with tool registration
+│   │   └── types.py           # Custom types and models
+│   ├── tools/
+│   │   ├── __init__.py        # Tool exports
+│   │   ├── data_tools.py      # Data processing tools
+│   │   ├── file_tools.py      # File operation tools
+│   │   ├── api_tools.py       # API integration tools
+│   │   ├── database_tools.py  # Database operation tools
+│   │   └── ai_tools.py        # AI/ML tools
+│   ├── models/
+│   │   ├── __init__.py        # Model exports
+│   │   ├── input_models.py    # Tool input models
+│   │   ├── output_models.py   # Tool output models
+│   │   └── validation.py      # Custom validators
+│   └── utils/
+│       ├── __init__.py        # Utility exports
+│       ├── validation.py      # Validation helpers
+│       ├── conversion.py      # Type conversion
+│       └── serialization.py   # Data serialization
+├── tests/
+│   ├── test_tools/
+│   │   ├── test_data_tools.py
+│   │   ├── test_file_tools.py
+│   │   └── test_api_tools.py
+│   └── test_validation.py
+└── examples/
+    ├── simple_tools.py        # Basic tool examples
+    ├── complex_tools.py       # Advanced tool examples
+    └── async_tools.py         # Async tool patterns
+```
+
+## Core Implementation Patterns
+
+### Basic Tool Definition
+
+```python
+# ✅ DO: Proper tool definition with comprehensive configuration
+from fastmcp import FastMCP
+from fastmcp.server import Context
+from pydantic import BaseModel, Field, validator
+from typing import Annotated, Literal
+import asyncio
+
+server = FastMCP(name="tools-server")
+
+# Simple tool with type hints
+@server.tool()
+def simple_echo(message: str) -> str:
+    """Echo the input message back to the user."""
+    return f"Echo: {message}"
+
+# Tool with validation using Pydantic Field
+@server.tool()
+async def validated_tool(
+    text: Annotated[str, Field(
+        min_length=1,
+        max_length=500,
+        description="Text to process, between 1-500 characters"
+    )],
+    count: Annotated[int, Field(
+        ge=1,
+        le=10,
+        description="Number of repetitions, between 1-10"
+    )] = 1,
+    uppercase: Annotated[bool, Field(
+        description="Whether to convert to uppercase"
+    )] = False
+) -> str:
+    """Process text with validation and optional transformations."""
+    
+    result = text.upper() if uppercase else text
+    return "\n".join([result] * count)
+
+# Tool with custom name and description
+@server.tool(
+    name="custom_calculator",
+    description="Perform arithmetic operations on two numbers",
+    tags={"category": "math", "level": "basic"}
+)
+async def calculator(
+    operation: Literal["add", "subtract", "multiply", "divide"],
+    a: float,
+    b: float
+) -> float:
+    """Perform basic arithmetic operations."""
+    
+    operations = {
+        "add": lambda x, y: x + y,
+        "subtract": lambda x, y: x - y,
+        "multiply": lambda x, y: x * y,
+        "divide": lambda x, y: x / y if y != 0 else float('inf')
+    }
+    
+    return operations[operation](mdc:a, b)
+
+# ❌ DON'T: Define tools without proper types or validation
+@server.tool()
+def bad_tool(data):  # No type hints
+    return data.process()  # No validation, potential AttributeError
+```
+
+### Complex Tool Input Models
+
+```python
+# ✅ DO: Use Pydantic models for complex tool inputs
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import List, Dict, Optional, Union
+from datetime import datetime
+from enum import Enum
+
+class Priority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+class TaskInput(BaseModel):
+    """Comprehensive task input model with validation."""
+    
+    title: Annotated[str, Field(
+        min_length=1,
+        max_length=200,
+        description="Task title"
+    )]
+    
+    description: Annotated[str, Field(
+        max_length=2000,
+        description="Detailed task description"
+    )] = ""
+    
+    priority: Priority = Priority.MEDIUM
+    
+    tags: Annotated[List[str], Field(
+        max_items=10,
+        description="Task tags for organization"
+    )] = []
+    
+    due_date: Optional[datetime] = Field(
+        None,
+        description="Optional due date for the task"
+    )
+    
+    assignees: Annotated[List[str], Field(
+        max_items=5,
+        description="List of assignee usernames"
+    )] = []
+    
+    metadata: Dict[str, Union[str, int, float, bool]] = Field(
+        default_factory=dict,
+        description="Additional metadata"
+    )
+    
+    @validator('tags')
+    def validate_tags(cls, v):
+        """Validate tag format and content."""
+        validated_tags = []
+        for tag in v:
+            if not isinstance(tag, str):
+                raise ValueError(f"Tag must be string, got {type(tag)}")
+            
+            # Clean and validate tag
+            clean_tag = tag.strip().lower()
+            if not clean_tag:
+                continue
+                
+            if len(clean_tag) > 50:
+                raise ValueError(f"Tag too long: {clean_tag}")
+                
+            if not clean_tag.replace("-", "").replace("_", "").isalnum():
+                raise ValueError(f"Tag contains invalid characters: {clean_tag}")
+                
+            validated_tags.append(clean_tag)
+        
+        return validated_tags
+    
+    @validator('assignees')
+    def validate_assignees(cls, v):
+        """Validate assignee usernames."""
+        import re
+        username_pattern = re.compile(r'^[a-zA-Z0-9_-]{3,50}$')
+        
+        for assignee in v:
+            if not username_pattern.match(assignee):
+                raise ValueError(f"Invalid username format: {assignee}")
+        
+        return v
+    
+    @root_validator
+    def validate_due_date(cls, values):
+        """Validate due date is in the future for urgent tasks."""
+        priority = values.get('priority')
+        due_date = values.get('due_date')
+        
+        if priority == Priority.URGENT and due_date:
+            if due_date <= datetime.now():
+                raise ValueError("Urgent tasks must have future due dates")
+        
+        return values
+
+@server.tool()
+async def create_task(
+    task_data: TaskInput,
+    context: Context
+) -> Dict[str, Union[str, int]]:
+    """Create a new task with comprehensive validation."""
+    
+    await context.info(f"Creating task: {task_data.title}")
+    
+    # Task data is already validated by Pydantic
+    task_id = hash(f"{task_data.title}{datetime.now().isoformat()}")
+    
+    await context.info(f"Task created with ID: {task_id}")
+    
+    return {
+        "task_id": abs(task_id),
+        "title": task_data.title,
+        "priority": task_data.priority.value,
+        "assignee_count": len(task_data.assignees),
+        "tag_count": len(task_data.tags)
+    }
+
+# ❌ DON'T: Use complex inputs without proper models
+@server.tool()
+async def bad_create_task(title, description, priority, tags):
+    # No validation, type safety, or structure
+    return {"id": 123}
+```
+
+### Context Injection and Logging
+
+```python
+# ✅ DO: Use context for logging, progress, and resource access
+from fastmcp.server import Context
+
+@server.tool()
+async def file_processor(
+    file_paths: List[str],
+    operation: Literal["copy", "move", "delete"],
+    context: Context
+) -> Dict[str, List[str]]:
+    """Process multiple files with progress reporting and logging."""
+    
+    total_files = len(file_paths)
+    processed_files = []
+    failed_files = []
+    
+    await context.info(f"Starting {operation} operation on {total_files} files")
+    
+    for i, file_path in enumerate(file_paths):
+        try:
+            # Report progress
+            progress = (i + 1) / total_files * 100
+            await context.report_progress(
+                progress=progress,
+                total=100,
+                message=f"Processing {file_path}"
+            )
+            
+            # Log current operation
+            await context.debug(f"Processing file {i+1}/{total_files}: {file_path}")
+            
+            # Simulate file operation
+            import os
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"File not found: {file_path}")
+            
+            # Perform operation (simplified)
+            if operation == "copy":
+                # Copy logic here
+                processed_files.append(file_path)
+            elif operation == "move":
+                # Move logic here
+                processed_files.append(file_path)
+            elif operation == "delete":
+                # Delete logic here
+                processed_files.append(file_path)
+            
+            await context.debug(f"Successfully processed: {file_path}")
+            
+        except Exception as e:
+            error_msg = f"Failed to process {file_path}: {e}"
+            await context.error(error_msg)
+            failed_files.append(file_path)
+    
+    # Final summary
+    await context.info(
+        f"Operation complete. Processed: {len(processed_files)}, "
+        f"Failed: {len(failed_files)}"
+    )
+    
+    return {
+        "processed": processed_files,
+        "failed": failed_files,
+        "total_processed": len(processed_files),
+        "total_failed": len(failed_files)
+    }
+
+# Context for external API calls
+@server.tool()
+async def fetch_api_data(
+    url: str,
+    headers: Dict[str, str] = None,
+    context: Context
+) -> Dict[str, Union[str, int, Dict]]:
+    """Fetch data from external API with proper logging."""
+    
+    await context.info(f"Fetching data from: {url}")
+    
+    try:
+        import httpx
+        
+        async with httpx.AsyncClient() as client:
+            await context.debug("Making HTTP request...")
+            
+            response = await client.get(url, headers=headers or {})
+            response.raise_for_status()
+            
+            await context.info(f"API request successful, status: {response.status_code}")
+            
+            return {
+                "status_code": response.status_code,
+                "data": response.json(),
+                "headers": dict(response.headers)
+            }
+            
+    except httpx.HTTPError as e:
+        await context.error(f"HTTP error: {e}")
+        raise ToolError(f"Failed to fetch data: {e}")
+    except Exception as e:
+        await context.error(f"Unexpected error: {e}")
+        raise ToolError(f"API request failed: {e}")
+
+# ❌ DON'T: Ignore context capabilities
+@server.tool()
+async def bad_processor(files):
+    # No logging, progress reporting, or error context
+    for file in files:
+        process_file(file)  # No error handling
+    return "done"
+```
+
+## Advanced Patterns
+
+### Return Value Types and Conversion
+
+```python
+# ✅ DO: Use proper return value types with conversion
+from fastmcp.utilities.types import Image
+from mcp.types import TextContent, ImageContent, EmbeddedResource
+import base64
+import json
+
+@server.tool()
+async def generate_report(
+    data: Dict[str, Union[str, int, float]],
+    format: Literal["text", "json", "html"] = "text"
+) -> Union[str, Dict, List[str]]:
+    """Generate different types of reports based on format."""
+    
+    if format == "text":
+        # Return plain text
+        lines = ["Data Report", "=" * 20]
+        for key, value in data.items():
+            lines.append(f"{key}: {value}")
+        return "\n".join(lines)
+    
+    elif format == "json":
+        # Return structured data (will be converted to JSON)
+        return {
+            "report_type": "data_summary",
+            "timestamp": datetime.now().isoformat(),
+            "data": data,
+            "summary": {
+                "total_entries": len(data),
+                "numeric_entries": sum(1 for v in data.values() if isinstance(v, (int, float)))
+            }
+        }
+    
+    elif format == "html":
+        # Return HTML content
+        html_lines = [
+            "<html><body>",
+            "<h1>Data Report</h1>",
+            "<table border='1'>"
+        ]
+        
+        for key, value in data.items():
+            html_lines.append(f"<tr><td>{key}</td><td>{value}</td></tr>")
+        
+        html_lines.extend(["</table>", "</body></html>"])
+        return "\n".join(html_lines)
+
+@server.tool()
+async def create_chart_image(
+    data: Dict[str, float],
+    chart_type: Literal["bar", "pie", "line"] = "bar"
+) -> Image:
+    """Create a chart image and return it."""
+    
+    try:
+        import matplotlib.pyplot as plt
+        import io
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        if chart_type == "bar":
+            ax.bar(data.keys(), data.values())
+        elif chart_type == "pie":
+            ax.pie(data.values(), labels=data.keys(), autopct='%1.1f%%')
+        elif chart_type == "line":
+            ax.plot(list(data.keys()), list(data.values()), marker='o')
+        
+        ax.set_title(f"{chart_type.title()} Chart")
+        
+        # Save to bytes
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', bbox_inches='tight', dpi=150)
+        buffer.seek(0)
+        
+        plt.close(fig)
+        
+        # Return as FastMCP Image
+        return Image(data=buffer.getvalue(), format="png")
+        
+    except ImportError:
+        raise ToolError("matplotlib is required for chart generation")
+    except Exception as e:
+        raise ToolError(f"Failed to create chart: {e}")
+
+@server.tool()
+async def multi_content_tool() -> List[Union[str, Dict, Image]]:
+    """Tool that returns multiple content types."""
+    
+    return [
+        "This is a text response",
+        {
+            "type": "data",
+            "values": [1, 2, 3, 4, 5],
+            "summary": "Sample data object"
+        },
+        Image(path="sample_chart.png") if os.path.exists("sample_chart.png") else "No image available"
+    ]
+
+# ❌ DON'T: Return inconsistent or unprocessable types
+@server.tool()
+async def bad_return_tool():
+    return object()  # Cannot be serialized to MCP content
+```
+
+### Error Handling and Custom Exceptions
+
+```python
+# ✅ DO: Implement comprehensive error handling
+from fastmcp.exceptions import ToolError
+import traceback
+
+class ValidationError(ToolError):
+    """Custom validation error for tool inputs."""
+    pass
+
+class ProcessingError(ToolError):
+    """Custom error for processing failures."""
+    pass
+
+class ExternalServiceError(ToolError):
+    """Custom error for external service failures."""
+    pass
+
+@server.tool()
+async def robust_data_processor(
+    input_data: List[Dict[str, Union[str, int, float]]],
+    validation_strict: bool = True,
+    context: Context
+) -> Dict[str, Union[int, List[str]]]:
+    """Process data with comprehensive error handling."""
+    
+    processed_count = 0
+    error_messages = []
+    
+    try:
+        await context.info(f"Processing {len(input_data)} data items")
+        
+        # Validate input structure
+        if not input_data:
+            raise ValidationError("Input data cannot be empty")
+        
+        for i, item in enumerate(input_data):
+            try:
+                # Validate item structure
+                if not isinstance(item, dict):
+                    error_msg = f"Item {i} is not a dictionary: {type(item)}"
+                    if validation_strict:
+                        raise ValidationError(error_msg)
+                    else:
+                        error_messages.append(error_msg)
+                        continue
+                
+                # Required fields check
+                required_fields = ["id", "name", "value"]
+                missing_fields = [field for field in required_fields if field not in item]
+                
+                if missing_fields:
+                    error_msg = f"Item {i} missing required fields: {missing_fields}"
+                    if validation_strict:
+                        raise ValidationError(error_msg)
+                    else:
+                        error_messages.append(error_msg)
+                        continue
+                
+                # Process item
+                await process_single_item(item, context)
+                processed_count += 1
+                
+                # Progress reporting
+                if i % 10 == 0:  # Report every 10 items
+                    await context.report_progress(
+                        progress=i,
+                        total=len(input_data),
+                        message=f"Processed {i}/{len(input_data)} items"
+                    )
+                
+            except ValidationError as e:
+                await context.error(f"Validation error for item {i}: {e}")
+                error_messages.append(str(e))
+                if validation_strict:
+                    raise
+            except ProcessingError as e:
+                await context.warning(f"Processing error for item {i}: {e}")
+                error_messages.append(str(e))
+            except Exception as e:
+                error_msg = f"Unexpected error for item {i}: {e}"
+                await context.error(error_msg)
+                error_messages.append(error_msg)
+                
+                if validation_strict:
+                    raise ToolError(f"Processing failed: {e}")
+        
+        await context.info(f"Processing complete: {processed_count} successful, {len(error_messages)} errors")
+        
+        return {
+            "processed_count": processed_count,
+            "error_count": len(error_messages),
+            "errors": error_messages[:10]  # Limit error messages
+        }
+        
+    except ValidationError as e:
+        await context.error(f"Validation failed: {e}")
+        raise  # Re-raise validation errors as-is
+    except Exception as e:
+        await context.error(f"Unexpected processing error: {e}")
+        raise ToolError(f"Data processing failed: {e}")
+
+async def process_single_item(item: Dict, context: Context) -> None:
+    """Process a single data item with error handling."""
+    
+    try:
+        # Simulate processing
+        if item.get("value", 0) < 0:
+            raise ProcessingError("Negative values not supported")
+        
+        # Simulate external service call
+        if item.get("name") == "error_test":
+            raise ExternalServiceError("External service unavailable")
+        
+        await context.debug(f"Processed item: {item['id']}")
+        
+    except (ProcessingError, ExternalServiceError):
+        # Re-raise known errors
+        raise
+    except Exception as e:
+        # Convert unknown errors
+        raise ProcessingError(f"Failed to process item {item.get('id', 'unknown')}: {e}")
+
+# ❌ DON'T: Ignore error handling or use generic exceptions
+@server.tool()
+async def bad_error_handling(data):
+    try:
+        return process_data(data)
+    except:  # Catch-all is bad
+        return {"error": "something went wrong"}  # No details
+```
+
+### Tool Composition and Reusability
+
+```python
+# ✅ DO: Create reusable tool components and utilities
+from functools import wraps
+from typing import Callable, TypeVar, Any
+
+T = TypeVar('T')
+
+def with_timing(func: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to add timing to tools."""
+    
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        import time
+        
+        # Find context if available
+        context = None
+        for arg in list(args) + list(kwargs.values()):
+            if isinstance(arg, Context):
+                context = arg
+                break
+        
+        start_time = time.time()
+        
+        try:
+            result = await func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            
+            if context:
+                await context.info(f"Tool {func.__name__} completed in {execution_time:.2f}s")
+            
+            return result
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            if context:
+                await context.error(f"Tool {func.__name__} failed after {execution_time:.2f}s: {e}")
+            
+            raise
+    
+    return wrapper
+
+def requires_permissions(*permissions: str):
+    """Decorator to add permission checking to tools."""
+    
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Find context
+            context = None
+            for arg in list(args) + list(kwargs.values()):
+                if isinstance(arg, Context):
+                    context = arg
+                    break
+            
+            if context:
+                # Check permissions (simplified - would integrate with auth system)
+                user_permissions = getattr(context, 'user_permissions', set())
+                
+                missing_permissions = set(permissions) - user_permissions
+                if missing_permissions:
+                    raise ToolError(f"Missing required permissions: {missing_permissions}")
+            
+            return await func(*args, **kwargs)
+        
+        return wrapper
+    return decorator
+
+# Use decorators on tools
+@server.tool()
+@with_timing
+@requires_permissions("data.read", "data.process")
+async def secure_data_analyzer(
+    dataset_id: str,
+    analysis_type: Literal["summary", "detailed", "export"],
+    context: Context
+) -> Dict[str, Any]:
+    """Analyze dataset with timing and permission checking."""
+    
+    await context.info(f"Starting {analysis_type} analysis of dataset {dataset_id}")
+    
+    # Simulate analysis
+    import asyncio
+    await asyncio.sleep(1)  # Simulate processing time
+    
+    return {
+        "dataset_id": dataset_id,
+        "analysis_type": analysis_type,
+        "result": "Analysis completed successfully",
+        "metrics": {
+            "rows_processed": 1000,
+            "columns_analyzed": 25,
+            "anomalies_detected": 3
+        }
+    }
+
+# Tool utility functions
+async def validate_file_access(file_path: str, context: Context) -> bool:
+    """Utility to validate file access."""
+    
+    import os
+    
+    if not os.path.exists(file_path):
+        await context.error(f"File not found: {file_path}")
+        return False
+    
+    if not os.access(file_path, os.R_OK):
+        await context.error(f"No read permission for file: {file_path}")
+        return False
+    
+    return True
+
+def sanitize_filename(filename: str) -> str:
+    """Utility to sanitize filenames."""
+    
+    import re
+    
+    # Remove invalid characters
+    sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    
+    # Remove leading/trailing spaces and dots
+    sanitized = sanitized.strip(' .')
+    
+    # Limit length
+    if len(sanitized) > 255:
+        name, ext = os.path.splitext(sanitized)
+        max_name_len = 255 - len(ext)
+        sanitized = name[:max_name_len] + ext
+    
+    return sanitized
+
+# ❌ DON'T: Duplicate code across tools
+@server.tool()
+async def bad_tool_1(data):
+    # Duplicate validation logic
+    if not data:
+        raise ToolError("Data required")
+    # ... processing
+    
+@server.tool()
+async def bad_tool_2(data):
+    # Same validation logic repeated
+    if not data:
+        raise ToolError("Data required")
+    # ... processing
+```
+
+## Testing Patterns
+
+### Comprehensive Tool Testing
+
+```python
+# ✅ DO: Comprehensive tool testing
+import pytest
+from fastmcp import FastMCP, Client
+from fastmcp.exceptions import ToolError
+from unittest.mock import Mock, patch, AsyncMock
+
+@pytest.fixture
+async def tools_server():
+    """Create a test server with sample tools."""
+    
+    server = FastMCP(name="test-tools-server")
+    
+    @server.tool()
+    async def test_calculator(operation: str, a: float, b: float) -> float:
+        operations = {
+            "add": lambda x, y: x + y,
+            "subtract": lambda x, y: x - y,
+            "multiply": lambda x, y: x * y,
+            "divide": lambda x, y: x / y if y != 0 else float('inf')
+        }
+        return operations[operation](mdc:a, b)
+    
+    @server.tool()
+    async def test_validator(data: Dict[str, Union[str, int]]) -> bool:
+        required_fields = ["name", "age"]
+        return all(field in data for field in required_fields)
+    
+    return server
+
+@pytest.fixture
+async def tools_client(tools_server):
+    """Create a test client for tools testing."""
+    
+    async with Client(tools_server) as client:
+        yield client
+
+@pytest.mark.asyncio
+async def test_tool_registration(tools_client):
+    """Test that tools are properly registered."""
+    
+    tools = await tools_client.list_tools()
+    tool_names = [tool.name for tool in tools]
+    
+    assert "test_calculator" in tool_names
+    assert "test_validator" in tool_names
+
+@pytest.mark.asyncio
+async def test_tool_execution(tools_client):
+    """Test tool execution with various inputs."""
+    
+    # Test successful execution
+    result = await tools_client.call_tool("test_calculator", {
+        "operation": "add",
+        "a": 5.0,
+        "b": 3.0
+    })
+    
+    assert len(result) == 1
+    assert "8.0" in result[0].text
+
+@pytest.mark.asyncio
+async def test_tool_validation(tools_client):
+    """Test tool input validation."""
+    
+    # Test valid input
+    result = await tools_client.call_tool("test_validator", {
+        "data": {"name": "John", "age": 30}
+    })
+    
+    assert "True" in result[0].text
+    
+    # Test invalid input
+    result = await tools_client.call_tool("test_validator", {
+        "data": {"name": "John"}  # Missing age
+    })
+    
+    assert "False" in result[0].text
+
+@pytest.mark.asyncio
+async def test_tool_error_handling():
+    """Test tool error handling scenarios."""
+    
+    server = FastMCP(name="error-test-server")
+    
+    @server.tool()
+    async def error_tool(should_fail: bool) -> str:
+        if should_fail:
+            raise ToolError("Tool intentionally failed")
+        return "Success"
+    
+    async with Client(server) as client:
+        # Test successful execution
+        result = await client.call_tool("error_tool", {"should_fail": False})
+        assert "Success" in result[0].text
+        
+        # Test error handling
+        with pytest.raises(Exception):  # Should raise an exception
+            await client.call_tool("error_tool", {"should_fail": True})
+
+@pytest.mark.asyncio
+async def test_async_tool_execution():
+    """Test async tool execution patterns."""
+    
+    server = FastMCP(name="async-test-server")
+    
+    @server.tool()
+    async def async_data_processor(
+        items: List[str],
+        delay: float = 0.1
+    ) -> Dict[str, int]:
+        """Async tool that processes items with delay."""
+        
+        import asyncio
+        
+        processed = 0
+        for item in items:
+            await asyncio.sleep(delay)
+            processed += 1
+        
+        return {"processed_count": processed}
+    
+    async with Client(server) as client:
+        result = await client.call_tool("async_data_processor", {
+            "items": ["a", "b", "c"],
+            "delay": 0.01
+        })
+        
+        # Verify async execution completed
+        assert "3" in result[0].text
+
+# ❌ DON'T: Skip tool testing
+def bad_tool_test():
+    # No actual tool functionality testing
+    assert True
+```
+
+## Anti-patterns and Common Mistakes
+
+### Tool Definition Anti-patterns
+
+```python
+# ❌ DON'T: Define tools without proper type hints
+@server.tool()
+def bad_tool(data):  # No type hints
+    return data.upper()  # Could fail
+
+# ❌ DON'T: Use overly complex single tools
+@server.tool()
+def massive_tool(operation, data1, data2, data3, option1, option2, option3):
+    # Tool trying to do too many things
+    if operation == "process":
+        # 100+ lines of code
+        pass
+    elif operation == "analyze":
+        # Another 100+ lines
+        pass
+    # ... many more operations
+
+# ❌ DON'T: Ignore error handling
+@server.tool()
+async def risky_tool(url: str) -> str:
+    import httpx
+    response = httpx.get(url)  # No error handling
+    return response.text  # Could fail
+
+# ✅ DO: Define focused, well-typed tools
+@server.tool()
+def good_text_processor(text: str, operation: Literal["upper", "lower", "title"]) -> str:
+    """Single-purpose tool with clear types."""
+    operations = {
+        "upper": str.upper,
+        "lower": str.lower,
+        "title": str.title
+    }
+    return operations[operation](mdc:text)
+```
+
+## Best Practices Summary
+
+### Tool Design
+- Keep tools focused on single responsibilities
+- Use comprehensive type hints and Pydantic models
+- Implement proper input validation and error handling
+- Provide clear documentation and examples
+
+### Input Validation
+- Use Pydantic models for complex inputs
+- Implement custom validators for business logic
+- Validate file paths, URLs, and external references
+- Sanitize user inputs to prevent security issues
+
+### Error Handling
+- Use specific exception types for different error categories
+- Provide meaningful error messages to users
+- Log detailed error information for debugging
+- Implement graceful degradation where possible
+
+### Context Usage
+- Use context for logging and progress reporting
+- Access external resources through context when available
+- Report progress for long-running operations
+- Provide detailed logging for debugging
+
+### Return Values
+- Use appropriate return types (text, JSON, images)
+- Implement proper data serialization
+- Return structured data when possible
+- Handle multiple content types appropriately
+
+### Testing
+- Test tool registration and metadata
+- Test various input scenarios and edge cases
+- Test error handling and validation
+- Test async execution patterns
+
+## References
+- [FastMCP Tools Documentation](mdc:https:/gofastmcp.com/servers/tools)
+- [Pydantic Validation Documentation](mdc:https:/docs.pydantic.dev/latest/concepts/validators)
+- [MCP Tool Specification](mdc:https:/spec.modelcontextprotocol.io/specification/basic/tools)
+- [Python Type Hints](mdc:https:/docs.python.org/3/library/typing.html)
+- [AsyncIO Programming](mdc:https:/docs.python.org/3/library/asyncio.html)

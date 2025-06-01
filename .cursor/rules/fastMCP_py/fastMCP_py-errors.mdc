@@ -1,0 +1,844 @@
+---
+description: FastMCP Python v2.0 error handling
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 error handling, exception management, structured logging, and robust error recovery patterns. You focus on creating resilient applications with comprehensive error handling, meaningful error messages, and effective debugging capabilities.
+
+## FastMCP Error Handling Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Error         │    │   Error          │    │   Recovery      │
+│   Detection     │───▶│   Classification │───▶│   & Response    │
+│                 │    │                  │    │                 │
+│ - Tool errors   │    │ - User errors    │    │ - Graceful      │
+│ - System errors │    │ - System errors  │    │   degradation   │
+│ - Network fails │    │ - Network errors │    │ - Retry logic   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Error         │    │   Structured     │    │   Monitoring    │
+│   Context       │    │   Logging        │    │   & Alerting    │
+│   Collection    │    │   & Tracing      │    │   Integration   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_error_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py          # Package initialization
+│   │   ├── server.py            # Server with error handling
+│   │   └── models.py            # Data models
+│   ├── errors/
+│   │   ├── __init__.py          # Error exports
+│   │   ├── exceptions.py        # Custom exceptions
+│   │   ├── handlers.py          # Error handlers
+│   │   ├── recovery.py          # Recovery strategies
+│   │   └── context.py           # Error context management
+│   ├── logging/
+│   │   ├── __init__.py          # Logging exports
+│   │   ├── config.py            # Logging configuration
+│   │   ├── formatters.py        # Custom formatters
+│   │   ├── handlers.py          # Custom handlers
+│   │   └── filters.py           # Log filters
+│   ├── monitoring/
+│   │   ├── __init__.py          # Monitoring exports
+│   │   ├── metrics.py           # Error metrics
+│   │   ├── alerts.py            # Alert management
+│   │   └── health.py            # Health checks
+│   └── utils/
+│       ├── __init__.py          # Utility exports
+│       ├── retry.py             # Retry decorators
+│       └── circuit_breaker.py   # Circuit breaker pattern
+├── tests/
+│   ├── test_errors/
+│   │   ├── test_exceptions.py
+│   │   ├── test_handlers.py
+│   │   └── test_recovery.py
+│   └── test_integration.py
+├── config/
+│   ├── logging.yaml             # Logging configuration
+│   └── error_handling.yaml      # Error handling config
+└── logs/                        # Log files directory
+    ├── application.log
+    ├── errors.log
+    └── audit.log
+```
+
+## Core Implementation Patterns
+
+### Custom Exception Hierarchy
+
+```python
+# ✅ DO: Create comprehensive exception hierarchy
+from fastmcp import FastMCP
+from typing import Dict, Any, Optional, List
+import traceback
+from datetime import datetime
+from enum import Enum
+
+class ErrorSeverity(str, Enum):
+    """Error severity levels."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class ErrorCategory(str, Enum):
+    """Error category classification."""
+    USER_INPUT = "user_input"
+    SYSTEM = "system"
+    NETWORK = "network"
+    DATABASE = "database"
+    EXTERNAL_API = "external_api"
+    AUTHENTICATION = "authentication"
+    AUTHORIZATION = "authorization"
+    VALIDATION = "validation"
+    CONFIGURATION = "configuration"
+
+class FastMCPError(Exception):
+    """Base exception for FastMCP applications."""
+    
+    def __init__(
+        self,
+        message: str,
+        error_code: str,
+        severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+        category: ErrorCategory = ErrorCategory.SYSTEM,
+        context: Optional[Dict[str, Any]] = None,
+        cause: Optional[Exception] = None,
+        user_message: Optional[str] = None
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.severity = severity
+        self.category = category
+        self.context = context or {}
+        self.cause = cause
+        self.user_message = user_message or message
+        self.timestamp = datetime.utcnow()
+        self.traceback_info = traceback.format_exc() if cause else None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert exception to dictionary for logging."""
+        return {
+            "error_code": self.error_code,
+            "message": self.message,
+            "user_message": self.user_message,
+            "severity": self.severity.value,
+            "category": self.category.value,
+            "context": self.context,
+            "timestamp": self.timestamp.isoformat(),
+            "traceback": self.traceback_info
+        }
+
+class ToolExecutionError(FastMCPError):
+    """Error during tool execution."""
+    
+    def __init__(self, tool_name: str, message: str, **kwargs):
+        super().__init__(
+            message=f"Tool '{tool_name}' execution failed: {message}",
+            error_code="TOOL_EXECUTION_ERROR",
+            category=ErrorCategory.SYSTEM,
+            **kwargs
+        )
+        self.tool_name = tool_name
+
+class ValidationError(FastMCPError):
+    """Input validation error."""
+    
+    def __init__(self, field: str, message: str, value: Any = None, **kwargs):
+        super().__init__(
+            message=f"Validation failed for field '{field}': {message}",
+            error_code="VALIDATION_ERROR",
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.LOW,
+            context={"field": field, "value": str(value) if value is not None else None},
+            user_message=f"Invalid {field}: {message}",
+            **kwargs
+        )
+        self.field = field
+        self.value = value
+
+class ResourceError(FastMCPError):
+    """Resource access error."""
+    
+    def __init__(self, resource_uri: str, message: str, **kwargs):
+        super().__init__(
+            message=f"Resource '{resource_uri}' error: {message}",
+            error_code="RESOURCE_ERROR",
+            category=ErrorCategory.SYSTEM,
+            context={"resource_uri": resource_uri},
+            **kwargs
+        )
+        self.resource_uri = resource_uri
+
+class ExternalAPIError(FastMCPError):
+    """External API communication error."""
+    
+    def __init__(self, api_name: str, status_code: Optional[int] = None, **kwargs):
+        message = f"External API '{api_name}' error"
+        if status_code:
+            message += f" (HTTP {status_code})"
+        
+        super().__init__(
+            message=message,
+            error_code="EXTERNAL_API_ERROR",
+            category=ErrorCategory.EXTERNAL_API,
+            context={"api_name": api_name, "status_code": status_code},
+            **kwargs
+        )
+        self.api_name = api_name
+        self.status_code = status_code
+
+class ConfigurationError(FastMCPError):
+    """Configuration error."""
+    
+    def __init__(self, config_key: str, message: str, **kwargs):
+        super().__init__(
+            message=f"Configuration error for '{config_key}': {message}",
+            error_code="CONFIGURATION_ERROR",
+            category=ErrorCategory.CONFIGURATION,
+            severity=ErrorSeverity.HIGH,
+            context={"config_key": config_key},
+            **kwargs
+        )
+        self.config_key = config_key
+
+# ❌ DON'T: Use generic exceptions without context
+class BadError(Exception):
+    """Generic error without context."""
+    pass
+
+def bad_error_handling():
+    """Poor error handling example."""
+    try:
+        risky_operation()
+    except Exception as e:
+        raise Exception("Something went wrong")  # No context, no classification
+```
+
+### Error Handling Decorators and Context Managers
+
+```python
+# ✅ DO: Implement comprehensive error handling patterns
+import functools
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Callable, TypeVar, Any
+import logging
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+def handle_tool_errors(
+    error_message: str = "Tool execution failed",
+    reraise: bool = True
+) -> Callable:
+    """Decorator for handling tool execution errors."""
+    
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                else:
+                    return func(*args, **kwargs)
+            except FastMCPError:
+                # Re-raise FastMCP errors as-is
+                raise
+            except Exception as e:
+                # Wrap other exceptions in ToolExecutionError
+                tool_name = func.__name__
+                error = ToolExecutionError(
+                    tool_name=tool_name,
+                    message=f"{error_message}: {str(e)}",
+                    cause=e,
+                    context={"args": str(args), "kwargs": str(kwargs)}
+                )
+                logger.error("Tool execution error", extra=error.to_dict())
+                
+                if reraise:
+                    raise error
+                return None
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs) -> T:
+            try:
+                return func(*args, **kwargs)
+            except FastMCPError:
+                raise
+            except Exception as e:
+                tool_name = func.__name__
+                error = ToolExecutionError(
+                    tool_name=tool_name,
+                    message=f"{error_message}: {str(e)}",
+                    cause=e,
+                    context={"args": str(args), "kwargs": str(kwargs)}
+                )
+                logger.error("Tool execution error", extra=error.to_dict())
+                
+                if reraise:
+                    raise error
+                return None
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
+    return decorator
+
+@asynccontextmanager
+async def error_context(operation: str, **context):
+    """Context manager for error handling with context."""
+    start_time = datetime.utcnow()
+    
+    try:
+        logger.info(f"Starting operation: {operation}", extra={"context": context})
+        yield
+        
+    except FastMCPError as e:
+        # Add operation context to existing error
+        e.context.update({
+            "operation": operation,
+            "operation_context": context,
+            "duration": (datetime.utcnow() - start_time).total_seconds()
+        })
+        logger.error(f"Operation failed: {operation}", extra=e.to_dict())
+        raise
+        
+    except Exception as e:
+        # Wrap unexpected errors
+        duration = (datetime.utcnow() - start_time).total_seconds()
+        error = FastMCPError(
+            message=f"Operation '{operation}' failed: {str(e)}",
+            error_code="OPERATION_ERROR",
+            cause=e,
+            context={
+                "operation": operation,
+                "operation_context": context,
+                "duration": duration
+            }
+        )
+        logger.error(f"Operation failed: {operation}", extra=error.to_dict())
+        raise error
+    
+    else:
+        duration = (datetime.utcnow() - start_time).total_seconds()
+        logger.info(f"Operation completed: {operation}", extra={
+            "context": context,
+            "duration": duration
+        })
+
+# Server implementation with error handling
+server = FastMCP("ErrorAwareServer")
+
+@server.tool()
+@handle_tool_errors("User data processing failed")
+async def process_user_data(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Process user data with comprehensive error handling."""
+    async with error_context("process_user_data", user_id=user_id):
+        # Validate input
+        if user_id <= 0:
+            raise ValidationError("user_id", "Must be positive integer", user_id)
+        
+        if not isinstance(data, dict):
+            raise ValidationError("data", "Must be a dictionary", data)
+        
+        # Simulate processing
+        if "name" not in data:
+            raise ValidationError("name", "Required field missing")
+        
+        return {"processed": True, "user_id": user_id, "data": data}
+
+@server.resource(uri="data://user/{user_id}")
+@handle_tool_errors("User resource access failed")
+async def get_user_resource(user_id: str) -> Dict[str, Any]:
+    """Get user resource with error handling."""
+    async with error_context("get_user_resource", user_id=user_id):
+        try:
+            user_id_int = int(user_id)
+        except ValueError:
+            raise ValidationError("user_id", "Must be valid integer", user_id)
+        
+        # Simulate database access
+        if user_id_int == 404:
+            raise ResourceError(f"data://user/{user_id}", "User not found")
+        
+        return {"id": user_id_int, "name": f"User {user_id}"}
+
+# ❌ DON'T: Use bare try-catch without proper error handling
+@server.tool()
+def bad_error_handling(data: Any) -> Any:
+    """Poor error handling example."""
+    try:
+        return process_data(data)
+    except:  # Bare except
+        return None  # Silent failure, no logging
+```
+
+### Structured Logging Configuration
+
+```python
+# ✅ DO: Implement comprehensive structured logging
+import logging
+import logging.config
+import json
+from typing import Dict, Any
+from datetime import datetime
+import os
+from pathlib import Path
+
+# logging/config.py
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging."""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record as JSON."""
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Add extra fields if present
+        if hasattr(record, 'extra_fields'):
+            log_entry.update(record.extra_fields)
+        
+        # Add exception information if present
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        
+        # Add stack trace for errors
+        if record.levelno >= logging.ERROR and record.stack_info:
+            log_entry["stack_trace"] = record.stack_info
+        
+        return json.dumps(log_entry, ensure_ascii=False)
+
+class FastMCPFilter(logging.Filter):
+    """Filter for FastMCP-specific logging."""
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Filter log records based on FastMCP criteria."""
+        # Add request ID if available
+        if hasattr(record, 'request_id'):
+            record.extra_fields = getattr(record, 'extra_fields', {})
+            record.extra_fields['request_id'] = record.request_id
+        
+        # Filter out noisy logs in production
+        if os.getenv('ENVIRONMENT') == 'production':
+            if record.levelno < logging.INFO:
+                return False
+        
+        return True
+
+def setup_logging(config_path: str = None) -> None:
+    """Set up structured logging configuration."""
+    
+    # Ensure logs directory exists
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+    
+    # Default logging configuration
+    default_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "json": {
+                "()": "logging.config.JSONFormatter",
+            },
+            "console": {
+                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            }
+        },
+        "filters": {
+            "fastmcp_filter": {
+                "()": "logging.config.FastMCPFilter",
+            }
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": "INFO",
+                "formatter": "console",
+                "filters": ["fastmcp_filter"],
+                "stream": "ext://sys.stdout"
+            },
+            "file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "level": "DEBUG",
+                "formatter": "json",
+                "filters": ["fastmcp_filter"],
+                "filename": "logs/application.log",
+                "maxBytes": 10485760,  # 10MB
+                "backupCount": 5,
+                "encoding": "utf8"
+            },
+            "error_file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "level": "ERROR",
+                "formatter": "json",
+                "filters": ["fastmcp_filter"],
+                "filename": "logs/errors.log",
+                "maxBytes": 10485760,
+                "backupCount": 10,
+                "encoding": "utf8"
+            }
+        },
+        "loggers": {
+            "fastmcp": {
+                "level": "DEBUG",
+                "handlers": ["console", "file", "error_file"],
+                "propagate": False
+            },
+            "my_mcp_server": {
+                "level": "DEBUG",
+                "handlers": ["console", "file", "error_file"],
+                "propagate": False
+            }
+        },
+        "root": {
+            "level": "INFO",
+            "handlers": ["console", "file"]
+        }
+    }
+    
+    if config_path and Path(config_path).exists():
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    else:
+        config = default_config
+    
+    logging.config.dictConfig(config)
+
+# Usage in server
+setup_logging()
+logger = logging.getLogger("my_mcp_server")
+
+class LoggingMixin:
+    """Mixin for adding structured logging to classes."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger(self.__class__.__module__)
+    
+    def log_operation(self, operation: str, **context):
+        """Log operation with context."""
+        self.logger.info(f"Operation: {operation}", extra={"context": context})
+    
+    def log_error(self, error: Exception, operation: str = None, **context):
+        """Log error with context."""
+        error_data = {"error": str(error), "error_type": type(error).__name__}
+        if operation:
+            error_data["operation"] = operation
+        error_data.update(context)
+        
+        self.logger.error("Error occurred", extra=error_data)
+
+# ❌ DON'T: Use basic logging without structure
+import logging
+
+# Poor logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def bad_logging():
+    logger.info("Something happened")  # No context
+    logger.error("Error!")  # No details
+```
+
+### Retry Mechanisms and Circuit Breakers
+
+```python
+# ✅ DO: Implement robust retry and circuit breaker patterns
+import asyncio
+import time
+from typing import Callable, TypeVar, Any, Optional, List
+from enum import Enum
+import random
+
+T = TypeVar('T')
+
+class RetryStrategy(Enum):
+    """Retry strategy types."""
+    FIXED = "fixed"
+    EXPONENTIAL = "exponential"
+    LINEAR = "linear"
+    RANDOM = "random"
+
+class CircuitBreakerState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Failing, reject requests
+    HALF_OPEN = "half_open"  # Testing if service recovered
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+    strategy: RetryStrategy = RetryStrategy.EXPONENTIAL,
+    exceptions: tuple = (Exception,),
+    retry_on: Optional[Callable[[Exception], bool]] = None
+):
+    """Decorator for retrying operations with various backoff strategies."""
+    
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    if asyncio.iscoroutinefunction(func):
+                        return await func(*args, **kwargs)
+                    else:
+                        return func(*args, **kwargs)
+                        
+                except exceptions as e:
+                    last_exception = e
+                    
+                    # Check if we should retry this specific exception
+                    if retry_on and not retry_on(e):
+                        raise
+                    
+                    # Don't retry on last attempt
+                    if attempt == max_retries:
+                        logger.error(
+                            f"Function {func.__name__} failed after {max_retries + 1} attempts",
+                            extra={"error": str(e), "attempts": attempt + 1}
+                        )
+                        raise
+                    
+                    # Calculate delay
+                    if strategy == RetryStrategy.FIXED:
+                        delay = base_delay
+                    elif strategy == RetryStrategy.EXPONENTIAL:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                    elif strategy == RetryStrategy.LINEAR:
+                        delay = min(base_delay * (attempt + 1), max_delay)
+                    elif strategy == RetryStrategy.RANDOM:
+                        delay = random.uniform(base_delay, base_delay * 2)
+                    
+                    logger.warning(
+                        f"Function {func.__name__} failed, retrying in {delay}s",
+                        extra={"error": str(e), "attempt": attempt + 1, "delay": delay}
+                    )
+                    
+                    await asyncio.sleep(delay)
+            
+            # This should never be reached, but just in case
+            raise last_exception
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                        
+                except exceptions as e:
+                    last_exception = e
+                    
+                    if retry_on and not retry_on(e):
+                        raise
+                    
+                    if attempt == max_retries:
+                        logger.error(
+                            f"Function {func.__name__} failed after {max_retries + 1} attempts",
+                            extra={"error": str(e), "attempts": attempt + 1}
+                        )
+                        raise
+                    
+                    # Calculate delay (same logic as async)
+                    if strategy == RetryStrategy.FIXED:
+                        delay = base_delay
+                    elif strategy == RetryStrategy.EXPONENTIAL:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                    elif strategy == RetryStrategy.LINEAR:
+                        delay = min(base_delay * (attempt + 1), max_delay)
+                    elif strategy == RetryStrategy.RANDOM:
+                        delay = random.uniform(base_delay, base_delay * 2)
+                    
+                    logger.warning(
+                        f"Function {func.__name__} failed, retrying in {delay}s",
+                        extra={"error": str(e), "attempt": attempt + 1, "delay": delay}
+                    )
+                    
+                    time.sleep(delay)
+            
+            raise last_exception
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
+    return decorator
+
+class CircuitBreaker:
+    """Circuit breaker implementation for preventing cascade failures."""
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        timeout: float = 60.0,
+        expected_exception: type = Exception
+    ):
+        self.failure_threshold = failure_threshold
+        self.timeout = timeout
+        self.expected_exception = expected_exception
+        
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = CircuitBreakerState.CLOSED
+    
+    def __call__(self, func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs) -> T:
+            if self.state == CircuitBreakerState.OPEN:
+                if self._should_attempt_reset():
+                    self.state = CircuitBreakerState.HALF_OPEN
+                    logger.info(f"Circuit breaker for {func.__name__} entering HALF_OPEN state")
+                else:
+                    raise ExternalAPIError(
+                        api_name=func.__name__,
+                        message="Circuit breaker is OPEN"
+                    )
+            
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    result = await func(*args, **kwargs)
+                else:
+                    result = func(*args, **kwargs)
+                
+                # Success - reset failure count
+                self._on_success()
+                return result
+                
+            except self.expected_exception as e:
+                self._on_failure()
+                raise
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs) -> T:
+            if self.state == CircuitBreakerState.OPEN:
+                if self._should_attempt_reset():
+                    self.state = CircuitBreakerState.HALF_OPEN
+                    logger.info(f"Circuit breaker for {func.__name__} entering HALF_OPEN state")
+                else:
+                    raise ExternalAPIError(
+                        api_name=func.__name__,
+                        message="Circuit breaker is OPEN"
+                    )
+            
+            try:
+                result = func(*args, **kwargs)
+                self._on_success()
+                return result
+                
+            except self.expected_exception as e:
+                self._on_failure()
+                raise
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
+    def _should_attempt_reset(self) -> bool:
+        """Check if enough time has passed to attempt reset."""
+        return (
+            self.last_failure_time and
+            time.time() - self.last_failure_time >= self.timeout
+        )
+    
+    def _on_success(self):
+        """Handle successful operation."""
+        self.failure_count = 0
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            self.state = CircuitBreakerState.CLOSED
+            logger.info("Circuit breaker reset to CLOSED state")
+    
+    def _on_failure(self):
+        """Handle failed operation."""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitBreakerState.OPEN
+            logger.error(f"Circuit breaker OPENED after {self.failure_count} failures")
+
+# Usage examples
+@server.tool()
+@retry_with_backoff(max_retries=3, strategy=RetryStrategy.EXPONENTIAL)
+@CircuitBreaker(failure_threshold=5, timeout=30.0, expected_exception=ExternalAPIError)
+async def call_external_api(endpoint: str) -> Dict[str, Any]:
+    """Call external API with retry and circuit breaker protection."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"https://api.external.com/{endpoint}")
+        
+        if response.status_code >= 500:
+            raise ExternalAPIError("external_api", response.status_code)
+        
+        return response.json()
+
+# ❌ DON'T: No retry logic or circuit breaker for external calls
+async def unreliable_external_call():
+    """No protection against failures."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://unreliable-api.com/data")
+        return response.json()  # Will fail if API is down
+```
+
+## Best Practices Summary
+
+### Error Classification
+- Create specific exception types for different error categories
+- Include sufficient context for debugging and monitoring
+- Distinguish between user errors and system errors
+- Use appropriate severity levels for error prioritization
+
+### Error Handling Strategy
+- Fail fast for unrecoverable errors
+- Implement graceful degradation for service failures
+- Use retries with exponential backoff for transient failures
+- Implement circuit breakers for external service protection
+
+### Logging Best Practices
+- Use structured logging with JSON format
+- Include correlation IDs for request tracing
+- Log at appropriate levels (DEBUG, INFO, WARN, ERROR, CRITICAL)
+- Avoid logging sensitive information
+
+### Recovery Patterns
+- Implement health checks for service monitoring
+- Use bulkhead pattern to isolate failures
+- Implement timeout patterns for all external calls
+- Design for idempotent operations where possible
+
+### Monitoring Integration
+- Export error metrics for monitoring systems
+- Set up alerting for critical error patterns
+- Implement distributed tracing for complex flows
+- Monitor error rates and response times
+
+## References
+- [FastMCP Error Handling](mdc:fastmcp_py/src/fastmcp/exceptions.py)
+- [Python Logging Best Practices](mdc:https:/docs.python.org/3/library/logging.html)
+- [Circuit Breaker Pattern](mdc:https:/martinfowler.com/bliki/CircuitBreaker.html)
+- [Retry Patterns](mdc:https:/docs.python.org/3/library/asyncio-task.html#retrying)
+- [Structured Logging](mdc:https:/structlog.readthedocs.io)

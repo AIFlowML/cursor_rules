@@ -1,0 +1,553 @@
+---
+description: FastMCP TypeScript  CLI tools
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript development, focusing on CLI tools, development workflow, and deployment patterns for FastMCP servers.
+
+## CLI Architecture
+
+### Command Structure with Yargs
+```typescript
+#!/usr/bin/env node
+
+import { execa } from "execa";
+import yargs from "yargs";
+import { hideBin } from "yargs/helpers";
+
+// ✅ DO: Use async top-level structure with proper error handling
+await yargs(hideBin(process.argv))
+  .scriptName("fastmcp")
+  .command(
+    "dev <file>",
+    "Start a development server",
+    (yargs) => {
+      return yargs.positional("file", {
+        demandOption: true,
+        describe: "The path to the server file",
+        type: "string",
+      });
+    },
+    async (argv) => {
+      try {
+        await execa({
+          stderr: "inherit",
+          stdin: "inherit", 
+          stdout: "inherit",
+        })`npx @wong2/mcp-cli npx tsx ${argv.file}`;
+      } catch (error) {
+        console.error(
+          "[FastMCP Error] Failed to start development server:",
+          error instanceof Error ? error.message : String(error)
+        );
+        process.exit(1);
+      }
+    }
+  )
+  .help()
+  .parseAsync();
+```
+
+### Development Commands
+```typescript
+// ✅ DO: Provide dev command for development workflow
+.command(
+  "dev <file>",
+  "Start a development server with hot reload",
+  (yargs) => {
+    return yargs
+      .positional("file", {
+        demandOption: true,
+        describe: "The path to the server file",
+        type: "string",
+      })
+      .option("watch", {
+        alias: "w",
+        default: true,
+        describe: "Enable file watching for hot reload",
+        type: "boolean",
+      })
+      .option("verbose", {
+        alias: "v",
+        default: false,
+        describe: "Enable verbose logging",
+        type: "boolean",
+      });
+  },
+  async (argv) => {
+    const args = ["npx", "tsx"];
+    
+    if (argv.watch) {
+      args.push("--watch");
+    }
+    
+    args.push(argv.file);
+
+    try {
+      await execa({
+        stderr: "inherit",
+        stdin: "inherit",
+        stdout: "inherit",
+        env: {
+          ...process.env,
+          FASTMCP_DEV: "true",
+          FASTMCP_VERBOSE: argv.verbose.toString(),
+        }
+      })`npx @wong2/mcp-cli ${args.join(" ")}`;
+    } catch (error) {
+      console.error("[FastMCP Error] Development server failed:", error);
+      process.exit(1);
+    }
+  }
+)
+```
+
+### Inspector Command
+```typescript
+// ✅ DO: Provide inspect command for debugging
+.command(
+  "inspect <file>",
+  "Inspect a server file with MCP inspector",
+  (yargs) => {
+    return yargs
+      .positional("file", {
+        demandOption: true,
+        describe: "The path to the server file",
+        type: "string",
+      })
+      .option("port", {
+        alias: "p",
+        default: 3000,
+        describe: "Port for the inspector server",
+        type: "number",
+      });
+  },
+  async (argv) => {
+    try {
+      console.log(`[FastMCP] Starting inspector on port ${argv.port}`);
+      await execa({
+        stderr: "inherit",
+        stdout: "inherit",
+        env: {
+          ...process.env,
+          INSPECTOR_PORT: argv.port.toString(),
+        }
+      })`npx @modelcontextprotocol/inspector npx tsx ${argv.file}`;
+    } catch (error) {
+      console.error("[FastMCP Error] Failed to inspect server:", error);
+      process.exit(1);
+    }
+  }
+)
+```
+
+## Transport Configuration
+
+### Command Line Transport Selection
+```typescript
+// ✅ DO: Support multiple transport types via CLI arguments
+const transportType = process.argv.includes("--http-stream") 
+  ? "httpStream" 
+  : "stdio";
+
+// ✅ DO: Provide clear configuration options
+if (transportType === "httpStream") {
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+  
+  server.start({
+    httpStream: { port: PORT },
+    transportType: "httpStream",
+  });
+
+  console.log(`HTTP Stream MCP server is running at http://localhost:${PORT}/stream`);
+  console.log("Use StreamableHTTPClientTransport to connect to this server");
+} else {
+  server.start({ transportType: "stdio" });
+  console.log("Started stdio transport");
+}
+```
+
+### Advanced Configuration Examples
+```typescript
+// ✅ DO: Support configuration flags for different modes
+if (process.argv.includes("--explicit-ping-config")) {
+  server.start({
+    transportType: "stdio",
+    // Uses ping configuration from server options
+  });
+  console.log("Started stdio transport with explicit ping configuration");
+} else if (process.argv.includes("--disable-roots")) {
+  const serverWithDisabledRoots = new FastMCP({
+    name: "Server (No Roots)",
+    ping: { intervalMs: 10000, logLevel: "debug" },
+    roots: { enabled: false },
+    version: "1.0.0",
+  });
+
+  serverWithDisabledRoots.start({ transportType: "stdio" });
+  console.log("Started stdio transport with roots support disabled");
+} else {
+  server.start({ transportType: "stdio" });
+  console.log("Started stdio transport with default configuration");
+}
+```
+
+## Environment Handling
+
+### Environment Variable Management
+```typescript
+// ✅ DO: Handle environment variables with defaults and validation
+interface ServerConfig {
+  port: number;
+  host: string;
+  logLevel: "debug" | "info" | "warn" | "error";
+  enableHealthCheck: boolean;
+}
+
+function loadConfig(): ServerConfig {
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+  const host = process.env.HOST || "localhost";
+  const logLevel = (process.env.LOG_LEVEL as ServerConfig["logLevel"]) || "info";
+  const enableHealthCheck = process.env.HEALTH_CHECK !== "false";
+
+  // Validate port
+  if (isNaN(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT environment variable: ${process.env.PORT}`);
+  }
+
+  return { port, host, logLevel, enableHealthCheck };
+}
+
+// Usage
+const config = loadConfig();
+console.log(`[FastMCP] Starting server on ${config.host}:${config.port}`);
+```
+
+### Development vs Production Configuration
+```typescript
+// ✅ DO: Differentiate between development and production
+const isDevelopment = process.env.NODE_ENV === "development" || 
+                     process.env.FASTMCP_DEV === "true";
+
+const serverOptions = {
+  name: "FastMCP Server",
+  version: "1.0.0",
+  ping: {
+    enabled: !isDevelopment, // Disable ping in development
+    intervalMs: isDevelopment ? 30000 : 5000,
+    logLevel: isDevelopment ? "debug" : "info",
+  },
+  health: {
+    enabled: true,
+    path: "/health",
+    message: isDevelopment ? "dev-ok" : "ok",
+  },
+};
+```
+
+## Build and Deployment Patterns
+
+### TypeScript Build Configuration
+```typescript
+// ✅ DO: Provide build scripts in package.json
+{
+  "scripts": {
+    "build": "tsc --build",
+    "dev": "tsx --watch src/server.ts",
+    "start": "node dist/server.js",
+    "inspect": "npx @modelcontextprotocol/inspector npx tsx src/server.ts",
+    "test": "vitest",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  }
+}
+```
+
+### Docker Development Setup
+```dockerfile
+# ✅ DO: Provide development Dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Development server with hot reload
+CMD ["npm", "run", "dev"]
+
+# For production
+# RUN npm run build
+# CMD ["npm", "start"]
+```
+
+### Development Scripts
+```typescript
+// scripts/dev.ts
+import { spawn } from "child_process";
+import { watch } from "chokidar";
+import path from "path";
+
+let serverProcess: ReturnType<typeof spawn> | null = null;
+
+function startServer() {
+  if (serverProcess) {
+    serverProcess.kill();
+  }
+
+  console.log("[FastMCP Dev] Starting server...");
+  serverProcess = spawn("npx", ["tsx", "src/server.ts"], {
+    stdio: "inherit",
+    env: { ...process.env, NODE_ENV: "development" }
+  });
+
+  serverProcess.on("exit", (code) => {
+    if (code !== null && code !== 0) {
+      console.error(`[FastMCP Dev] Server exited with code ${code}`);
+    }
+  });
+}
+
+// Watch for file changes
+watch("src/**/*.ts", { ignoreInitial: true })
+  .on("change", (filePath) => {
+    console.log(`[FastMCP Dev] File changed: ${path.relative(process.cwd(), filePath)}`);
+    startServer();
+  });
+
+// Start initial server
+startServer();
+
+// Handle cleanup
+process.on("SIGINT", () => {
+  if (serverProcess) {
+    serverProcess.kill();
+  }
+  process.exit(0);
+});
+```
+
+## Health Check and Monitoring
+
+### Health Endpoint Configuration
+```typescript
+// ✅ DO: Configure health checks for HTTP transport
+const server = new FastMCP({
+  name: "Production Server",
+  version: "1.0.0",
+  health: {
+    enabled: true,
+    path: "/health",
+    status: 200,
+    message: "ok",
+  },
+});
+
+// ✅ DO: Enhanced health check with system information
+const server = new FastMCP({
+  name: "Enhanced Server", 
+  version: "1.0.0",
+  health: {
+    enabled: true,
+    path: "/health",
+    status: 200,
+    message: JSON.stringify({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      version: "1.0.0",
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+    }),
+  },
+});
+```
+
+### Development Monitoring
+```typescript
+// ✅ DO: Add development-specific monitoring
+if (process.env.NODE_ENV === "development") {
+  // Monitor memory usage
+  setInterval(() => {
+    const used = process.memoryUsage();
+    console.log("[FastMCP Dev] Memory usage:");
+    for (let key in used) {
+      console.log(`  ${key}: ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
+    }
+  }, 30000);
+
+  // Monitor event loop lag
+  const start = process.hrtime.bigint();
+  setImmediate(() => {
+    const lag = Number(process.hrtime.bigint() - start) / 1e6;
+    if (lag > 10) {
+      console.warn(`[FastMCP Dev] Event loop lag: ${lag.toFixed(2)}ms`);
+    }
+  });
+}
+```
+
+## Testing and Quality Assurance
+
+### CLI Testing Patterns
+```typescript
+// tests/cli.test.ts
+import { describe, it, expect } from "vitest";
+import { execa } from "execa";
+
+describe("FastMCP CLI", () => {
+  it("should show help when no arguments provided", async () => {
+    const { stdout } = await execa("node", ["dist/bin/fastmcp.js", "--help"]);
+    expect(stdout).toContain("Start a development server");
+    expect(stdout).toContain("Inspect a server file");
+  });
+
+  it("should start dev server with valid file", async () => {
+    const child = execa("node", ["dist/bin/fastmcp.js", "dev", "examples/basic.ts"]);
+    
+    // Let it run for a bit then kill
+    setTimeout(() => child.kill(), 2000);
+    
+    try {
+      await child;
+    } catch (error) {
+      // Expected due to kill
+      expect(error.signal).toBe("SIGTERM");
+    }
+  });
+});
+```
+
+### Integration Testing
+```typescript
+// tests/integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { FastMCP } from "../src/FastMCP.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+describe("FastMCP Integration", () => {
+  let server: FastMCP;
+
+  beforeAll(async () => {
+    server = new FastMCP({
+      name: "Test Server",
+      version: "1.0.0",
+    });
+
+    server.addTool({
+      name: "test-tool",
+      description: "A test tool",
+      execute: async () => "test result",
+    });
+  });
+
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  it("should handle tool execution", async () => {
+    // Test tool execution through MCP protocol
+    // This would involve setting up a mock transport
+  });
+});
+```
+
+## Production Deployment
+
+### Production Server Setup
+```typescript
+// src/production.ts
+import { FastMCP } from "./FastMCP.js";
+
+const server = new FastMCP({
+  name: "Production FastMCP Server",
+  version: process.env.npm_package_version || "1.0.0",
+  ping: {
+    enabled: true,
+    intervalMs: 30000,
+    logLevel: "warn", // Reduce noise in production
+  },
+  health: {
+    enabled: true,
+    path: "/health",
+    status: 200,
+    message: "ok",
+  },
+});
+
+// Production error handling
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[FastMCP Production] Unhandled Rejection at:", promise, "reason:", reason);
+  // Log to monitoring service
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[FastMCP Production] Uncaught Exception:", error);
+  // Log to monitoring service
+  process.exit(1);
+});
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("[FastMCP Production] Received SIGTERM, shutting down gracefully");
+  await server.stop();
+  process.exit(0);
+});
+
+// Start server
+const PORT = parseInt(process.env.PORT || "8080", 10);
+server.start({
+  httpStream: { port: PORT },
+  transportType: "httpStream",
+});
+
+console.log(`[FastMCP Production] Server running on port ${PORT}`);
+```
+
+## Anti-patterns
+
+### ❌ DON'T: Use synchronous operations in CLI
+```typescript
+// ❌ DON'T: Block the event loop
+const config = fs.readFileSync("config.json", "utf8");
+
+// ✅ DO: Use async operations
+const config = await fs.readFile("config.json", "utf8");
+```
+
+### ❌ DON'T: Ignore error handling in CLI commands
+```typescript
+// ❌ DON'T: Let errors crash without context
+await execa`npx tsx ${argv.file}`;
+
+// ✅ DO: Provide helpful error messages
+try {
+  await execa`npx tsx ${argv.file}`;
+} catch (error) {
+  console.error("[FastMCP Error] Command failed:", error.message);
+  if (error.code === "ENOENT") {
+    console.error("Make sure tsx is installed: npm install -g tsx");
+  }
+  process.exit(1);
+}
+```
+
+### ❌ DON'T: Hardcode configuration
+```typescript
+// ❌ DON'T: Hardcode values
+const PORT = 8080;
+
+// ✅ DO: Use environment variables with defaults
+const PORT = parseInt(process.env.PORT || "8080", 10);
+```

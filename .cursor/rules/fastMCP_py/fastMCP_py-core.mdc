@@ -1,0 +1,783 @@
+---
+description: FastMCP Python Core
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0, Pydantic, async/await patterns, and MCP protocol development. You focus on producing clean, type-safe, production-ready FastMCP servers with proper initialization, transport configuration, and lifecycle management.
+
+## FastMCP Server Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   FastMCP       │    │   Transport      │    │   MCP Protocol  │
+│   Server        │───▶│   Layer          │───▶│   Handler       │
+│                 │    │                  │    │                 │
+│ - Initialization│    │ - stdio          │    │ - Tool calls    │
+│ - Configuration │    │ - HTTP/SSE       │    │ - Resources     │
+│ - Lifecycle     │    │ - streamable-http│    │ - Prompts       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Tool/Resource │    │   Authentication │    │   Context       │
+│   Registration  │    │   & Security     │    │   Injection     │
+│   Management    │    │   Layer          │    │   & Session     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py        # Package initialization
+│   │   ├── main.py            # Server entry point
+│   │   ├── server.py          # Core server definition
+│   │   ├── config.py          # Configuration management
+│   │   └── auth.py            # Authentication providers
+│   ├── tools/
+│   │   ├── __init__.py        # Tool exports
+│   │   ├── database.py        # Database tools
+│   │   └── utils.py           # Utility tools
+│   ├── resources/
+│   │   ├── __init__.py        # Resource exports
+│   │   ├── files.py           # File resources
+│   │   └── api.py             # API resources
+│   └── prompts/
+│       ├── __init__.py        # Prompt exports
+│       └── templates.py       # Prompt templates
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py            # Test configuration
+│   ├── test_server.py         # Server tests
+│   └── test_integration.py    # Integration tests
+├── pyproject.toml             # Project configuration
+├── .env                       # Environment variables
+├── docker-compose.yml         # Docker configuration
+└── README.md                  # Documentation
+```
+
+## Core Implementation Patterns
+
+### Basic Server Setup
+
+```python
+# ✅ DO: Proper FastMCP server initialization
+from fastmcp import FastMCP
+from fastmcp.server import Context
+from fastmcp.server.auth import InMemoryOAuthProvider
+from pydantic import BaseModel, Field
+import asyncio
+from typing import Annotated
+
+# Create server with comprehensive configuration
+server = FastMCP(
+    name="my-mcp-server",
+    instructions="A comprehensive MCP server for data operations",
+    # Configure error handling
+    mask_error_details=False,  # Show detailed errors in development
+    # Configure duplicate handling
+    on_duplicate_tools="warn",
+    on_duplicate_resources="warn", 
+    on_duplicate_prompts="warn",
+    # Configure resource prefix format
+    resource_prefix_format="path",  # Use path-style prefixes
+    # Add dependencies
+    dependencies=["pandas>=2.0.0", "httpx>=0.25.0"],
+    # Configure tags for organization
+    tags={"environment": "development", "version": "1.0.0"}
+)
+
+# ❌ DON'T: Minimal initialization without configuration
+server = FastMCP()  # Missing name, configuration, error handling
+```
+
+### Environment-Based Configuration
+
+```python
+# ✅ DO: Environment-based configuration management
+from pydantic import BaseSettings, Field
+from pathlib import Path
+import os
+
+class ServerConfig(BaseSettings):
+    """Server configuration with environment variable support."""
+    
+    class Config:
+        env_file = ".env"
+        env_prefix = "MCP_"
+    
+    # Server settings
+    server_name: str = Field(default="mcp-server", env="MCP_SERVER_NAME")
+    debug: bool = Field(default=False, env="MCP_DEBUG")
+    
+    # Transport settings
+    transport: str = Field(default="stdio", env="MCP_TRANSPORT")
+    host: str = Field(default="127.0.0.1", env="MCP_HOST")
+    port: int = Field(default=8000, env="MCP_PORT")
+    
+    # Authentication settings
+    auth_enabled: bool = Field(default=False, env="MCP_AUTH_ENABLED")
+    oauth_issuer_url: str = Field(default="", env="MCP_OAUTH_ISSUER_URL")
+    
+    # Database settings
+    database_url: str = Field(default="sqlite:///data.db", env="MCP_DATABASE_URL")
+    
+    # Logging settings
+    log_level: str = Field(default="INFO", env="MCP_LOG_LEVEL")
+
+# Load configuration
+config = ServerConfig()
+
+# Configure server with loaded settings
+server = FastMCP(
+    name=config.server_name,
+    mask_error_details=not config.debug,
+    dependencies=["sqlalchemy>=2.0.0"] if "sqlite" in config.database_url else []
+)
+
+# ❌ DON'T: Hardcode configuration values
+server = FastMCP(
+    name="hardcoded-server",  # Not environment-aware
+    mask_error_details=False  # Not configurable
+)
+```
+
+### Transport Configuration
+
+```python
+# ✅ DO: Comprehensive transport setup with proper async handling
+import uvicorn
+from fastmcp.server.http import create_sse_app, create_streamable_http_app
+
+async def run_server_with_transport():
+    """Run server with appropriate transport based on configuration."""
+    
+    if config.transport == "stdio":
+        # Standard I/O transport for CLI integration
+        await server.run_stdio_async()
+        
+    elif config.transport == "sse":
+        # Server-Sent Events transport for web clients
+        app = create_sse_app(
+            server=server,
+            message_path="/messages/",
+            sse_path="/sse",
+            auth=auth_provider if config.auth_enabled else None,
+            debug=config.debug
+        )
+        
+        uvicorn_config = uvicorn.Config(
+            app=app,
+            host=config.host,
+            port=config.port,
+            log_level=config.log_level.lower(),
+            # Production settings
+            access_log=config.debug,
+            reload=config.debug,
+            workers=1 if config.debug else 4
+        )
+        
+        server_instance = uvicorn.Server(uvicorn_config)
+        await server_instance.serve()
+        
+    elif config.transport == "streamable-http":
+        # Streamable HTTP transport for REST-like clients
+        app = create_streamable_http_app(
+            server=server,
+            streamable_http_path="/mcp",
+            auth=auth_provider if config.auth_enabled else None,
+            json_response=True,  # Enable JSON responses
+            stateless_http=False,  # Enable session state
+            debug=config.debug
+        )
+        
+        uvicorn_config = uvicorn.Config(
+            app=app,
+            host=config.host,
+            port=config.port,
+            log_level=config.log_level.lower()
+        )
+        
+        server_instance = uvicorn.Server(uvicorn_config)
+        await server_instance.serve()
+        
+    else:
+        raise ValueError(f"Unsupported transport: {config.transport}")
+
+# Entry point
+if __name__ == "__main__":
+    asyncio.run(run_server_with_transport())
+
+# ❌ DON'T: Use transport without proper configuration
+async def bad_server_setup():
+    await server.run_stdio_async()  # No transport selection logic
+```
+
+## Advanced Patterns
+
+### Authentication and Security
+
+```python
+# ✅ DO: Implement comprehensive authentication
+from fastmcp.server.auth import InMemoryOAuthProvider, OAuthProvider
+from fastmcp.server.auth.auth import (
+    ClientRegistrationOptions, 
+    RevocationOptions
+)
+
+def setup_authentication() -> OAuthProvider:
+    """Set up OAuth authentication provider."""
+    
+    if config.auth_enabled:
+        auth_provider = InMemoryOAuthProvider(
+            issuer_url=config.oauth_issuer_url,
+            service_documentation_url="https://docs.myservice.com/oauth",
+            client_registration_options=ClientRegistrationOptions(
+                supported_response_types=["code"],
+                supported_grant_types=["authorization_code", "refresh_token"],
+                supported_token_endpoint_auth_methods=["client_secret_basic"]
+            ),
+            revocation_options=RevocationOptions(
+                revocation_endpoint_auth_methods_supported=["client_secret_basic"]
+            ),
+            required_scopes=["mcp:tools", "mcp:resources"]
+        )
+        
+        # Configure server with authentication
+        server = FastMCP(
+            name=config.server_name,
+            auth=auth_provider,
+            mask_error_details=True  # Mask errors when auth is enabled
+        )
+        
+        return auth_provider
+    
+    return None
+
+# ❌ DON'T: Skip authentication setup in production
+def bad_auth_setup():
+    # No authentication consideration
+    server = FastMCP(name="insecure-server")
+    return None
+```
+
+### Lifecycle Management with Lifespan
+
+```python
+# ✅ DO: Implement proper lifecycle management
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+import logging
+import asyncpg
+
+@asynccontextmanager
+async def server_lifespan(server: FastMCP) -> AsyncIterator[dict]:
+    """Manage server lifecycle with proper resource initialization and cleanup."""
+    
+    logger = logging.getLogger(__name__)
+    logger.info("Starting server initialization...")
+    
+    # Initialize resources
+    resources = {}
+    
+    try:
+        # Initialize database connection
+        if "postgresql" in config.database_url:
+            logger.info("Connecting to PostgreSQL database...")
+            db_pool = await asyncpg.create_pool(
+                config.database_url,
+                min_size=1,
+                max_size=10,
+                command_timeout=60
+            )
+            resources["db_pool"] = db_pool
+            logger.info("Database connected successfully")
+        
+        # Initialize external services
+        import httpx
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
+        resources["http_client"] = http_client
+        logger.info("HTTP client initialized")
+        
+        # Initialize caches
+        from fastmcp.utilities.cache import TimedCache
+        import datetime
+        
+        cache = TimedCache(expiration=datetime.timedelta(minutes=5))
+        resources["cache"] = cache
+        logger.info("Cache initialized")
+        
+        # Yield resources to the server
+        logger.info("Server initialization complete")
+        yield resources
+        
+    finally:
+        # Cleanup resources
+        logger.info("Starting server cleanup...")
+        
+        if "db_pool" in resources:
+            await resources["db_pool"].close()
+            logger.info("Database connection closed")
+        
+        if "http_client" in resources:
+            await resources["http_client"].aclose()
+            logger.info("HTTP client closed")
+        
+        if "cache" in resources:
+            resources["cache"].clear()
+            logger.info("Cache cleared")
+        
+        logger.info("Server cleanup complete")
+
+# Configure server with lifespan
+server = FastMCP(
+    name=config.server_name,
+    lifespan=server_lifespan
+)
+
+# ❌ DON'T: Ignore resource management
+async def bad_lifespan(server: FastMCP):
+    # No resource initialization or cleanup
+    yield {}
+```
+
+### Error Handling and Logging
+
+```python
+# ✅ DO: Implement comprehensive error handling and logging
+import logging
+from fastmcp.utilities.logging import configure_logging, get_logger
+from fastmcp.exceptions import FastMCPError, ToolError, ResourceError
+
+# Configure structured logging
+configure_logging(
+    level=config.log_level,
+    enable_rich_tracebacks=config.debug
+)
+
+logger = get_logger(__name__)
+
+class ServerError(FastMCPError):
+    """Custom server error for domain-specific issues."""
+    pass
+
+@server.tool()
+async def example_tool_with_error_handling(
+    data: str,
+    context: Context
+) -> str:
+    """Example tool with proper error handling."""
+    
+    try:
+        # Log the operation start
+        await context.info(f"Processing data: {data[:50]}...")
+        
+        # Validate input
+        if not data or len(data.strip()) == 0:
+            raise ToolError("Input data cannot be empty")
+        
+        # Perform operation with error handling
+        result = await process_data_safely(data)
+        
+        # Log success
+        await context.info("Data processed successfully")
+        return result
+        
+    except ToolError:
+        # Re-raise tool errors (they're already user-friendly)
+        raise
+    except ValueError as e:
+        # Convert validation errors to tool errors
+        await context.error(f"Validation error: {e}")
+        raise ToolError(f"Invalid input: {e}")
+    except Exception as e:
+        # Log unexpected errors and convert to tool errors
+        logger.exception("Unexpected error in example_tool")
+        await context.error(f"Unexpected error occurred: {type(e).__name__}")
+        
+        if config.debug:
+            # Show full error in debug mode
+            raise ToolError(f"Processing failed: {e}")
+        else:
+            # Generic error in production
+            raise ToolError("Data processing failed due to internal error")
+
+async def process_data_safely(data: str) -> str:
+    """Process data with proper error handling."""
+    try:
+        # Actual processing logic
+        if "error" in data.lower():
+            raise ValueError("Data contains error keyword")
+        
+        return f"Processed: {data.upper()}"
+        
+    except Exception as e:
+        logger.error(f"Error processing data: {e}")
+        raise
+
+# ❌ DON'T: Ignore error handling
+@server.tool()
+async def bad_tool(data: str) -> str:
+    # No error handling or logging
+    return data.upper()  # Could fail with AttributeError
+```
+
+## Production Deployment Patterns
+
+### Docker Configuration
+
+```dockerfile
+# ✅ DO: Multi-stage Docker build for production
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir build && \
+    pip install --no-cache-dir .
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy application
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY src/ ./src/
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash mcp
+USER mcp
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run server
+CMD ["python", "-m", "src.my_mcp_server.main"]
+```
+
+### Docker Compose for Development
+
+```yaml
+# ✅ DO: Complete docker-compose setup
+version: '3.8'
+
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_DEBUG=true
+      - MCP_DATABASE_URL=postgresql://user:password@postgres:5432/mcpdb
+      - MCP_LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: mcpdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mcpdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+## Testing Patterns
+
+### Comprehensive Server Testing
+
+```python
+# ✅ DO: Comprehensive server testing
+import pytest
+from fastmcp import Client
+from fastmcp.utilities.tests import temporary_settings
+import asyncio
+
+@pytest.fixture
+async def test_server():
+    """Create a test server with in-memory transport."""
+    
+    test_server = FastMCP(
+        name="test-server",
+        mask_error_details=False  # Show all errors in tests
+    )
+    
+    @test_server.tool()
+    async def test_tool(message: str) -> str:
+        return f"Echo: {message}"
+    
+    return test_server
+
+@pytest.fixture
+async def test_client(test_server):
+    """Create a test client connected to the test server."""
+    
+    async with Client(test_server) as client:
+        yield client
+
+@pytest.mark.asyncio
+async def test_server_initialization():
+    """Test server initialization with different configurations."""
+    
+    # Test basic initialization
+    server = FastMCP(name="test")
+    assert server.name == "test"
+    
+    # Test with configuration
+    with temporary_settings(log_level="DEBUG"):
+        server = FastMCP(
+            name="debug-server",
+            mask_error_details=False
+        )
+        assert server.name == "debug-server"
+
+@pytest.mark.asyncio
+async def test_tool_execution(test_client):
+    """Test tool execution through the client."""
+    
+    # List tools
+    tools = await test_client.list_tools()
+    assert len(tools) > 0
+    assert any(tool.name == "test_tool" for tool in tools)
+    
+    # Call tool
+    result = await test_client.call_tool("test_tool", {"message": "Hello"})
+    assert len(result) == 1
+    assert "Echo: Hello" in result[0].text
+
+@pytest.mark.asyncio
+async def test_server_lifecycle():
+    """Test server lifecycle management."""
+    
+    lifecycle_events = []
+    
+    @asynccontextmanager
+    async def test_lifespan(server):
+        lifecycle_events.append("startup")
+        yield {"test": "data"}
+        lifecycle_events.append("shutdown")
+    
+    server = FastMCP(name="lifecycle-test", lifespan=test_lifespan)
+    
+    async with Client(server) as client:
+        # Server should be running
+        assert await client.ping()
+    
+    # Check lifecycle events
+    assert "startup" in lifecycle_events
+    assert "shutdown" in lifecycle_events
+
+# ❌ DON'T: Skip server testing
+def bad_test():
+    # No actual server testing
+    assert True
+```
+
+## Security Best Practices
+
+### Input Validation and Sanitization
+
+```python
+# ✅ DO: Comprehensive input validation
+from pydantic import BaseModel, Field, validator
+from typing import Annotated
+import re
+import html
+
+class SecureInputModel(BaseModel):
+    """Secure input model with comprehensive validation."""
+    
+    username: Annotated[str, Field(
+        min_length=3,
+        max_length=50,
+        pattern=r"^[a-zA-Z0-9_-]+$"
+    )]
+    
+    email: Annotated[str, Field(
+        pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    )]
+    
+    message: Annotated[str, Field(
+        min_length=1,
+        max_length=1000
+    )]
+    
+    @validator('message')
+    def sanitize_message(cls, v):
+        """Sanitize message content."""
+        # Remove potentially dangerous content
+        sanitized = html.escape(v)
+        # Remove script tags and other dangerous elements
+        sanitized = re.sub(r'<script[^>]*>.*?</script>', '', sanitized, flags=re.IGNORECASE | re.DOTALL)
+        return sanitized
+
+@server.tool()
+async def secure_tool(
+    input_data: SecureInputModel,
+    context: Context
+) -> str:
+    """Example of secure tool with proper validation."""
+    
+    try:
+        # Input is already validated by Pydantic
+        await context.info(f"Processing secure input for user: {input_data.username}")
+        
+        # Additional business logic validation
+        if "admin" in input_data.username.lower():
+            raise ToolError("Admin usernames are not allowed")
+        
+        # Process safely
+        result = f"Processed message for {input_data.username}: {input_data.message}"
+        return result
+        
+    except Exception as e:
+        await context.error(f"Security validation failed: {e}")
+        raise ToolError("Input validation failed")
+
+# ❌ DON'T: Skip input validation
+@server.tool()
+async def insecure_tool(data: str) -> str:
+    # No validation, potential XSS/injection risks
+    return f"<div>{data}</div>"
+```
+
+## Anti-patterns and Common Mistakes
+
+### Configuration Anti-patterns
+
+```python
+# ❌ DON'T: Hardcode configuration values
+server = FastMCP(
+    name="hardcoded-server",
+    mask_error_details=False,  # Should be environment-dependent
+    # Missing transport configuration
+    # Missing authentication setup
+    # Missing lifecycle management
+)
+
+# ❌ DON'T: Ignore environment variables
+class BadConfig:
+    SERVER_NAME = "fixed-name"  # Not configurable
+    DEBUG = True  # Always debug mode
+    DATABASE_URL = "sqlite:///prod.db"  # Hardcoded database
+
+# ✅ DO: Use proper configuration management
+class GoodConfig(BaseSettings):
+    server_name: str = Field(env="MCP_SERVER_NAME")
+    debug: bool = Field(default=False, env="MCP_DEBUG")
+    database_url: str = Field(env="MCP_DATABASE_URL")
+```
+
+### Transport Anti-patterns
+
+```python
+# ❌ DON'T: Use single transport without configuration
+async def bad_transport():
+    await server.run_stdio_async()  # Fixed to stdio only
+
+# ❌ DON'T: Ignore production considerations
+async def bad_production_setup():
+    app = server.sse_app()  # No security, monitoring, or error handling
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # Exposed to all interfaces
+
+# ✅ DO: Implement proper transport selection
+async def good_transport():
+    if config.transport == "stdio":
+        await server.run_stdio_async()
+    elif config.transport == "sse":
+        await server.run_sse_async(
+            host=config.host,
+            port=config.port,
+            log_level=config.log_level
+        )
+```
+
+## Best Practices Summary
+
+### Server Initialization
+- Use environment-based configuration with Pydantic BaseSettings
+- Configure appropriate error handling based on environment
+- Set up proper authentication for production deployments
+- Implement comprehensive logging and monitoring
+
+### Transport Configuration
+- Support multiple transport types (stdio, SSE, streamable-http)
+- Configure transports based on deployment environment
+- Use proper security headers and authentication
+- Implement health checks and monitoring endpoints
+
+### Lifecycle Management
+- Implement proper resource initialization and cleanup
+- Use lifespan context managers for resource management
+- Handle startup and shutdown events gracefully
+- Monitor resource usage and connections
+
+### Error Handling
+- Use structured logging with appropriate log levels
+- Implement custom error types for domain-specific issues
+- Mask sensitive error details in production
+- Provide user-friendly error messages
+
+### Security
+- Validate and sanitize all inputs
+- Use authentication in production environments
+- Implement proper authorization checks
+- Follow security best practices for web services
+
+### Testing
+- Test server initialization and configuration
+- Test tool execution and error handling
+- Test lifecycle management and resource cleanup
+- Use in-memory transports for efficient testing
+
+## References
+- [FastMCP Server Documentation](mdc:https:/gofastmcp.com/servers/fastmcp)
+- [MCP Protocol Specification](mdc:https:/spec.modelcontextprotocol.io)
+- [Pydantic Settings Documentation](mdc:https:/docs.pydantic.dev/latest/concepts/pydantic_settings)
+- [AsyncIO Best Practices](mdc:https:/docs.python.org/3/library/asyncio.html)
+- [Uvicorn Configuration](mdc:https:/www.uvicorn.org/settings)

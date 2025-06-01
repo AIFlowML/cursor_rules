@@ -1,0 +1,968 @@
+---
+description: FastMCP TypeScript testing
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript testing, focusing on comprehensive test coverage for MCP servers, tools, resources, sessions, and protocol interactions.
+
+## Testing Architecture
+
+### Test Setup with Vitest
+```typescript
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: "node",
+    setupFiles: ["./tests/setup.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/*.spec.ts"],
+      thresholds: {
+        global: {
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+      },
+    },
+  },
+});
+```
+
+### Test Setup File
+```typescript
+// tests/setup.ts
+import { beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { FastMCP } from "../src/FastMCP.js";
+
+// Global test utilities
+global.createTestServer = (options?: Partial<ServerOptions<any>>) => {
+  return new FastMCP({
+    name: "Test Server",
+    version: "1.0.0",
+    ...options,
+  });
+};
+
+// Clean up resources after tests
+afterEach(() => {
+  // Clean up any global state
+  jest.clearAllMocks?.();
+});
+```
+
+## Unit Testing Patterns
+
+### Testing Tool Definitions
+```typescript
+// tests/tools.test.ts
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { z } from "zod";
+import { FastMCP } from "../src/FastMCP.js";
+
+describe("Tool Tests", () => {
+  let server: FastMCP;
+  
+  beforeEach(() => {
+    server = createTestServer();
+  });
+
+  describe("Tool Registration", () => {
+    it("should register a tool with valid parameters", () => {
+      const tool = {
+        name: "test-tool",
+        description: "A test tool",
+        parameters: z.object({
+          message: z.string().describe("Message to process"),
+        }),
+        execute: async (args: { message: string }) => {
+          return `Hello, ${args.message}!`;
+        },
+      };
+
+      expect(() => server.addTool(tool)).not.toThrow();
+      expect(server.tools).toHaveLength(1);
+    });
+
+    it("should handle tool execution with valid arguments", async () => {
+      const mockExecute = vi.fn().mockResolvedValue("test result");
+      
+      server.addTool({
+        name: "mock-tool",
+        description: "Mock tool for testing",
+        parameters: z.object({ input: z.string() }),
+        execute: mockExecute,
+      });
+
+      const context = createMockContext();
+      const result = await server.tools[0].execute({ input: "test" }, context);
+
+      expect(mockExecute).toHaveBeenCalledWith({ input: "test" }, context);
+      expect(result).toBe("test result");
+    });
+
+    it("should validate tool parameters", async () => {
+      server.addTool({
+        name: "validation-tool",
+        description: "Tool that validates parameters",
+        parameters: z.object({
+          required: z.string(),
+          optional: z.number().optional(),
+        }),
+        execute: async (args) => args,
+      });
+
+      const tool = server.tools[0];
+      const context = createMockContext();
+
+      // Valid parameters
+      expect(async () => {
+        await tool.execute({ required: "test" }, context);
+      }).not.toThrow();
+
+      // Invalid parameters should be caught by schema validation
+      // This would be tested at the MCP protocol level
+    });
+  });
+
+  describe("Tool Annotations", () => {
+    it("should properly set tool annotations", () => {
+      server.addTool({
+        name: "annotated-tool",
+        description: "Tool with annotations",
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: false,
+          idempotentHint: true,
+          streamingHint: false,
+          title: "Test Tool",
+        },
+        execute: async () => "result",
+      });
+
+      const tool = server.tools[0];
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+      expect(tool.annotations?.destructiveHint).toBe(false);
+      expect(tool.annotations?.title).toBe("Test Tool");
+    });
+  });
+});
+
+// Mock context utility
+function createMockContext(): Context<any> {
+  const mockLog = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+
+  const mockStreamContent = vi.fn();
+  const mockReportProgress = vi.fn();
+
+  return {
+    log: mockLog,
+    streamContent: mockStreamContent,
+    reportProgress: mockReportProgress,
+    session: undefined,
+  };
+}
+```
+
+### Testing Resource Management
+```typescript
+// tests/resources.test.ts
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+describe("Resource Tests", () => {
+  let server: FastMCP;
+
+  beforeEach(() => {
+    server = createTestServer();
+  });
+
+  describe("Direct Resources", () => {
+    it("should register and load direct resources", async () => {
+      const mockLoad = vi.fn().mockResolvedValue({ text: "test content" });
+      
+      server.addResource({
+        uri: "test://resource",
+        name: "Test Resource",
+        description: "A test resource",
+        mimeType: "text/plain",
+        load: mockLoad,
+      });
+
+      expect(server.resources).toHaveLength(1);
+      
+      const resource = server.resources[0];
+      const result = await resource.load();
+      
+      expect(mockLoad).toHaveBeenCalled();
+      expect(result).toEqual({ text: "test content" });
+    });
+
+    it("should handle resource loading errors", async () => {
+      const mockLoad = vi.fn().mockRejectedValue(new Error("Load failed"));
+      
+      server.addResource({
+        uri: "test://failing-resource",
+        name: "Failing Resource",
+        load: mockLoad,
+      });
+
+      const resource = server.resources[0];
+      
+      await expect(resource.load()).rejects.toThrow("Load failed");
+    });
+  });
+
+  describe("Resource Templates", () => {
+    it("should register resource templates with arguments", () => {
+      server.addResourceTemplate({
+        uriTemplate: "docs://project/{section}",
+        name: "Documentation",
+        description: "Project documentation sections",
+        arguments: [
+          {
+            name: "section",
+            description: "Documentation section",
+            required: true,
+          },
+        ],
+        load: async (args) => ({
+          text: `Documentation for ${args.section}`,
+        }),
+      });
+
+      expect(server.resourceTemplates).toHaveLength(1);
+    });
+
+    it("should load resource templates with arguments", async () => {
+      const mockLoad = vi.fn().mockResolvedValue({
+        text: "Template content",
+      });
+
+      server.addResourceTemplate({
+        uriTemplate: "test://template/{id}",
+        name: "Template Resource",
+        arguments: [{ name: "id", required: true }],
+        load: mockLoad,
+      });
+
+      const template = server.resourceTemplates[0];
+      const result = await template.load({ id: "123" });
+
+      expect(mockLoad).toHaveBeenCalledWith({ id: "123" });
+      expect(result).toEqual({ text: "Template content" });
+    });
+  });
+
+  describe("Embedded Resources", () => {
+    it("should embed direct resources", async () => {
+      server.addResource({
+        uri: "test://embed",
+        name: "Embeddable Resource",
+        mimeType: "text/plain",
+        load: async () => ({ text: "embedded content" }),
+      });
+
+      const embedded = await server.embedded("test://embed");
+
+      expect(embedded).toEqual({
+        uri: "test://embed",
+        mimeType: "text/plain",
+        text: "embedded content",
+      });
+    });
+
+    it("should embed resource template resources", async () => {
+      server.addResourceTemplate({
+        uriTemplate: "docs://project/{section}",
+        name: "Docs",
+        mimeType: "text/markdown",
+        arguments: [{ name: "section", required: true }],
+        load: async (args) => ({
+          text: `# ${args.section}\n\nContent here`,
+        }),
+      });
+
+      const embedded = await server.embedded("docs://project/api");
+
+      expect(embedded).toEqual({
+        uri: "docs://project/api",
+        mimeType: "text/markdown",
+        text: "# api\n\nContent here",
+      });
+    });
+
+    it("should throw error for non-existent resources", async () => {
+      await expect(server.embedded("test://nonexistent")).rejects.toThrow(
+        "Resource not found: test://nonexistent"
+      );
+    });
+  });
+});
+```
+
+### Testing Content Helpers
+```typescript
+// tests/content.test.ts
+import { describe, it, expect, vi } from "vitest";
+import { readFile } from "fs/promises";
+import { imageContent, audioContent } from "../src/FastMCP.js";
+
+// Mock external dependencies
+vi.mock("fs/promises");
+vi.mock("undici");
+vi.mock("file-type");
+
+describe("Content Helpers", () => {
+  describe("imageContent", () => {
+    it("should process buffer input", async () => {
+      const mockBuffer = Buffer.from("fake image data");
+      
+      // Mock file-type detection
+      const mockFileType = await import("file-type");
+      vi.mocked(mockFileType.fileTypeFromBuffer).mockResolvedValue({
+        ext: "png",
+        mime: "image/png",
+      });
+
+      const result = await imageContent({ buffer: mockBuffer });
+
+      expect(result).toEqual({
+        type: "image",
+        mimeType: "image/png",
+        data: mockBuffer.toString("base64"),
+      });
+    });
+
+    it("should process file path input", async () => {
+      const mockBuffer = Buffer.from("file image data");
+      
+      vi.mocked(readFile).mockResolvedValue(mockBuffer);
+      
+      const mockFileType = await import("file-type");
+      vi.mocked(mockFileType.fileTypeFromBuffer).mockResolvedValue({
+        ext: "jpg",
+        mime: "image/jpeg",
+      });
+
+      const result = await imageContent({ path: "/path/to/image.jpg" });
+
+      expect(result.type).toBe("image");
+      expect(result.mimeType).toBe("image/jpeg");
+      expect(readFile).toHaveBeenCalledWith("/path/to/image.jpg");
+    });
+
+    it("should process URL input", async () => {
+      const mockBuffer = Buffer.from("url image data");
+      
+      // Mock fetch response
+      const mockFetch = await import("undici");
+      const mockResponse = {
+        ok: true,
+        arrayBuffer: () => Promise.resolve(mockBuffer.buffer),
+      };
+      vi.mocked(mockFetch.fetch).mockResolvedValue(mockResponse as any);
+      
+      const mockFileType = await import("file-type");
+      vi.mocked(mockFileType.fileTypeFromBuffer).mockResolvedValue({
+        ext: "png",
+        mime: "image/png",
+      });
+
+      const result = await imageContent({ url: "https://example.com/image.png" });
+
+      expect(result.type).toBe("image");
+      expect(mockFetch.fetch).toHaveBeenCalledWith("https://example.com/image.png");
+    });
+
+    it("should handle fetch errors", async () => {
+      const mockFetch = await import("undici");
+      vi.mocked(mockFetch.fetch).mockRejectedValue(new Error("Network error"));
+
+      await expect(
+        imageContent({ url: "https://example.com/bad-image.png" })
+      ).rejects.toThrow("Failed to fetch image from URL");
+    });
+  });
+});
+```
+
+## Integration Testing
+
+### Testing MCP Protocol Integration
+```typescript
+// tests/integration/mcp-protocol.test.ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { FastMCP, FastMCPSession } from "../../src/FastMCP.js";
+
+describe("MCP Protocol Integration", () => {
+  let server: FastMCP;
+  let session: FastMCPSession;
+
+  beforeEach(() => {
+    server = createTestServer();
+  });
+
+  afterEach(async () => {
+    if (session) {
+      await session.close();
+    }
+  });
+
+  describe("Tool Execution via MCP", () => {
+    it("should handle tool execution through MCP protocol", async () => {
+      // Add a test tool
+      server.addTool({
+        name: "echo-tool",
+        description: "Echo the input",
+        parameters: z.object({
+          message: z.string(),
+        }),
+        execute: async (args) => `Echo: ${args.message}`,
+      });
+
+      // Create a test transport (simplified)
+      const mockTransport = createMockTransport();
+      
+      // Start server with test transport
+      await server.start({ transportType: "stdio" });
+      
+      // Simulate tool call request
+      const toolCallRequest = {
+        method: "tools/call",
+        params: {
+          name: "echo-tool",
+          arguments: { message: "Hello" },
+        },
+      };
+
+      // This would be handled by the MCP SDK
+      // In real integration tests, you'd use actual MCP client
+      const response = await simulateToolCall(server, toolCallRequest);
+      
+      expect(response.content[0].text).toBe("Echo: Hello");
+    });
+  });
+
+  describe("Resource Access via MCP", () => {
+    it("should list resources through MCP protocol", async () => {
+      server.addResource({
+        uri: "test://resource1",
+        name: "Resource 1",
+        load: async () => ({ text: "content" }),
+      });
+
+      server.addResource({
+        uri: "test://resource2", 
+        name: "Resource 2",
+        load: async () => ({ text: "content 2" }),
+      });
+
+      await server.start({ transportType: "stdio" });
+
+      const listRequest = { method: "resources/list", params: {} };
+      const response = await simulateResourceList(server, listRequest);
+
+      expect(response.resources).toHaveLength(2);
+      expect(response.resources[0].name).toBe("Resource 1");
+      expect(response.resources[1].name).toBe("Resource 2");
+    });
+  });
+
+  describe("Streaming Content", () => {
+    it("should handle streaming content through MCP", async () => {
+      const streamingTool = {
+        name: "streaming-tool",
+        description: "Tool that streams content",
+        annotations: { streamingHint: true },
+        execute: async (args: any, context: any) => {
+          await context.streamContent({
+            type: "text",
+            text: "First chunk",
+          });
+
+          await context.streamContent({
+            type: "text", 
+            text: "Second chunk",
+          });
+
+          return; // No final result for streaming tools
+        },
+      };
+
+      server.addTool(streamingTool);
+      await server.start({ transportType: "stdio" });
+
+      const streamedContent: any[] = [];
+      const mockStreamHandler = (content: any) => {
+        streamedContent.push(content);
+      };
+
+      await simulateStreamingToolCall(server, "streaming-tool", {}, mockStreamHandler);
+
+      expect(streamedContent).toHaveLength(2);
+      expect(streamedContent[0].text).toBe("First chunk");
+      expect(streamedContent[1].text).toBe("Second chunk");
+    });
+  });
+});
+
+// Test utilities for MCP protocol simulation
+function createMockTransport() {
+  // Simplified mock transport for testing
+  return {
+    start: vi.fn(),
+    send: vi.fn(),
+    close: vi.fn(),
+  };
+}
+
+async function simulateToolCall(server: FastMCP, request: any) {
+  // Simplified simulation - in real tests use MCP SDK
+  const sessions = server.sessions;
+  if (sessions.length === 0) {
+    throw new Error("No active sessions");
+  }
+  
+  // This would be handled by the actual MCP protocol handler
+  return {
+    content: [{ text: "Simulated response", type: "text" }],
+  };
+}
+
+async function simulateResourceList(server: FastMCP, request: any) {
+  // Simplified simulation
+  return {
+    resources: server.resources.map(r => ({
+      uri: r.uri,
+      name: r.name,
+      description: r.description,
+      mimeType: r.mimeType,
+    })),
+  };
+}
+
+async function simulateStreamingToolCall(
+  server: FastMCP,
+  toolName: string,
+  args: any,
+  streamHandler: (content: any) => void
+) {
+  // Simplified streaming simulation
+  const tool = server.tools.find(t => t.name === toolName);
+  if (!tool) throw new Error(`Tool ${toolName} not found`);
+
+  const mockContext = {
+    ...createMockContext(),
+    streamContent: streamHandler,
+  };
+
+  await tool.execute(args, mockContext);
+}
+```
+
+### Testing Server Lifecycle
+```typescript
+// tests/integration/server-lifecycle.test.ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+
+describe("Server Lifecycle", () => {
+  let server: FastMCP;
+
+  beforeEach(() => {
+    server = createTestServer();
+  });
+
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  describe("Server Startup", () => {
+    it("should start with stdio transport", async () => {
+      await expect(server.start({ transportType: "stdio" })).resolves.not.toThrow();
+      expect(server.sessions).toHaveLength(1);
+    });
+
+    it("should start with HTTP stream transport", async () => {
+      const port = 0; // Use random available port
+      
+      await expect(
+        server.start({
+          transportType: "httpStream",
+          httpStream: { port },
+        })
+      ).resolves.not.toThrow();
+    });
+
+    it("should handle startup errors gracefully", async () => {
+      // Try to start on an invalid port
+      await expect(
+        server.start({
+          transportType: "httpStream",
+          httpStream: { port: -1 },
+        })
+      ).rejects.toThrow();
+    });
+  });
+
+  describe("Server Shutdown", () => {
+    it("should stop cleanly", async () => {
+      await server.start({ transportType: "stdio" });
+      await expect(server.stop()).resolves.not.toThrow();
+    });
+
+    it("should close all sessions on stop", async () => {
+      await server.start({ transportType: "stdio" });
+      expect(server.sessions).toHaveLength(1);
+      
+      await server.stop();
+      
+      // Sessions should be cleaned up
+      for (const session of server.sessions) {
+        expect(session.server.transport).toBeNull();
+      }
+    });
+  });
+
+  describe("Health Checks", () => {
+    it("should respond to health checks when enabled", async () => {
+      const serverWithHealth = new FastMCP({
+        name: "Health Test Server",
+        version: "1.0.0",
+        health: {
+          enabled: true,
+          path: "/health",
+          message: "test-ok",
+        },
+      });
+
+      await serverWithHealth.start({
+        transportType: "httpStream",
+        httpStream: { port: 0 },
+      });
+
+      // In a real test, you'd make an HTTP request to the health endpoint
+      // For now, just verify the server started
+      expect(serverWithHealth.sessions).toBeDefined();
+
+      await serverWithHealth.stop();
+    });
+  });
+});
+```
+
+## Error Testing
+
+### Testing Error Scenarios
+```typescript
+// tests/errors.test.ts
+import { describe, it, expect } from "vitest";
+import { UserError, UnexpectedStateError } from "../src/FastMCP.js";
+
+describe("Error Handling", () => {
+  describe("Tool Execution Errors", () => {
+    it("should handle UserError gracefully", async () => {
+      const server = createTestServer();
+      
+      server.addTool({
+        name: "failing-tool",
+        description: "Tool that throws UserError",
+        execute: async () => {
+          throw new UserError("User-friendly error message");
+        },
+      });
+
+      const tool = server.tools[0];
+      const context = createMockContext();
+
+      // UserError should be caught and returned as error content
+      const result = await tool.execute({}, context);
+      
+      expect(result).toEqual({
+        content: [{ text: "User-friendly error message", type: "text" }],
+        isError: true,
+      });
+    });
+
+    it("should handle system errors", async () => {
+      const server = createTestServer();
+      
+      server.addTool({
+        name: "system-error-tool",
+        description: "Tool that throws system error",
+        execute: async () => {
+          throw new Error("System error");
+        },
+      });
+
+      const tool = server.tools[0];
+      const context = createMockContext();
+
+      const result = await tool.execute({}, context);
+      
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Tool execution failed");
+    });
+
+    it("should handle timeout errors", async () => {
+      const server = createTestServer();
+      
+      server.addTool({
+        name: "timeout-tool",
+        description: "Tool that times out",
+        timeoutMs: 100,
+        execute: async () => {
+          // Simulate long-running operation
+          await new Promise(resolve => setTimeout(resolve, 200));
+          return "Should not reach here";
+        },
+      });
+
+      const tool = server.tools[0];
+      const context = createMockContext();
+
+      const result = await tool.execute({}, context);
+      
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("timed out");
+    });
+  });
+
+  describe("Parameter Validation Errors", () => {
+    it("should validate required parameters", async () => {
+      const server = createTestServer();
+      
+      server.addTool({
+        name: "validation-tool",
+        description: "Tool with validation",
+        parameters: z.object({
+          required: z.string(),
+          optional: z.number().optional(),
+        }),
+        execute: async (args) => `Got: ${args.required}`,
+      });
+
+      // In real MCP integration, parameter validation happens before execute
+      // This test would be at the MCP protocol level
+      const tool = server.tools[0];
+      expect(tool.parameters).toBeDefined();
+    });
+  });
+});
+```
+
+## Mocking and Test Utilities
+
+### Mock Factory Functions
+```typescript
+// tests/utils/mocks.ts
+import { vi } from "vitest";
+import type { Context, FastMCPSession } from "../../src/FastMCP.js";
+
+export function createMockContext<T = any>(overrides?: Partial<Context<T>>): Context<T> {
+  return {
+    log: {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+    streamContent: vi.fn(),
+    reportProgress: vi.fn(),
+    session: undefined,
+    ...overrides,
+  };
+}
+
+export function createMockSession<T = any>(overrides?: Partial<FastMCPSession<T>>): FastMCPSession<T> {
+  return {
+    clientCapabilities: null,
+    loggingLevel: "info",
+    roots: [],
+    server: {} as any,
+    connect: vi.fn(),
+    close: vi.fn(),
+    requestSampling: vi.fn(),
+    ...overrides,
+  } as any;
+}
+
+export function createMockTransport() {
+  return {
+    start: vi.fn(),
+    send: vi.fn(), 
+    close: vi.fn(),
+    onmessage: null,
+    onerror: null,
+    onclose: null,
+  };
+}
+
+// Test data factories
+export const testToolFactory = (overrides?: any) => ({
+  name: "test-tool",
+  description: "A test tool",
+  execute: vi.fn().mockResolvedValue("test result"),
+  ...overrides,
+});
+
+export const testResourceFactory = (overrides?: any) => ({
+  uri: "test://resource",
+  name: "Test Resource",
+  load: vi.fn().mockResolvedValue({ text: "test content" }),
+  ...overrides,
+});
+```
+
+### Performance Testing
+```typescript
+// tests/performance.test.ts
+import { describe, it, expect } from "vitest";
+
+describe("Performance Tests", () => {
+  it("should handle multiple concurrent tool executions", async () => {
+    const server = createTestServer();
+    
+    server.addTool({
+      name: "concurrent-tool",
+      description: "Tool for concurrency testing",
+      execute: async (args: { delay: number }) => {
+        await new Promise(resolve => setTimeout(resolve, args.delay));
+        return `Completed after ${args.delay}ms`;
+      },
+    });
+
+    const tool = server.tools[0];
+    const context = createMockContext();
+
+    const start = Date.now();
+    
+    // Execute 10 tools concurrently
+    const promises = Array.from({ length: 10 }, (_, i) =>
+      tool.execute({ delay: 50 }, context)
+    );
+
+    const results = await Promise.all(promises);
+    const duration = Date.now() - start;
+
+    expect(results).toHaveLength(10);
+    expect(duration).toBeLessThan(200); // Should complete in under 200ms due to concurrency
+  });
+
+  it("should handle large resource loads efficiently", async () => {
+    const server = createTestServer();
+    
+    const largeContent = "x".repeat(1024 * 1024); // 1MB of data
+    
+    server.addResource({
+      uri: "test://large-resource",
+      name: "Large Resource",
+      load: async () => ({ text: largeContent }),
+    });
+
+    const resource = server.resources[0];
+    
+    const start = Date.now();
+    const result = await resource.load();
+    const duration = Date.now() - start;
+
+    expect(result.text).toHaveLength(1024 * 1024);
+    expect(duration).toBeLessThan(100); // Should load quickly
+  });
+});
+```
+
+## Test Coverage and Quality
+
+### Coverage Requirements
+```json
+// vitest.config.ts coverage settings
+{
+  "coverage": {
+    "thresholds": {
+      "global": {
+        "branches": 85,
+        "functions": 90,
+        "lines": 85,
+        "statements": 85
+      },
+      "src/FastMCP.ts": {
+        "branches": 90,
+        "functions": 95,
+        "lines": 90,
+        "statements": 90
+      }
+    }
+  }
+}
+```
+
+### Test Organization
+```
+tests/
+├── unit/
+│   ├── tools.test.ts
+│   ├── resources.test.ts
+│   ├── content.test.ts
+│   └── errors.test.ts
+├── integration/
+│   ├── mcp-protocol.test.ts
+│   ├── server-lifecycle.test.ts
+│   └── streaming.test.ts
+├── performance/
+│   └── performance.test.ts
+├── utils/
+│   ├── mocks.ts
+│   └── factories.ts
+└── setup.ts
+```
+
+## Anti-patterns
+
+### ❌ DON'T: Test implementation details
+```typescript
+// ❌ DON'T: Test private methods
+expect(server.#internalMethod).toHaveBeenCalled();
+
+// ✅ DO: Test public behavior
+expect(server.tools).toHaveLength(1);
+```
+
+### ❌ DON'T: Create brittle tests
+```typescript
+// ❌ DON'T: Test exact log messages
+expect(mockLog.info).toHaveBeenCalledWith("Tool execution started at 2023-12-01T10:00:00.000Z");
+
+// ✅ DO: Test that logging occurs with relevant data
+expect(mockLog.info).toHaveBeenCalledWith(
+  expect.stringContaining("Tool execution started"),
+  expect.objectContaining({ toolName: "test-tool" })
+);
+```
+
+### ❌ DON'T: Ignore async cleanup
+```typescript
+// ❌ DON'T: Forget to clean up resources
+afterEach(() => {
+  // Missing cleanup
+});
+
+// ✅ DO: Proper async cleanup
+afterEach(async () => {
+  if (server) {
+    await server.stop();
+  }
+});
+```

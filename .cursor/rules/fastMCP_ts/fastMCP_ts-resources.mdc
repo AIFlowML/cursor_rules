@@ -1,0 +1,991 @@
+---
+description: FastMCP TypeScript resource management
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript resource management, prompt engineering, and dynamic content serving. You focus on building efficient resource handling with proper caching, validation, and content delivery.
+
+## Resource Management Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Resource      │    │   Resource       │    │   Content       │
+│   Request       │───▶│   Handler        │───▶│   Response      │
+│                 │    │                  │    │                 │
+│ - URI Pattern   │    │ - Validation     │    │ - MIME Type     │
+│ - Parameters    │    │ - Authorization  │    │ - Data/Stream   │
+│ - Cache Headers │    │ - Content Fetch  │    │ - Headers       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Template      │    │   Dynamic        │    │   Embedded      │
+│   Resources     │    │   Generation     │    │   Resources     │
+│   Pattern Match │    │   Content Build  │    │   Direct Access │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Direct Resource Patterns
+
+### Static Resources
+
+```typescript
+import { FastMCP } from "fastmcp";
+import { readFile } from "fs/promises";
+import { createReadStream } from "fs";
+import { z } from "zod";
+
+const server = new FastMCP({
+  name: "resource-example",
+  version: "1.0.0",
+  description: "Example with comprehensive resource management"
+});
+
+// ✅ DO: Static file resources with proper MIME types
+server.addResource({
+  uri: "file://documents/user-guide.pdf",
+  name: "User Guide",
+  description: "Complete user guide documentation",
+  mimeType: "application/pdf",
+  
+  read: async () => {
+    try {
+      const data = await readFile("assets/user-guide.pdf");
+      return {
+        contents: [{
+          uri: "file://documents/user-guide.pdf",
+          mimeType: "application/pdf",
+          blob: data
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to read user guide: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: JSON configuration resources
+server.addResource({
+  uri: "config://app/settings",
+  name: "Application Settings",
+  description: "Current application configuration",
+  mimeType: "application/json",
+  
+  read: async () => {
+    const config = {
+      version: "1.0.0",
+      features: {
+        authentication: true,
+        analytics: false,
+        experimental: true
+      },
+      limits: {
+        maxUsers: 1000,
+        maxConnections: 100,
+        rateLimitPerHour: 3600
+      },
+      lastUpdated: new Date().toISOString()
+    };
+    
+    return {
+      contents: [{
+        uri: "config://app/settings",
+        mimeType: "application/json",
+        text: JSON.stringify(config, null, 2)
+      }]
+    };
+  }
+});
+
+// ✅ DO: Image resources with metadata
+server.addResource({
+  uri: "image://assets/logo.png",
+  name: "Application Logo",
+  description: "High-resolution application logo",
+  mimeType: "image/png",
+  
+  read: async () => {
+    try {
+      const imageData = await readFile("assets/logo.png");
+      
+      return {
+        contents: [{
+          uri: "image://assets/logo.png",
+          mimeType: "image/png",
+          blob: imageData
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to read logo: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Text-based resources with encoding
+server.addResource({
+  uri: "text://logs/application.log",
+  name: "Application Logs",
+  description: "Recent application log entries",
+  mimeType: "text/plain",
+  
+  read: async () => {
+    try {
+      // Get last 1000 lines of log file
+      const logContent = await getRecentLogEntries(1000);
+      
+      return {
+        contents: [{
+          uri: "text://logs/application.log",
+          mimeType: "text/plain",
+          text: logContent
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to read logs: ${error.message}`);
+    }
+  }
+});
+```
+
+### Dynamic Resource Templates
+
+```typescript
+// ✅ DO: Parameterized resource templates
+server.addResourceTemplate({
+  uriTemplate: "user://{userId}/profile",
+  name: "User Profile",
+  description: "Get user profile data by user ID",
+  mimeType: "application/json",
+  
+  read: async (uri) => {
+    // Extract userId from URI
+    const match = uri.match(/user:\/\/([^\/]+)\/profile/);
+    if (!match) {
+      throw new Error("Invalid user profile URI");
+    }
+    
+    const userId = match[1];
+    
+    try {
+      // Validate user ID format
+      if (!/^[a-zA-Z0-9-_]+$/.test(userId)) {
+        throw new Error("Invalid user ID format");
+      }
+      
+      // Fetch user data
+      const user = await getUserById(userId);
+      if (!user) {
+        throw new Error(`User ${userId} not found`);
+      }
+      
+      const profile = {
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin,
+        preferences: user.preferences,
+        stats: {
+          totalSessions: await getUserSessionCount(userId),
+          totalRequests: await getUserRequestCount(userId),
+          averageSessionTime: await getAverageSessionTime(userId)
+        }
+      };
+      
+      return {
+        contents: [{
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify(profile, null, 2)
+        }]
+      };
+      
+    } catch (error) {
+      throw new Error(`Failed to fetch user profile: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: File system template with path validation
+server.addResourceTemplate({
+  uriTemplate: "file://data/{category}/{filename}",
+  name: "Data File Access",
+  description: "Access files in categorized data directories",
+  mimeType: "application/octet-stream",
+  
+  read: async (uri) => {
+    const match = uri.match(/file:\/\/data\/([^\/]+)\/(.+)/);
+    if (!match) {
+      throw new Error("Invalid file URI");
+    }
+    
+    const [, category, filename] = match;
+    
+    try {
+      // Validate category
+      const allowedCategories = ['reports', 'exports', 'templates', 'uploads'];
+      if (!allowedCategories.includes(category)) {
+        throw new Error(`Category '${category}' not allowed`);
+      }
+      
+      // Validate filename (prevent directory traversal)
+      if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+        throw new Error("Invalid filename");
+      }
+      
+      const filePath = `data/${category}/${filename}`;
+      
+      // Check if file exists and get metadata
+      const stats = await getFileStats(filePath);
+      if (!stats) {
+        throw new Error(`File not found: ${filename}`);
+      }
+      
+      // Determine MIME type based on file extension
+      const mimeType = getMimeTypeFromExtension(filename) || "application/octet-stream";
+      
+      // Read file content
+      const data = await readFile(filePath);
+      
+      return {
+        contents: [{
+          uri,
+          mimeType,
+          blob: data
+        }]
+      };
+      
+    } catch (error) {
+      throw new Error(`Failed to access file: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Time-based resource template
+server.addResourceTemplate({
+  uriTemplate: "analytics://{type}/{startDate}/{endDate}",
+  name: "Analytics Report",
+  description: "Generate analytics reports for specified date range",
+  mimeType: "application/json",
+  
+  read: async (uri) => {
+    const match = uri.match(/analytics:\/\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    if (!match) {
+      throw new Error("Invalid analytics URI");
+    }
+    
+    const [, type, startDate, endDate] = match;
+    
+    try {
+      // Validate date format
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new Error("Invalid date format. Use YYYY-MM-DD");
+      }
+      
+      if (start > end) {
+        throw new Error("Start date must be before end date");
+      }
+      
+      // Validate analytics type
+      const allowedTypes = ['sessions', 'requests', 'errors', 'performance'];
+      if (!allowedTypes.includes(type)) {
+        throw new Error(`Analytics type '${type}' not supported`);
+      }
+      
+      // Generate analytics report
+      const analytics = await generateAnalyticsReport(type, start, end);
+      
+      const report = {
+        type,
+        dateRange: {
+          start: startDate,
+          end: endDate
+        },
+        generatedAt: new Date().toISOString(),
+        data: analytics,
+        summary: {
+          totalRecords: analytics.length,
+          averageValue: analytics.reduce((sum, item) => sum + item.value, 0) / analytics.length,
+          peakValue: Math.max(...analytics.map(item => item.value)),
+          trend: calculateTrend(analytics)
+        }
+      };
+      
+      return {
+        contents: [{
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify(report, null, 2)
+        }]
+      };
+      
+    } catch (error) {
+      throw new Error(`Failed to generate analytics: ${error.message}`);
+    }
+  }
+});
+```
+
+### Embedded Resource Integration
+
+```typescript
+// ✅ DO: Use embedded resources in tools
+server.addTool({
+  name: "get-documentation",
+  description: "Access documentation resources",
+  parameters: z.object({
+    section: z.enum(["user-guide", "api-docs", "faq", "changelog"]),
+    format: z.enum(["html", "pdf", "markdown"]).default("html")
+  }),
+  
+  execute: async (args, context) => {
+    const { section, format } = args;
+    const { log } = context;
+    
+    log.info("Documentation requested", { section, format });
+    
+    try {
+      // Build resource URI based on parameters
+      const resourceUri = `docs://${section}.${format}`;
+      
+      // Access embedded resource
+      const resource = await server.embedded(resourceUri);
+      
+      return {
+        content: [
+          { type: "text", text: `## 📚 Documentation: ${section}\n\n` },
+          { type: "text", text: `**Format:** ${format}\n\n` },
+          { type: "resource", resource }
+        ]
+      };
+      
+    } catch (error) {
+      log.error("Documentation access failed", { section, format, error: error.message });
+      throw new UserError(`Documentation not available: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Dynamic resource generation in tools
+server.addTool({
+  name: "generate-report",
+  description: "Generate and serve custom reports",
+  parameters: z.object({
+    reportType: z.enum(["sales", "users", "system", "errors"]),
+    dateRange: z.object({
+      start: z.string(),
+      end: z.string()
+    }),
+    format: z.enum(["json", "csv", "pdf"]).default("json"),
+    includeCharts: z.boolean().default(false)
+  }),
+  
+  execute: async (args, context) => {
+    const { reportType, dateRange, format, includeCharts } = args;
+    const { log, reportProgress } = context;
+    
+    log.info("Report generation started", { reportType, dateRange, format });
+    
+    try {
+      await reportProgress({ progress: 1, total: 5 });
+      
+      // Generate report data
+      const reportData = await generateReportData(reportType, dateRange);
+      
+      await reportProgress({ progress: 2, total: 5 });
+      
+      // Create resource URI for generated report
+      const timestamp = Date.now();
+      const resourceUri = `report://generated/${reportType}-${timestamp}.${format}`;
+      
+      await reportProgress({ progress: 3, total: 5 });
+      
+      // Add temporary resource for this report
+      server.addResource({
+        uri: resourceUri,
+        name: `${reportType} Report`,
+        description: `Generated ${reportType} report for ${dateRange.start} to ${dateRange.end}`,
+        mimeType: getMimeTypeForFormat(format),
+        
+        read: async () => {
+          let content: string | Buffer;
+          
+          switch (format) {
+            case "json":
+              content = JSON.stringify(reportData, null, 2);
+              break;
+            case "csv":
+              content = convertToCSV(reportData);
+              break;
+            case "pdf":
+              content = await generatePDF(reportData, includeCharts);
+              break;
+            default:
+              throw new Error(`Unsupported format: ${format}`);
+          }
+          
+          return {
+            contents: [{
+              uri: resourceUri,
+              mimeType: getMimeTypeForFormat(format),
+              [typeof content === 'string' ? 'text' : 'blob']: content
+            }]
+          };
+        }
+      });
+      
+      await reportProgress({ progress: 4, total: 5 });
+      
+      // Schedule cleanup of temporary resource
+      setTimeout(() => {
+        server.removeResource(resourceUri);
+      }, 3600000); // Remove after 1 hour
+      
+      await reportProgress({ progress: 5, total: 5 });
+      
+      // Return reference to generated resource
+      const resource = await server.embedded(resourceUri);
+      
+      return {
+        content: [
+          { type: "text", text: `## 📊 Report Generated: ${reportType}\n\n` },
+          { 
+            type: "text", 
+            text: `**Date Range:** ${dateRange.start} to ${dateRange.end}\n` +
+                  `**Format:** ${format}\n` +
+                  `**Records:** ${reportData.length}\n` +
+                  `**Generated:** ${new Date().toISOString()}\n\n`
+          },
+          { type: "resource", resource }
+        ]
+      };
+      
+    } catch (error) {
+      log.error("Report generation failed", { reportType, error: error.message });
+      throw new UserError(`Report generation failed: ${error.message}`);
+    }
+  }
+});
+```
+
+## Prompt Management Patterns
+
+### Basic Prompt Definition
+
+```typescript
+// ✅ DO: Structured prompt with clear arguments
+server.addPrompt({
+  name: "code-review",
+  description: "Generate code review comments and suggestions",
+  arguments: [
+    {
+      name: "code",
+      description: "The code to review",
+      required: true
+    },
+    {
+      name: "language",
+      description: "Programming language of the code",
+      required: true
+    },
+    {
+      name: "focus",
+      description: "Areas to focus on (security, performance, style, etc.)",
+      required: false
+    },
+    {
+      name: "strictness",
+      description: "Review strictness level (low, medium, high)",
+      required: false
+    }
+  ],
+  
+  get: async (args) => {
+    const { code, language, focus = "general", strictness = "medium" } = args;
+    
+    // Validate inputs
+    if (!code || code.trim().length === 0) {
+      throw new Error("Code content is required");
+    }
+    
+    const supportedLanguages = ['javascript', 'typescript', 'python', 'java', 'go', 'rust'];
+    if (!supportedLanguages.includes(language.toLowerCase())) {
+      throw new Error(`Language '${language}' not supported. Supported: ${supportedLanguages.join(', ')}`);
+    }
+    
+    // Build comprehensive prompt
+    const prompt = `You are an expert code reviewer specializing in ${language}. 
+Please review the following code with a ${strictness} level of strictness.
+
+**Focus Areas:** ${focus}
+**Language:** ${language}
+**Review Level:** ${strictness}
+
+**Code to Review:**
+\`\`\`${language}
+${code}
+\`\`\`
+
+Please provide:
+1. **Overall Assessment** - General code quality and structure
+2. **Security Issues** - Potential vulnerabilities or security concerns
+3. **Performance** - Optimization opportunities and bottlenecks
+4. **Best Practices** - Adherence to language conventions and patterns
+5. **Maintainability** - Code readability and maintainability concerns
+6. **Specific Recommendations** - Actionable improvements with examples
+
+Format your response with clear sections and provide specific line references where applicable.`;
+
+    return {
+      messages: [
+        {
+          role: "system",
+          content: {
+            type: "text",
+            text: "You are a senior software engineer performing thorough code reviews. Provide constructive, actionable feedback with specific examples."
+          }
+        },
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: prompt
+          }
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Dynamic prompt with context integration
+server.addPrompt({
+  name: "documentation-generator",
+  description: "Generate documentation for code or APIs",
+  arguments: [
+    {
+      name: "type",
+      description: "Type of documentation (api, function, class, module)",
+      required: true
+    },
+    {
+      name: "content",
+      description: "Code or API definition to document",
+      required: true
+    },
+    {
+      name: "audience",
+      description: "Target audience (developers, end-users, admins)",
+      required: false
+    },
+    {
+      name: "format",
+      description: "Output format (markdown, html, jsdoc)",
+      required: false
+    },
+    {
+      name: "includeExamples",
+      description: "Include usage examples",
+      required: false
+    }
+  ],
+  
+  get: async (args) => {
+    const { 
+      type, 
+      content, 
+      audience = "developers", 
+      format = "markdown", 
+      includeExamples = "true" 
+    } = args;
+    
+    // Validate document type
+    const validTypes = ['api', 'function', 'class', 'module', 'endpoint'];
+    if (!validTypes.includes(type)) {
+      throw new Error(`Documentation type '${type}' not supported`);
+    }
+    
+    // Analyze content to provide context
+    const analysis = await analyzeCodeContent(content, type);
+    
+    const contextPrompt = `Generate comprehensive ${format} documentation for a ${type}.
+
+**Target Audience:** ${audience}
+**Documentation Type:** ${type}
+**Output Format:** ${format}
+**Include Examples:** ${includeExamples}
+
+**Content Analysis:**
+- Complexity: ${analysis.complexity}
+- Dependencies: ${analysis.dependencies.join(', ') || 'None'}
+- Public Methods: ${analysis.publicMethods?.length || 0}
+- Parameters: ${analysis.parameters?.length || 0}
+
+**Content to Document:**
+\`\`\`
+${content}
+\`\`\`
+
+Please provide:
+1. **Overview** - Brief description and purpose
+2. **Parameters/Arguments** - Detailed parameter documentation
+3. **Return Values** - What the function/method returns
+4. **Usage Examples** - ${includeExamples === 'true' ? 'Practical usage examples' : 'Basic usage'}
+5. **Error Handling** - Possible errors and how to handle them
+6. **Notes** - Important considerations, limitations, or tips
+
+Use ${format} formatting and ensure the documentation is clear for ${audience}.`;
+
+    return {
+      messages: [
+        {
+          role: "system",
+          content: {
+            type: "text",
+            text: `You are a technical writer specializing in software documentation. Create clear, comprehensive documentation that is appropriate for ${audience}.`
+          }
+        },
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: contextPrompt
+          }
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Multi-modal prompt with resource integration
+server.addPrompt({
+  name: "visual-analysis",
+  description: "Analyze images or visual content with contextual information",
+  arguments: [
+    {
+      name: "imageUri",
+      description: "URI of the image resource to analyze",
+      required: true
+    },
+    {
+      name: "analysisType",
+      description: "Type of analysis (technical, artistic, business, accessibility)",
+      required: true
+    },
+    {
+      name: "context",
+      description: "Additional context about the image",
+      required: false
+    },
+    {
+      name: "outputFormat",
+      description: "Desired output format (detailed, summary, checklist)",
+      required: false
+    }
+  ],
+  
+  get: async (args) => {
+    const { imageUri, analysisType, context = "", outputFormat = "detailed" } = args;
+    
+    try {
+      // Access the image resource
+      const imageResource = await server.embedded(imageUri);
+      
+      // Build analysis prompt
+      const analysisPrompt = `Perform a ${analysisType} analysis of the provided image.
+
+**Analysis Type:** ${analysisType}
+**Output Format:** ${outputFormat}
+${context ? `**Additional Context:** ${context}` : ''}
+
+Based on the analysis type, please focus on:
+
+${getAnalysisFocus(analysisType)}
+
+Provide your analysis in ${outputFormat} format with specific observations and recommendations.`;
+
+      return {
+        messages: [
+          {
+            role: "system",
+            content: {
+              type: "text",
+              text: `You are an expert in visual analysis with specialization in ${analysisType} evaluation. Provide thorough, actionable insights.`
+            }
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: analysisPrompt
+              },
+              {
+                type: "resource",
+                resource: imageResource
+              }
+            ]
+          }
+        ]
+      };
+      
+    } catch (error) {
+      throw new Error(`Failed to access image resource: ${error.message}`);
+    }
+  }
+});
+```
+
+### Advanced Prompt Features
+
+```typescript
+// ✅ DO: Conditional prompt with dynamic structure
+server.addPrompt({
+  name: "adaptive-assistant",
+  description: "Adaptive assistant that changes behavior based on user context",
+  arguments: [
+    {
+      name: "userRole",
+      description: "User's role (developer, manager, analyst, support)",
+      required: true
+    },
+    {
+      name: "taskType",
+      description: "Type of task to assist with",
+      required: true
+    },
+    {
+      name: "urgency",
+      description: "Task urgency level (low, medium, high, critical)",
+      required: false
+    },
+    {
+      name: "previousContext",
+      description: "Previous conversation context",
+      required: false
+    }
+  ],
+  
+  get: async (args) => {
+    const { userRole, taskType, urgency = "medium", previousContext = "" } = args;
+    
+    // Get role-specific configuration
+    const roleConfig = getRoleConfiguration(userRole);
+    const urgencyConfig = getUrgencyConfiguration(urgency);
+    
+    // Build adaptive system prompt
+    const systemPrompt = `You are an AI assistant specifically configured for ${userRole}s.
+
+**User Role:** ${userRole}
+**Task Type:** ${taskType}
+**Urgency Level:** ${urgency}
+
+**Role Configuration:**
+- Communication Style: ${roleConfig.communicationStyle}
+- Technical Level: ${roleConfig.technicalLevel}
+- Preferred Format: ${roleConfig.preferredFormat}
+- Focus Areas: ${roleConfig.focusAreas.join(', ')}
+
+**Urgency Guidelines:**
+- Response Time: ${urgencyConfig.responseTime}
+- Detail Level: ${urgencyConfig.detailLevel}
+- Format: ${urgencyConfig.format}
+
+Adapt your responses according to these configurations. ${urgencyConfig.additionalInstructions}`;
+
+    const messages = [
+      {
+        role: "system",
+        content: {
+          type: "text",
+          text: systemPrompt
+        }
+      }
+    ];
+    
+    // Add previous context if available
+    if (previousContext) {
+      messages.push({
+        role: "assistant",
+        content: {
+          type: "text",
+          text: `Previous context: ${previousContext}`
+        }
+      });
+    }
+    
+    // Add task-specific prompt
+    messages.push({
+      role: "user",
+      content: {
+        type: "text",
+        text: `I need assistance with a ${taskType} task. Please help me according to my role as ${userRole} and the ${urgency} urgency level.`
+      }
+    });
+    
+    return { messages };
+  }
+});
+
+// Helper functions for adaptive prompts
+function getRoleConfiguration(role: string) {
+  const configs = {
+    developer: {
+      communicationStyle: "Technical and precise",
+      technicalLevel: "High",
+      preferredFormat: "Code examples and implementation details",
+      focusAreas: ["implementation", "best practices", "debugging", "optimization"]
+    },
+    manager: {
+      communicationStyle: "Executive summary focused",
+      technicalLevel: "Medium",
+      preferredFormat: "Bullet points and high-level overview",
+      focusAreas: ["timelines", "resources", "risks", "ROI"]
+    },
+    analyst: {
+      communicationStyle: "Data-driven and analytical",
+      technicalLevel: "Medium-High",
+      preferredFormat: "Charts, metrics, and detailed analysis",
+      focusAreas: ["trends", "patterns", "insights", "recommendations"]
+    },
+    support: {
+      communicationStyle: "Clear and step-by-step",
+      technicalLevel: "Low-Medium",
+      preferredFormat: "Troubleshooting steps and user guides",
+      focusAreas: ["problem resolution", "user guidance", "documentation"]
+    }
+  };
+  
+  return configs[role] || configs.developer;
+}
+
+function getUrgencyConfiguration(urgency: string) {
+  const configs = {
+    low: {
+      responseTime: "Standard",
+      detailLevel: "Comprehensive",
+      format: "Detailed explanation with multiple options",
+      additionalInstructions: "Take time to provide thorough analysis and consider multiple approaches."
+    },
+    medium: {
+      responseTime: "Prompt",
+      detailLevel: "Balanced",
+      format: "Clear explanation with primary recommendation",
+      additionalInstructions: "Provide a good balance of speed and thoroughness."
+    },
+    high: {
+      responseTime: "Quick",
+      detailLevel: "Focused",
+      format: "Concise with immediate actionable steps",
+      additionalInstructions: "Prioritize speed and actionability over comprehensive analysis."
+    },
+    critical: {
+      responseTime: "Immediate",
+      detailLevel: "Essential only",
+      format: "Bullet points with critical actions",
+      additionalInstructions: "Focus only on critical information and immediate next steps. Eliminate any unnecessary details."
+    }
+  };
+  
+  return configs[urgency] || configs.medium;
+}
+
+function getAnalysisFocus(analysisType: string): string {
+  const focusAreas = {
+    technical: "- Technical accuracy and implementation details\n- Code quality and architecture\n- Performance implications\n- Security considerations",
+    artistic: "- Visual composition and design principles\n- Color theory and aesthetics\n- Creative elements and style\n- Emotional impact and messaging",
+    business: "- Brand alignment and messaging\n- Target audience appeal\n- Market positioning\n- Call-to-action effectiveness",
+    accessibility: "- WCAG compliance and accessibility standards\n- Color contrast and readability\n- Alternative text requirements\n- User experience for disabled users"
+  };
+  
+  return focusAreas[analysisType] || "- General analysis and observations\n- Key strengths and weaknesses\n- Improvement recommendations";
+}
+```
+
+## Common Anti-Patterns
+
+```typescript
+// ❌ DON'T: Expose sensitive file paths
+server.addResource({
+  uri: "file://secrets/database.conf",  // Exposing sensitive config
+  read: async () => {
+    return { contents: [{ text: "password=secret123" }] };  // Exposing secrets
+  }
+});
+
+// ❌ DON'T: Allow unrestricted file access
+server.addResourceTemplate({
+  uriTemplate: "file://{path}",
+  read: async (uri) => {
+    const path = uri.replace("file://", "");
+    return { contents: [{ blob: await readFile(path) }] };  // Directory traversal risk
+  }
+});
+
+// ❌ DON'T: Create prompts without input validation
+server.addPrompt({
+  name: "bad-prompt",
+  get: async (args) => {
+    return {
+      messages: [{
+        role: "user",
+        content: { type: "text", text: args.input }  // No validation
+      }]
+    };
+  }
+});
+
+// ❌ DON'T: Return undefined or invalid content types
+server.addResource({
+  uri: "bad://resource",
+  read: async () => {
+    return {
+      contents: [{
+        mimeType: "invalid/type",  // Invalid MIME type
+        text: undefined  // Undefined content
+      }]
+    };
+  }
+});
+```
+
+## Testing Patterns
+
+```typescript
+// ✅ DO: Test resource access and generation
+describe("Resource Management", () => {
+  it("should serve static resources correctly", async () => {
+    const result = await server.readResource("config://app/settings");
+    
+    expect(result.contents).toHaveLength(1);
+    expect(result.contents[0].mimeType).toBe("application/json");
+    expect(JSON.parse(result.contents[0].text)).toHaveProperty("version");
+  });
+  
+  it("should handle resource template parameters", async () => {
+    const result = await server.readResource("user://test123/profile");
+    
+    expect(result.contents[0].mimeType).toBe("application/json");
+    const profile = JSON.parse(result.contents[0].text);
+    expect(profile.userId).toBe("test123");
+  });
+  
+  it("should validate resource template URIs", async () => {
+    await expect(server.readResource("user://invalid/../profile"))
+      .rejects.toThrow("Invalid user ID format");
+  });
+  
+  it("should generate prompts with proper structure", async () => {
+    const prompt = await server.getPrompt("code-review", {
+      code: "function test() { return true; }",
+      language: "javascript"
+    });
+    
+    expect(prompt.messages).toHaveLength(2);
+    expect(prompt.messages[0].role).toBe("system");
+    expect(prompt.messages[1].role).toBe("user");
+  });
+});

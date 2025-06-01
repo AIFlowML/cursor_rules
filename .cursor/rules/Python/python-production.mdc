@@ -1,0 +1,542 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Python Production Best Practices
+
+## Overview
+This rule enforces production-ready Python code with proper typing, logging, configuration management, and project structure. Following these practices ensures your Python applications are maintainable, scalable, and robust for production environments.
+
+## Project Structure
+```
+project_name/
+├── .env                 # Environment variables (only for secure keys)
+├── .gitignore
+├── README.md            # Project documentation
+├── pyproject.toml       # Project metadata and dependencies
+├── config/              # Configuration files
+│   └── *.yaml           # YAML configuration files
+├── src/                 # Application source code
+│   └── project_name/    # Main package
+│       ├── __init__.py
+│       ├── main.py      # Application entry point
+│       ├── api/         # API endpoints
+│       ├── agents/      # Agent-related code
+│       ├── db/          # Database-related code
+│       └── tools/       # Utility modules
+│           ├── log_manager.py
+│           ├── config_manager.py
+│           └── utils.py
+├── tests/               # Test files
+│   ├── __init__.py
+│   ├── conftest.py      # Test fixtures
+│   ├── unit/            # Unit tests
+│   └── integration/     # Integration tests
+├── docs/                # Documentation
+│   ├── index.md
+│   └── api.md
+└── logs/                # Log files (git-ignored)
+```
+
+## Package Management
+
+### Recommended Tools
+- **Poetry** or **PDM** for dependency management
+- **venv** for virtual environments
+- **dotenv** for environment variable management
+- **pyenv** for Python version management
+
+### Dependency Management
+Use Poetry or PDM for dependency management and project packaging:
+
+```bash
+# Initialize a new project with Poetry
+poetry init
+poetry add package-name
+
+# Development dependencies
+poetry add --group dev pytest black ruff
+
+# Generate requirements
+poetry export -f requirements.txt > requirements.txt
+```
+
+## Code Quality Standards
+
+### Type Annotations
+All functions and methods must have proper type annotations.
+
+```python
+from typing import List, Dict, Optional, Union, TypeVar, Generic
+
+T = TypeVar('T')
+
+def process_data(input_data: Dict[str, int]) -> List[str]:
+    """Process the input data and return a list of strings."""
+    return [str(item) for item in input_data.values()]
+
+def get_user(user_id: int) -> Optional[Dict[str, Union[str, int]]]:
+    """Get user by ID, return None if not found."""
+    # Implementation
+    return user_data if user_exists else None
+
+class DataProcessor(Generic[T]):
+    """Generic data processor class."""
+    def process(self, data: T) -> T:
+        """Process data of type T."""
+        return data
+```
+
+### Error Handling
+Always use specific exceptions and proper error handling.
+
+```python
+class DatabaseError(Exception):
+    """Base exception for database-related errors."""
+    pass
+
+class ConnectionError(DatabaseError):
+    """Raised when a database connection fails."""
+    pass
+
+try:
+    result = process_data(input_data)
+except (ValueError, KeyError) as e:
+    log.error(f"Error processing data: {e}")
+    # Decide whether to propagate or handle
+    if critical_operation:
+        raise ConnectionError(f"Failed to connect: {e}") from e
+    return default_value
+finally:
+    # Clean up resources
+    connection.close()
+```
+
+### Configuration Management
+Use configuration files instead of hardcoding values.
+
+```python
+from tools import config_manager
+import yaml
+from pathlib import Path
+
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    with open(Path(config_path), "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+# Load config from YAML
+app_config = config_manager.load_config("config/app_config.yaml")
+database_url = app_config["database"]["url"]
+```
+
+### Environment Variables
+Use dotenv for environment variables, keep only sensitive information here.
+
+```python
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Access environment variables
+API_KEY = os.getenv("API_KEY")
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+# Validate required environment variables
+if not API_KEY:
+    raise ValueError("API_KEY environment variable is required")
+```
+
+### Logging
+Use the centralized logging system for all logs.
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+from pathlib import Path
+
+def setup_logger(name: str, log_file: str, level=logging.INFO) -> logging.Logger:
+    """Set up a logger with file and console handlers."""
+    # Create logs directory if it doesn't exist
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Create file handler
+    file_handler = RotatingFileHandler(
+        log_dir / log_file, maxBytes=10485760, backupCount=5
+    )
+    file_handler.setFormatter(formatter)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    
+    # Set up logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Example usage
+log = setup_logger("app", "app.log")
+log.info("Application started")
+log.error(f"Error occurred: {error_message}")
+log.debug(f"Debug information: {debug_info}")
+```
+
+### Testing
+Write comprehensive tests for all functionality.
+
+```python
+import pytest
+
+def test_process_data():
+    """Test the process_data function with various inputs."""
+    # Arrange
+    test_input = {"a": 1, "b": 2}
+    expected_output = ["1", "2"]
+    
+    # Act
+    actual_output = process_data(test_input)
+    
+    # Assert
+    assert actual_output == expected_output
+    
+    # Edge cases
+    assert process_data({}) == []
+    with pytest.raises(TypeError):
+        process_data(None)
+
+@pytest.fixture
+def database():
+    """Test fixture for database connection."""
+    db = connect_to_test_db()
+    yield db
+    db.close()  # Cleanup after test
+
+def test_database_operation(database):
+    """Test database operations using fixture."""
+    result = database.execute_query("SELECT * FROM users")
+    assert len(result) > 0
+```
+
+### Code Style and Linting
+Use consistent code style with automated enforcement:
+
+```bash
+# Format code with black
+black src/ tests/
+
+# Lint with ruff
+ruff check src/ tests/
+
+# Type check with mypy
+mypy src/
+```
+
+### Loop Best Practices
+Prefer comprehensions and avoid range(len()) patterns.
+
+```python
+# Good: Direct iteration
+for item in items:
+    process(item)
+
+# Good: Enumeration when index is needed
+for i, item in enumerate(items):
+    process(i, item)
+
+# Good: List comprehension
+processed = [process(item) for item in items]
+
+# Good: Dictionary comprehension
+processed = {key: process(value) for key, value in items.items()}
+
+# Bad: range(len()) pattern
+for i in range(len(items)):  # Avoid this
+    process(items[i])
+
+# Good: Use zip for multiple iterables
+for a, b in zip(list_a, list_b):
+    process(a, b)
+```
+
+## AGNO Agent Development
+When building agents, follow AGNO framework patterns:
+- Implement proper memory management
+- Use structured outputs
+- Follow reasoning capabilities guidelines
+- Implement proper knowledge integration
+- Implement proper error handling and fallbacks
+
+## Documentation
+All modules, classes, and functions must have proper docstrings.
+
+```python
+def calculate_total(items: list[float]) -> float:
+    """
+    Calculate the total sum of all items in the list.
+    
+    Args:
+        items: List of numeric values to sum
+        
+    Returns:
+        The total sum of all items
+        
+    Raises:
+        TypeError: If any item is not a numeric type
+    """
+    return sum(items)
+```
+
+For larger projects, use Sphinx or MkDocs to generate comprehensive documentation:
+
+```bash
+# Generate documentation with Sphinx
+sphinx-build -b html docs/source/ docs/build/
+
+# Serve MkDocs documentation locally
+mkdocs serve
+```
+
+## Code Organization Principles
+
+### Separation of Concerns
+- Break down code into logical modules with clear responsibilities
+- Separate business logic from infrastructure code
+- Use interfaces/abstract classes to define boundaries
+
+```python
+# Interface
+from abc import ABC, abstractmethod
+from typing import List, Dict
+
+class DataStore(ABC):
+    @abstractmethod
+    def save(self, data: Dict) -> bool:
+        """Save data to the store."""
+        pass
+    
+    @abstractmethod
+    def retrieve(self, id: str) -> Dict:
+        """Retrieve data from the store."""
+        pass
+
+# Implementation
+class PostgresDataStore(DataStore):
+    def save(self, data: Dict) -> bool:
+        # Implementation
+        return True
+    
+    def retrieve(self, id: str) -> Dict:
+        # Implementation
+        return {"id": id, "data": "retrieved"}
+```
+
+### Function Length and Complexity
+- Keep functions focused on a single task
+- Limit function length to ~30 lines
+- Use a maximum of 3 levels of nesting
+- Extract complex conditions into named functions
+
+```python
+# Bad: Complex condition
+if user.is_active and user.has_permission("edit") and (user.role == "admin" or user.is_staff()):
+    # Do something
+
+# Good: Extracted condition
+def can_edit_content(user):
+    has_edit_permission = user.is_active and user.has_permission("edit")
+    has_required_role = user.role == "admin" or user.is_staff()
+    return has_edit_permission and has_required_role
+
+if can_edit_content(user):
+    # Do something
+```
+
+## Database Best Practices
+
+### Connection Management
+Use connection pooling and proper resource management:
+
+```python
+from contextlib import contextmanager
+import psycopg2
+from psycopg2.pool import SimpleConnectionPool
+
+class DatabasePool:
+    def __init__(self, min_conn=1, max_conn=10, **kwargs):
+        self.pool = SimpleConnectionPool(min_conn, max_conn, **kwargs)
+    
+    @contextmanager
+    def connection(self):
+        conn = self.pool.getconn()
+        try:
+            yield conn
+        finally:
+            self.pool.putconn(conn)
+    
+    @contextmanager
+    def cursor(self):
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            try:
+                yield cursor
+            finally:
+                cursor.close()
+
+# Usage
+db = DatabasePool(dbname="mydb", user="user", password="password")
+with db.cursor() as cursor:
+    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    user = cursor.fetchone()
+```
+
+### SQL Injection Prevention
+Always use parameterized queries:
+
+```python
+# Bad - vulnerable to SQL injection
+user_id = request.args.get("user_id")
+cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")  # NEVER DO THIS
+
+# Good - parameterized query
+cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+```
+
+## Testing Workflow
+When fixing code issues:
+1. Run tests to identify failures
+2. Fix one issue at a time
+3. Run tests again after each fix
+4. Repeat until all tests pass
+
+Automated testing commands:
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src
+
+# Generate coverage report
+pytest --cov=src --cov-report=html
+```
+
+## Security Best Practices
+1. Never hardcode credentials
+2. Always validate and sanitize user inputs
+3. Use parameterized queries for database operations
+4. Follow the principle of least privilege
+5. Use HTTPS for all external communications
+6. Implement proper authentication and authorization
+7. Use secure password hashing (bcrypt, Argon2)
+8. Set secure HTTP headers
+
+```python
+# Secure password hashing
+import bcrypt
+
+def hash_password(password: str) -> str:
+    """Hash a password with bcrypt."""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode(), salt)
+    return hashed.decode()
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against its hash."""
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+```
+
+## Optimization
+
+### Performance Considerations
+- Profile before optimizing
+- Use appropriate data structures
+- Prefer built-in functions
+- Use generators for large data sets
+
+```python
+# Bad: Loading entire file into memory
+with open("large_file.txt", "r") as f:
+    lines = f.readlines()  # Loads all lines into memory
+for line in lines:
+    process(line)
+
+# Good: Processing line by line
+with open("large_file.txt", "r") as f:
+    for line in f:  # Reads one line at a time
+        process(line)
+```
+
+### Memory Management
+- Close resources explicitly
+- Use context managers
+- Release large objects when no longer needed
+
+## Deployment
+
+### Containerization
+Use Docker for consistent deployment:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Poetry
+RUN pip install poetry==1.5.1
+
+# Copy Poetry configuration
+COPY pyproject.toml poetry.lock* ./
+
+# Configure Poetry
+RUN poetry config virtualenvs.create false
+
+# Install dependencies
+RUN poetry install --no-interaction --no-ansi --no-root --no-dev
+
+# Copy application code
+COPY . .
+
+# Run the application
+CMD ["python", "-m", "src.main"]
+```
+
+### Monitoring
+Implement proper monitoring and logging:
+
+```python
+# Structured logging for better parsing
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+)
+
+log = structlog.get_logger()
+log.info("User logged in", user_id=user.id, ip_address=request.remote_addr)
+```
+
+## References
+1. [PEP 8 - Style Guide for Python Code](mdc:https:/peps.python.org/pep-0008)
+2. [PEP 484 - Type Hints](mdc:https:/peps.python.org/pep-0484)
+3. [PEP 621 - Storing project metadata in pyproject.toml](mdc:https:/peps.python.org/pep-0621)
+4. [Python Production-Level Coding Practices](mdc:https:/medium.com/red-buffer/python-production-level-coding-practices-4c39246e0233)

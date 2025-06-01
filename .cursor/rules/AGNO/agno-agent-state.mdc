@@ -1,0 +1,140 @@
+---
+description: This rule is need to set properly the agent state in AGNO.
+globs: 
+alwaysApply: false
+---
+# AGNO Agent State
+
+## Core Principles
+- Agent State maintains context and data between agent runs
+- State is persisted across execution cycles when using Storage
+- Implement proper state management for stateful applications
+- Use agent state to track conversational context and user information
+
+## Implementation Patterns
+
+### Basic State Usage
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+# Initialize state with values
+agent.state.set("user_name", "Alice")
+agent.state.set("preferences", {"theme": "dark", "language": "en"})
+
+# Access state values
+user_name = agent.state.get("user_name")
+preferences = agent.state.get("preferences")
+
+# Check if key exists
+if agent.state.has("user_name"):
+    print(f"Hello, {agent.state.get('user_name')}!")
+
+# State is included in the context sent to the model
+response = agent.run("What's my name?")
+
+# State persists between runs in the same session
+response = agent.run("What are my preferences?")
+```
+
+### State Persistence with Storage
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    session_id="user_123_session",
+    storage=SqliteStorage(table_name="agent_sessions", db_file="data.db"),
+)
+
+# State is loaded from storage for existing sessions
+existing_value = agent.state.get("user_name")
+
+# Update state
+agent.state.set("last_interaction", "2023-10-15")
+
+# State is automatically saved to storage after each run
+agent.run("Hello")
+
+# State will be reloaded in future sessions with the same session_id
+```
+
+### Managing Complex State
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+# Nested data structures
+agent.state.set("user", {
+    "name": "Alice",
+    "preferences": {
+        "theme": "dark",
+        "notifications": True
+    },
+    "history": [
+        {"date": "2023-10-12", "action": "login"},
+        {"date": "2023-10-13", "action": "update_profile"}
+    ]
+})
+
+# Update nested fields
+user = agent.state.get("user")
+user["preferences"]["notifications"] = False
+agent.state.set("user", user)
+
+# Or use update for partial updates
+agent.state.update("user", {"last_login": "2023-10-15"})
+```
+
+## State Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `state.get` | `key: str, default=None` | Get a value by key with optional default |
+| `state.set` | `key: str, value: Any` | Set a value by key |
+| `state.has` | `key: str` | Check if a key exists |
+| `state.delete` | `key: str` | Delete a key |
+| `state.update` | `key: str, value: Dict` | Update a dictionary value |
+| `state.clear` | None | Clear all state |
+| `state.get_all` | None | Get all state as a dictionary |
+
+## Best Practices
+- Use descriptive key names for state values
+- Group related values in dictionary structures
+- Implement proper state cleanup for completed conversations
+- Handle state value validation before storage
+- Consider serialization limitations for complex objects
+- Use state for conversational context and user preferences
+- Avoid storing sensitive information in state
+- Implement TTL (time-to-live) for ephemeral state values
+
+## State Access in Tools and Functions
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+def counter_tool(agent_state):
+    """Increment a counter in the agent state"""
+    count = agent_state.get("counter", 0)
+    count += 1
+    agent_state.set("counter", count)
+    return f"Counter: {count}"
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[counter_tool],
+)
+
+# State can be accessed and modified from tools
+agent.run("Increment the counter")
+```

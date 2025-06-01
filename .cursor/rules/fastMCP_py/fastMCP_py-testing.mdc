@@ -1,0 +1,755 @@
+---
+description: FastMCP Python v2.0 testing strategies pytest
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 testing strategies, pytest integration, in-memory testing, transport testing, and comprehensive test coverage patterns. You focus on creating robust test suites with unit tests, integration tests, fixture management, and efficient testing workflows.
+
+## FastMCP Testing Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Test          │    │   Test           │    │   Verified      │
+│   Planning      │───▶│   Execution      │───▶│   Components    │
+│                 │    │                  │    │                 │
+│ - Unit tests    │    │ - In-memory      │    │ - Tools work    │
+│ - Integration   │    │   transport      │    │ - Resources OK  │
+│ - Fixtures      │    │ - Real servers   │    │ - Prompts valid │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Mock/Stub     │    │   Performance    │    │   Coverage      │
+│   Management    │    │   Testing        │    │   Analysis      │
+│   & Data        │    │   & Validation   │    │   & Reporting   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_testing_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py          # Main server package
+│   │   ├── server.py            # Server implementation
+│   │   ├── tools.py             # Tool definitions
+│   │   ├── resources.py         # Resource handlers
+│   │   └── models.py            # Data models
+├── tests/
+│   ├── __init__.py              # Test package
+│   ├── conftest.py              # Pytest fixtures
+│   ├── unit/                    # Unit tests
+│   │   ├── __init__.py
+│   │   ├── test_tools.py        # Tool unit tests
+│   │   ├── test_resources.py    # Resource unit tests
+│   │   ├── test_prompts.py      # Prompt unit tests
+│   │   └── test_models.py       # Model unit tests
+│   ├── integration/             # Integration tests
+│   │   ├── __init__.py
+│   │   ├── test_server.py       # Server integration
+│   │   ├── test_transports.py   # Transport testing
+│   │   └── test_workflows.py    # End-to-end workflows
+│   ├── fixtures/                # Test data
+│   │   ├── __init__.py
+│   │   ├── data.py              # Test data generators
+│   │   ├── mocks.py             # Mock objects
+│   │   └── servers.py           # Test server configs
+│   ├── performance/             # Performance tests
+│   │   ├── __init__.py
+│   │   ├── test_load.py         # Load testing
+│   │   └── test_concurrency.py  # Concurrent access
+│   └── utils/                   # Test utilities
+│       ├── __init__.py
+│       ├── helpers.py           # Test helpers
+│       └── assertions.py        # Custom assertions
+├── pyproject.toml               # Test dependencies
+└── pytest.ini                  # Pytest configuration
+```
+
+## Core Implementation Patterns
+
+### In-Memory Testing (Primary Pattern)
+
+```python
+# ✅ DO: Use in-memory testing for fast, reliable unit tests
+import pytest
+from fastmcp import FastMCP, Client
+from typing import Any, Dict, List
+
+@pytest.fixture
+def mcp_server():
+    """Create a test MCP server with tools and resources."""
+    server = FastMCP("TestServer")
+    
+    @server.tool()
+    def add_numbers(a: int, b: int) -> int:
+        """Add two numbers together."""
+        return a + b
+    
+    @server.tool()
+    async def fetch_data(url: str) -> str:
+        """Fetch data from URL (simulated)."""
+        return f"Data from {url}"
+    
+    @server.resource(uri="data://users")
+    async def get_users():
+        """Get list of users."""
+        return ["Alice", "Bob", "Charlie"]
+    
+    @server.resource(uri="data://user/{user_id}")
+    async def get_user(user_id: str):
+        """Get specific user data."""
+        return {"id": user_id, "name": f"User {user_id}"}
+    
+    @server.prompt()
+    def welcome(name: str) -> str:
+        """Welcome prompt template."""
+        return f"Welcome to our service, {name}!"
+    
+    return server
+
+async def test_tool_execution(mcp_server):
+    """Test tool execution with in-memory transport."""
+    async with Client(mcp_server) as client:
+        # Test synchronous tool
+        result = await client.call_tool("add_numbers", {"a": 5, "b": 3})
+        assert result[0].text == "8"
+        
+        # Test asynchronous tool
+        result = await client.call_tool("fetch_data", {"url": "https://api.example.com"})
+        assert result[0].text == "Data from https://api.example.com"
+
+async def test_resource_access(mcp_server):
+    """Test resource access patterns."""
+    async with Client(mcp_server) as client:
+        # Test static resource
+        result = await client.read_resource("data://users")
+        assert "Alice" in result[0].text
+        
+        # Test templated resource
+        result = await client.read_resource("data://user/123")
+        assert "User 123" in result[0].text
+
+async def test_prompt_generation(mcp_server):
+    """Test prompt generation."""
+    async with Client(mcp_server) as client:
+        result = await client.get_prompt("welcome", {"name": "John"})
+        assert "Welcome to our service, John!" in result.messages[0].content.text
+
+# ❌ DON'T: Skip in-memory testing or only test with real transports
+async def bad_test_with_real_server():
+    """Avoid this - slow and unreliable."""
+    # This requires actual server startup and network calls
+    from fastmcp.client.transports import SSETransport
+    client = Client(transport=SSETransport("http://localhost:8080/sse"))
+    # Fragile - depends on external server
+```
+
+### Test Fixtures and Data Management
+
+```python
+# ✅ DO: Comprehensive fixture management in conftest.py
+# tests/conftest.py
+import pytest
+import asyncio
+from fastmcp import FastMCP, Client
+from typing import AsyncGenerator, Generator, Dict, Any
+from unittest.mock import AsyncMock, MagicMock
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for async tests."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture
+def sample_users() -> List[Dict[str, Any]]:
+    """Sample user data for testing."""
+    return [
+        {"id": 1, "name": "Alice", "email": "alice@example.com", "active": True},
+        {"id": 2, "name": "Bob", "email": "bob@example.com", "active": True},
+        {"id": 3, "name": "Charlie", "email": "charlie@example.com", "active": False}
+    ]
+
+@pytest.fixture
+def mock_database():
+    """Mock database connection."""
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.fetchall = AsyncMock(return_value=[])
+    db.fetchone = AsyncMock(return_value=None)
+    return db
+
+@pytest.fixture
+async def database_server(mock_database, sample_users):
+    """Server with database operations."""
+    server = FastMCP("DatabaseServer")
+    
+    @server.tool()
+    async def get_user(user_id: int) -> Dict[str, Any]:
+        """Get user by ID."""
+        user = next((u for u in sample_users if u["id"] == user_id), None)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+        return user
+    
+    @server.tool()
+    async def create_user(name: str, email: str) -> Dict[str, Any]:
+        """Create new user."""
+        new_user = {
+            "id": len(sample_users) + 1,
+            "name": name,
+            "email": email,
+            "active": True
+        }
+        sample_users.append(new_user)
+        return new_user
+    
+    return server
+
+@pytest.fixture
+async def client_session(mcp_server) -> AsyncGenerator[Client, None]:
+    """Client session for testing."""
+    async with Client(mcp_server) as client:
+        yield client
+
+# ❌ DON'T: Create fixtures without proper cleanup or scope
+@pytest.fixture
+def bad_fixture():
+    # No cleanup, wrong scope, no type hints
+    return SomeResource()  # Resource leak!
+```
+
+### Error and Exception Testing
+
+```python
+# ✅ DO: Comprehensive error scenario testing
+import pytest
+from fastmcp import FastMCP, Client
+from fastmcp.exceptions import ToolError, McpError
+from pydantic import ValidationError
+
+@pytest.fixture
+def error_server():
+    """Server with various error scenarios."""
+    server = FastMCP("ErrorServer")
+    
+    @server.tool()
+    def divide_numbers(a: int, b: int) -> float:
+        """Divide two numbers."""
+        if b == 0:
+            raise ValueError("Cannot divide by zero")
+        return a / b
+    
+    @server.tool()
+    async def validate_email(email: str) -> bool:
+        """Validate email format."""
+        import re
+        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+            raise ValueError("Invalid email format")
+        return True
+    
+    @server.resource(uri="error://not-found")
+    async def missing_resource():
+        """Resource that always fails."""
+        raise FileNotFoundError("Resource not found")
+    
+    return server
+
+async def test_tool_error_handling(error_server):
+    """Test proper error handling in tools."""
+    async with Client(error_server) as client:
+        # Test validation error
+        with pytest.raises(McpError) as exc_info:
+            await client.call_tool("divide_numbers", {"a": 10, "b": 0})
+        
+        assert "Cannot divide by zero" in str(exc_info.value)
+        
+        # Test invalid email
+        with pytest.raises(McpError):
+            await client.call_tool("validate_email", {"email": "invalid-email"})
+
+async def test_resource_error_handling(error_server):
+    """Test resource error scenarios."""
+    async with Client(error_server) as client:
+        with pytest.raises(McpError):
+            await client.read_resource("error://not-found")
+
+async def test_parameter_validation():
+    """Test parameter validation errors."""
+    server = FastMCP("ValidationServer")
+    
+    @server.tool()
+    def typed_function(count: int, name: str) -> str:
+        """Function with strict typing."""
+        return f"Count: {count}, Name: {name}"
+    
+    async with Client(server) as client:
+        # Test missing parameters
+        with pytest.raises(McpError):
+            await client.call_tool("typed_function", {"count": 5})  # Missing 'name'
+        
+        # Test wrong type
+        with pytest.raises(McpError):
+            await client.call_tool("typed_function", {"count": "not-a-number", "name": "test"})
+
+# ❌ DON'T: Skip error testing or use generic assertions
+async def bad_error_test():
+    """Insufficient error testing."""
+    try:
+        result = await client.call_tool("might_fail", {})
+        assert result  # Too generic
+    except Exception:
+        pass  # Swallowing all errors without verification
+```
+
+### Integration Testing with Real Transports
+
+```python
+# ✅ DO: Test with real transports for integration scenarios
+import pytest
+import sys
+from fastmcp import FastMCP
+from fastmcp.client import Client
+from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+from fastmcp.utilities.tests import run_server_in_process
+
+def create_integration_server():
+    """Create server for integration testing."""
+    server = FastMCP("IntegrationServer")
+    
+    @server.tool()
+    def ping() -> str:
+        """Simple ping tool."""
+        return "pong"
+    
+    @server.tool()
+    async def heavy_computation(size: int) -> str:
+        """Simulate heavy computation."""
+        import asyncio
+        await asyncio.sleep(0.1)  # Simulate work
+        return f"Processed {size} items"
+    
+    @server.resource(uri="integration://status")
+    async def get_status():
+        """Get server status."""
+        return {"status": "running", "timestamp": "2024-01-01T00:00:00Z"}
+    
+    return server
+
+def run_test_server(host: str, port: int):
+    """Run server for testing."""
+    import uvicorn
+    server = create_integration_server()
+    app = server.http_app(transport="sse")
+    uvicorn.run(app, host=host, port=port, log_level="error")
+
+@pytest.mark.skipif(
+    sys.platform == "win32", 
+    reason="Process-based testing flaky on Windows"
+)
+async def test_sse_transport_integration():
+    """Test SSE transport integration."""
+    with run_server_in_process(run_test_server) as server_url:
+        sse_url = f"{server_url}/sse"
+        
+        async with Client(transport=SSETransport(sse_url)) as client:
+            # Test basic functionality
+            result = await client.call_tool("ping", {})
+            assert result[0].text == "pong"
+            
+            # Test resource access
+            result = await client.read_resource("integration://status")
+            assert "running" in result[0].text
+
+async def test_timeout_handling():
+    """Test timeout scenarios."""
+    with run_server_in_process(run_test_server) as server_url:
+        async with Client(
+            transport=SSETransport(f"{server_url}/sse"),
+            timeout=0.05  # Very short timeout
+        ) as client:
+            # This should timeout
+            with pytest.raises(McpError, match="Timed out"):
+                await client.call_tool("heavy_computation", {"size": 1000})
+
+# ❌ DON'T: Only test with in-memory transport for integration tests
+async def incomplete_integration_test():
+    """Missing real transport testing."""
+    # Only tests in-memory - doesn't catch transport-specific issues
+    server = create_integration_server()
+    async with Client(server) as client:
+        await client.call_tool("ping", {})
+```
+
+### Performance and Load Testing
+
+```python
+# ✅ DO: Include performance benchmarks
+import pytest
+import asyncio
+import time
+from statistics import mean, stdev
+from concurrent.futures import ThreadPoolExecutor
+
+@pytest.mark.performance
+async def test_tool_performance(mcp_server):
+    """Test tool execution performance."""
+    async with Client(mcp_server) as client:
+        # Warm up
+        await client.call_tool("add_numbers", {"a": 1, "b": 2})
+        
+        # Performance test
+        start_time = time.time()
+        tasks = []
+        
+        for i in range(100):
+            task = client.call_tool("add_numbers", {"a": i, "b": i + 1})
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks)
+        end_time = time.time()
+        
+        # Assertions
+        assert len(results) == 100
+        total_time = end_time - start_time
+        assert total_time < 1.0  # Should complete within 1 second
+        
+        # Check results
+        for i, result in enumerate(results):
+            expected = str(i + (i + 1))
+            assert result[0].text == expected
+
+@pytest.mark.performance
+async def test_concurrent_access(mcp_server):
+    """Test concurrent client access."""
+    async def worker_task(worker_id: int):
+        """Single worker task."""
+        async with Client(mcp_server) as client:
+            results = []
+            for i in range(10):
+                result = await client.call_tool("add_numbers", {"a": worker_id, "b": i})
+                results.append(int(result[0].text))
+            return results
+    
+    # Run multiple workers concurrently
+    workers = 5
+    tasks = [worker_task(i) for i in range(workers)]
+    results = await asyncio.gather(*tasks)
+    
+    # Verify all workers completed successfully
+    assert len(results) == workers
+    for worker_results in results:
+        assert len(worker_results) == 10
+
+@pytest.mark.performance
+async def test_resource_caching_performance(mcp_server):
+    """Test resource access performance and caching."""
+    async with Client(mcp_server) as client:
+        # Time first access
+        start = time.time()
+        result1 = await client.read_resource("data://users")
+        first_time = time.time() - start
+        
+        # Time subsequent access (should be faster if cached)
+        start = time.time()
+        result2 = await client.read_resource("data://users")
+        second_time = time.time() - start
+        
+        # Results should be identical
+        assert result1[0].text == result2[0].text
+        
+        # Performance characteristics (adjust based on implementation)
+        assert first_time < 0.1  # First access should be fast
+        assert second_time < 0.1  # Second access should also be fast
+
+# ❌ DON'T: Skip performance testing entirely
+def no_performance_test():
+    """Missing performance considerations."""
+    # No timing, no concurrency testing, no load testing
+    pass
+```
+
+## Advanced Testing Patterns
+
+### Mock and Stub Integration
+
+```python
+# ✅ DO: Strategic mocking for external dependencies
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+import httpx
+
+@pytest.fixture
+def external_api_server():
+    """Server that depends on external APIs."""
+    server = FastMCP("ExternalAPIServer")
+    
+    @server.tool()
+    async def fetch_weather(city: str) -> str:
+        """Fetch weather data from external API."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"https://api.weather.com/v1/weather?city={city}")
+            data = response.json()
+            return f"Weather in {city}: {data['condition']}"
+    
+    @server.tool()
+    async def send_notification(message: str, user_id: int) -> bool:
+        """Send notification via external service."""
+        # Simulate external service call
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://notifications.service.com/send",
+                json={"message": message, "user_id": user_id}
+            )
+            return response.status_code == 200
+    
+    return server
+
+@patch('httpx.AsyncClient')
+async def test_external_api_mocking(mock_client_class, external_api_server):
+    """Test with mocked external API calls."""
+    # Setup mock
+    mock_client = AsyncMock()
+    mock_client_class.return_value.__aenter__.return_value = mock_client
+    
+    # Mock weather API response
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"condition": "sunny"}
+    mock_client.get.return_value = mock_response
+    
+    # Test the tool
+    async with Client(external_api_server) as client:
+        result = await client.call_tool("fetch_weather", {"city": "London"})
+        assert "Weather in London: sunny" == result[0].text
+        
+        # Verify API was called correctly
+        mock_client.get.assert_called_once_with(
+            "https://api.weather.com/v1/weather?city=London"
+        )
+
+async def test_notification_service_failure(external_api_server):
+    """Test handling of external service failures."""
+    with patch('httpx.AsyncClient') as mock_client_class:
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        
+        # Simulate service failure
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_client.post.return_value = mock_response
+        
+        async with Client(external_api_server) as client:
+            result = await client.call_tool("send_notification", 
+                                          {"message": "Hello", "user_id": 123})
+            # Tool should handle failure gracefully
+            assert result[0].text == "False"  # or however your tool handles failures
+
+# ❌ DON'T: Mock everything or nothing
+@patch('entire_module')  # Too broad
+async def over_mocked_test(mock_module):
+    # Mocking too much - test loses value
+    pass
+
+async def under_mocked_test():
+    # No mocking - test becomes dependent on external services
+    # Will fail when services are down or slow
+    pass
+```
+
+### Test Configuration and Environment Management
+
+```python
+# ✅ DO: Proper test configuration management
+# pytest.ini
+"""
+[tool:pytest]
+minversion = 6.0
+addopts = 
+    -ra -q 
+    --strict-markers
+    --strict-config
+    --cov=src
+    --cov-report=term-missing
+    --cov-report=html
+    --tb=short
+testpaths = tests
+markers =
+    slow: marks tests as slow (deselect with '-m "not slow"')
+    integration: marks tests as integration tests
+    performance: marks tests as performance tests
+    unit: marks tests as unit tests
+asyncio_mode = auto
+"""
+
+# tests/conftest.py - Environment configuration
+import os
+import pytest
+from typing import Dict, Any
+
+@pytest.fixture(scope="session", autouse=True)
+def test_environment():
+    """Set up test environment variables."""
+    test_env = {
+        "FASTMCP_LOG_LEVEL": "DEBUG",
+        "FASTMCP_TEST_MODE": "true",
+        "EXTERNAL_API_TIMEOUT": "1.0",
+        "DATABASE_URL": "sqlite:///:memory:",
+    }
+    
+    # Store original values
+    original_env = {}
+    for key, value in test_env.items():
+        original_env[key] = os.getenv(key)
+        os.environ[key] = value
+    
+    yield test_env
+    
+    # Restore original environment
+    for key, original_value in original_env.items():
+        if original_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original_value
+
+@pytest.fixture
+def test_config() -> Dict[str, Any]:
+    """Test-specific configuration."""
+    return {
+        "server_name": "TestServer",
+        "timeout": 5.0,
+        "max_retries": 3,
+        "debug": True,
+        "external_apis": {
+            "weather": {"enabled": False},  # Disabled in tests
+            "notifications": {"enabled": False}
+        }
+    }
+
+# ❌ DON'T: Hardcode test configuration or ignore environment
+def bad_test_setup():
+    # Hardcoded values, no environment isolation
+    server = FastMCP("HardcodedTestServer")  # Not configurable
+    # No cleanup, affects other tests
+```
+
+## Anti-patterns and Common Testing Mistakes
+
+### Testing Anti-patterns
+
+```python
+# ❌ DON'T: Write tests that are too broad or too narrow
+async def overly_broad_test():
+    """Test that tries to test everything at once."""
+    server = create_complex_server()
+    async with Client(server) as client:
+        # Testing multiple unrelated features in one test
+        await client.call_tool("tool1", {})
+        await client.call_tool("tool2", {})
+        await client.read_resource("resource1")
+        await client.read_resource("resource2")
+        # If this fails, we don't know which part broke
+        assert True  # Meaningless assertion
+
+async def overly_narrow_test():
+    """Test that tests implementation details."""
+    server = FastMCP("TestServer")
+    # Testing internal implementation instead of behavior
+    assert hasattr(server, '_tools')
+    assert len(server._tools) == 0  # Testing internal state
+
+# ❌ DON'T: Create flaky or non-deterministic tests
+import random
+
+async def flaky_test():
+    """Test with random behavior."""
+    if random.random() > 0.5:  # Randomly fails
+        assert True
+    else:
+        assert False
+
+async def timing_dependent_test():
+    """Test that depends on specific timing."""
+    import time
+    start = time.time()
+    await some_async_operation()
+    # This will fail on slow systems
+    assert time.time() - start < 0.1
+
+# ❌ DON'T: Skip cleanup or proper test isolation
+shared_state = []
+
+async def test_that_modifies_global_state():
+    """Test that affects other tests."""
+    shared_state.append("test data")
+    # No cleanup - affects subsequent tests
+    assert len(shared_state) == 1
+
+# ❌ DON'T: Use print statements instead of proper assertions
+async def test_with_prints():
+    """Poor testing practice."""
+    result = await client.call_tool("test_tool", {})
+    print(f"Result: {result}")  # Should use assertions
+    print("Test passed!")  # Not a real assertion
+
+# ✅ DO: Write focused, deterministic, isolated tests
+async def good_focused_test(mcp_server):
+    """Test one specific behavior clearly."""
+    async with Client(mcp_server) as client:
+        result = await client.call_tool("add_numbers", {"a": 2, "b": 3})
+        assert result[0].text == "5"  # Clear, specific assertion
+
+async def good_deterministic_test(mcp_server):
+    """Test with predictable inputs and outputs."""
+    test_cases = [
+        ({"a": 1, "b": 2}, "3"),
+        ({"a": 0, "b": 0}, "0"),
+        ({"a": -1, "b": 1}, "0"),
+    ]
+    
+    async with Client(mcp_server) as client:
+        for inputs, expected in test_cases:
+            result = await client.call_tool("add_numbers", inputs)
+            assert result[0].text == expected
+```
+
+## Best Practices Summary
+
+### Test Organization
+- Use clear test structure with unit, integration, and performance tests
+- Implement comprehensive fixtures with proper cleanup
+- Organize tests by functionality, not by test type
+- Use descriptive test names that explain the scenario
+
+### Test Coverage
+- Focus on in-memory testing for fast feedback
+- Include integration tests for transport-specific behavior
+- Test error scenarios and edge cases thoroughly
+- Add performance tests for critical paths
+
+### Mocking Strategy
+- Mock external dependencies, not internal logic
+- Use typed mocks with proper return values
+- Verify mock interactions when relevant
+- Avoid over-mocking that makes tests meaningless
+
+### Test Reliability
+- Write deterministic tests with predictable inputs
+- Ensure proper test isolation and cleanup
+- Use appropriate timeouts for async operations
+- Handle platform-specific limitations gracefully
+
+### Performance Testing
+- Include benchmarks for critical operations
+- Test concurrent access patterns
+- Monitor resource usage and cleanup
+- Set realistic performance expectations
+
+## References
+- [FastMCP Testing Documentation](mdc:fastmcp_py/docs/patterns/testing.mdx)
+- [pytest Documentation](mdc:https:/docs.pytest.org)
+- [Python asyncio Testing](mdc:https:/docs.python.org/3/library/asyncio-dev.html#testing)
+- [FastMCP Examples](mdc:mcp:fastmcp_py/tests/test_examples.py)
+- [FastMCP Test Utilities](mdc:mcp:fastmcp_py/src/fastmcp/utilities/tests.py)

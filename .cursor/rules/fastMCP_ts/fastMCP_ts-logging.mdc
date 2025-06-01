@@ -1,0 +1,494 @@
+---
+description: FastMCP TypeScript logging implementation
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript framework, focusing on proper logging implementation that integrates safely with the MCP protocol without interfering with communication channels.
+
+## MCP-Safe Logging Architecture
+
+### Use Built-in MCP Logging System
+```typescript
+// ✅ DO: Use the context logging provided by FastMCP
+server.addTool({
+  name: "example-tool",
+  description: "Example tool with proper logging",
+  execute: async (args, context) => {
+    const { log } = context;
+    
+    // These integrate with MCP logging protocol
+    log.info("Tool execution started", { toolName: "example-tool", args });
+    log.debug("Processing arguments", { processedArgs: args });
+    
+    try {
+      const result = await processData(args);
+      log.info("Tool execution completed", { result });
+      return result;
+    } catch (error) {
+      log.error("Tool execution failed", { error: error.message, args });
+      throw error;
+    }
+  },
+});
+```
+
+### Structured Logging with Context
+```typescript
+// ✅ DO: Include relevant context in logs
+const log = {
+  debug: (message: string, context?: SerializableValue) => {
+    context.log.debug(message, {
+      timestamp: new Date().toISOString(),
+      toolName: "current-tool",
+      sessionId: context.session?.id,
+      ...context,
+    });
+  },
+  
+  info: (message: string, context?: SerializableValue) => {
+    context.log.info(message, {
+      timestamp: new Date().toISOString(),
+      level: "info",
+      ...context,
+    });
+  },
+  
+  error: (message: string, context?: SerializableValue) => {
+    context.log.error(message, {
+      timestamp: new Date().toISOString(),
+      level: "error",
+      stack: context?.error?.stack,
+      ...context,
+    });
+  },
+};
+
+// Usage in tools
+log.info("Database query executed", {
+  query: "SELECT * FROM users",
+  duration: 150,
+  rowCount: 42,
+});
+```
+
+## Console Logging Safety
+
+### Safe Console Logging Patterns
+```typescript
+// ✅ DO: Use console for internal server logging only
+class SafeLogger {
+  private prefix: string;
+  
+  constructor(component: string) {
+    this.prefix = `[FastMCP ${component}]`;
+  }
+  
+  // Safe for server-side logging (not sent over MCP)
+  debug(message: string, data?: any) {
+    if (process.env.NODE_ENV === "development" || process.env.DEBUG) {
+      console.debug(`${this.prefix} ${message}`, data ? JSON.stringify(data, null, 2) : "");
+    }
+  }
+  
+  info(message: string, data?: any) {
+    console.info(`${this.prefix} ${message}`, data ? JSON.stringify(data, null, 2) : "");
+  }
+  
+  warn(message: string, data?: any) {
+    console.warn(`${this.prefix} ${message}`, data ? JSON.stringify(data, null, 2) : "");
+  }
+  
+  error(message: string, error?: Error | any) {
+    console.error(`${this.prefix} ${message}`);
+    if (error instanceof Error) {
+      console.error(`${this.prefix} Stack:`, error.stack);
+    } else if (error) {
+      console.error(`${this.prefix} Error Data:`, JSON.stringify(error, null, 2));
+    }
+  }
+}
+
+// Usage
+const serverLogger = new SafeLogger("Server");
+const toolLogger = new SafeLogger("Tools");
+
+serverLogger.info("Server starting on port 8080");
+toolLogger.debug("Tool registered", { toolName: "example-tool" });
+```
+
+### Separate Internal vs MCP Logging
+```typescript
+// ✅ DO: Distinguish between internal and MCP logging
+class FastMCPLogger {
+  private internalLogger: SafeLogger;
+  private mcpLogger?: Context<any>["log"];
+  
+  constructor(component: string) {
+    this.internalLogger = new SafeLogger(component);
+  }
+  
+  // Set MCP logger when available (in tool context)
+  setMCPLogger(mcpLog: Context<any>["log"]) {
+    this.mcpLogger = mcpLog;
+  }
+  
+  // Internal logging - never sent over MCP
+  internal = {
+    debug: (message: string, data?: any) => this.internalLogger.debug(message, data),
+    info: (message: string, data?: any) => this.internalLogger.info(message, data),
+    warn: (message: string, data?: any) => this.internalLogger.warn(message, data),
+    error: (message: string, error?: any) => this.internalLogger.error(message, error),
+  };
+  
+  // MCP logging - sent to client via MCP protocol
+  mcp = {
+    debug: (message: string, context?: SerializableValue) => {
+      if (this.mcpLogger) {
+        this.mcpLogger.debug(message, context);
+      } else {
+        this.internal.debug(`[MCP] ${message}`, context);
+      }
+    },
+    
+    info: (message: string, context?: SerializableValue) => {
+      if (this.mcpLogger) {
+        this.mcpLogger.info(message, context);
+      } else {
+        this.internal.info(`[MCP] ${message}`, context);
+      }
+    },
+    
+    warn: (message: string, context?: SerializableValue) => {
+      if (this.mcpLogger) {
+        this.mcpLogger.warn(message, context);
+      } else {
+        this.internal.warn(`[MCP] ${message}`, context);
+      }
+    },
+    
+    error: (message: string, context?: SerializableValue) => {
+      if (this.mcpLogger) {
+        this.mcpLogger.error(message, context);
+      } else {
+        this.internal.error(`[MCP] ${message}`, context);
+      }
+    },
+  };
+}
+```
+
+## Logging in Different FastMCP Components
+
+### Server-Level Logging
+```typescript
+// ✅ DO: Log server events safely
+export class FastMCP<T> extends FastMCPEventEmitter {
+  private logger = new SafeLogger("FastMCP");
+  
+  public async start(options: StartOptions) {
+    this.logger.info("Starting FastMCP server", { 
+      transportType: options.transportType,
+      version: this.options.version,
+    });
+    
+    try {
+      if (options.transportType === "stdio") {
+        this.logger.debug("Initializing stdio transport");
+        // ... startup logic
+      } else if (options.transportType === "httpStream") {
+        this.logger.debug("Initializing HTTP stream transport", {
+          port: options.httpStream.port,
+        });
+        // ... startup logic
+      }
+      
+      this.logger.info("FastMCP server started successfully");
+    } catch (error) {
+      this.logger.error("Failed to start FastMCP server", error);
+      throw error;
+    }
+  }
+}
+```
+
+### Session-Level Logging
+```typescript
+// ✅ DO: Log session events with proper context
+export class FastMCPSession<T> extends FastMCPSessionEventEmitter {
+  private logger: FastMCPLogger;
+  
+  constructor(options: SessionOptions) {
+    super();
+    this.logger = new FastMCPLogger(`Session-${crypto.randomUUID().slice(0, 8)}`);
+    
+    this.logger.internal.debug("Session created", {
+      name: options.name,
+      version: options.version,
+      capabilities: Object.keys(options.capabilities || {}),
+    });
+  }
+  
+  public async connect(transport: Transport) {
+    this.logger.internal.info("Connecting session", {
+      transportType: transport.type || "stdio",
+    });
+    
+    try {
+      await this.#server.connect(transport);
+      this.logger.internal.info("Session connected successfully");
+      
+      // Set up MCP error logging
+      this.#server.onerror = (error) => {
+        this.logger.internal.error("MCP protocol error", error);
+        this.emit("error", { error });
+      };
+    } catch (error) {
+      this.logger.internal.error("Session connection failed", error);
+      throw error;
+    }
+  }
+}
+```
+
+### Tool Execution Logging
+```typescript
+// ✅ DO: Comprehensive tool execution logging
+server.addTool({
+  name: "database-query",
+  description: "Execute database queries",
+  execute: async (args, context) => {
+    const logger = new FastMCPLogger("DatabaseTool");
+    logger.setMCPLogger(context.log);
+    
+    const startTime = Date.now();
+    const executionId = crypto.randomUUID().slice(0, 8);
+    
+    // Internal logging - not sent to client
+    logger.internal.debug("Tool execution started", {
+      executionId,
+      toolName: "database-query",
+      args: args,
+    });
+    
+    // MCP logging - sent to client
+    logger.mcp.info("Executing database query", {
+      executionId,
+      queryType: args.queryType,
+    });
+    
+    try {
+      // Report progress via MCP
+      await context.reportProgress({ progress: 0, total: 100 });
+      logger.mcp.debug("Query preparation started");
+      
+      const query = buildQuery(args);
+      await context.reportProgress({ progress: 25 });
+      
+      logger.mcp.debug("Executing query");
+      const result = await executeQuery(query);
+      await context.reportProgress({ progress: 75 });
+      
+      logger.mcp.debug("Processing results");
+      const processedResult = processQueryResult(result);
+      await context.reportProgress({ progress: 100 });
+      
+      const duration = Date.now() - startTime;
+      
+      // Internal metrics logging
+      logger.internal.info("Tool execution completed", {
+        executionId,
+        duration,
+        resultSize: processedResult.length,
+        success: true,
+      });
+      
+      // User-facing completion log
+      logger.mcp.info("Query completed successfully", {
+        executionId,
+        resultCount: processedResult.length,
+        duration,
+      });
+      
+      return processedResult;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      // Internal error logging with full details
+      logger.internal.error("Tool execution failed", {
+        executionId,
+        duration,
+        error: error.message,
+        stack: error.stack,
+        args,
+      });
+      
+      // User-facing error log (sanitized)
+      logger.mcp.error("Query execution failed", {
+        executionId,
+        reason: error.message,
+        duration,
+      });
+      
+      throw error;
+    }
+  },
+});
+```
+
+## Log Level Management
+
+### Dynamic Log Level Configuration
+```typescript
+// ✅ DO: Support dynamic log level changes
+export class LogLevelManager {
+  private currentLevel: LoggingLevel = "info";
+  private session: FastMCPSession<any>;
+  
+  constructor(session: FastMCPSession<any>) {
+    this.session = session;
+    this.setupLogLevelHandler();
+  }
+  
+  private setupLogLevelHandler() {
+    // MCP protocol includes log level management
+    this.session.server.setRequestHandler(SetLevelRequestSchema, (request) => {
+      const oldLevel = this.currentLevel;
+      this.currentLevel = request.params.level;
+      
+      console.info(`[FastMCP] Log level changed from ${oldLevel} to ${this.currentLevel}`);
+      
+      return {};
+    });
+  }
+  
+  shouldLog(level: LoggingLevel): boolean {
+    const levels: LoggingLevel[] = [
+      "emergency", "alert", "critical", "error", 
+      "warning", "notice", "info", "debug"
+    ];
+    
+    const currentIndex = levels.indexOf(this.currentLevel);
+    const messageIndex = levels.indexOf(level);
+    
+    return messageIndex <= currentIndex;
+  }
+}
+
+// Usage in logging
+const logLevelManager = new LogLevelManager(session);
+
+function conditionalLog(level: LoggingLevel, message: string, context?: any) {
+  if (logLevelManager.shouldLog(level)) {
+    context.log[level](mdc:message, context);
+  }
+}
+```
+
+## Performance-Conscious Logging
+
+### Efficient Logging Patterns
+```typescript
+// ✅ DO: Use lazy evaluation for expensive log operations
+class PerformantLogger {
+  private mcpLog: Context<any>["log"];
+  
+  constructor(mcpLog: Context<any>["log"]) {
+    this.mcpLog = mcpLog;
+  }
+  
+  // Lazy evaluation - only compute if logging is enabled
+  debug(message: string, contextFn: () => SerializableValue) {
+    if (this.shouldLog("debug")) {
+      this.mcpLog.debug(message, contextFn());
+    }
+  }
+  
+  // Pre-computed context for performance-critical paths
+  debugFast(message: string, context?: SerializableValue) {
+    this.mcpLog.debug(message, context);
+  }
+  
+  private shouldLog(level: LoggingLevel): boolean {
+    // Implement level checking logic
+    return true; // Simplified for example
+  }
+}
+
+// Usage
+const logger = new PerformantLogger(context.log);
+
+// Expensive computation only happens if debug logging is enabled
+logger.debug("Complex operation result", () => ({
+  complexCalculation: expensiveAnalysis(data),
+  timestamps: generateDetailedTimestamps(),
+  memoryUsage: process.memoryUsage(),
+}));
+```
+
+## Anti-patterns
+
+### ❌ DON'T: Log to stdout/stderr in tools
+```typescript
+// ❌ DON'T: Use direct console.log in tool execution
+server.addTool({
+  name: "bad-tool",
+  execute: async (args, context) => {
+    console.log("This will interfere with MCP protocol!"); // BAD!
+    console.error("This breaks stdio transport!"); // BAD!
+    return "result";
+  },
+});
+
+// ✅ DO: Use context logging
+server.addTool({
+  name: "good-tool",
+  execute: async (args, context) => {
+    context.log.info("Tool execution started");
+    context.log.debug("Processing arguments", { args });
+    return "result";
+  },
+});
+```
+
+### ❌ DON'T: Log sensitive information
+```typescript
+// ❌ DON'T: Log sensitive data
+context.log.info("User authenticated", {
+  password: user.password, // NEVER LOG PASSWORDS!
+  apiKey: user.apiKey,     // NEVER LOG API KEYS!
+});
+
+// ✅ DO: Log safe information only
+context.log.info("User authenticated", {
+  userId: user.id,
+  username: user.username,
+  loginTime: new Date().toISOString(),
+});
+```
+
+### ❌ DON'T: Block execution with synchronous logging
+```typescript
+// ❌ DON'T: Use synchronous file logging in tools
+const fs = require("fs");
+fs.writeFileSync("log.txt", "This blocks execution!"); // BAD!
+
+// ✅ DO: Use async logging or MCP logging
+await fs.writeFile("log.txt", "This is non-blocking");
+// OR better yet:
+context.log.info("Operation completed", { result });
+```
+
+### ❌ DON'T: Create circular references in log context
+```typescript
+// ❌ DON'T: Include circular references
+const obj = { name: "test" };
+obj.self = obj; // Circular reference
+
+context.log.info("Object created", { obj }); // This will fail JSON serialization!
+
+// ✅ DO: Use serializable data only
+context.log.info("Object created", { 
+  name: obj.name,
+  properties: Object.keys(obj).filter(key => key !== "self"),
+});
+```

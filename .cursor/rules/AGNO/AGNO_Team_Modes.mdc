@@ -1,0 +1,233 @@
+---
+description: Create teams of agents in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Team Modes Reference
+
+AGNO supports three distinct team modes for multi-agent systems, each with different collaboration patterns and use cases. This rule provides detailed information about each mode and their configuration parameters.
+
+## Team Modes Overview
+
+| Mode | Description | Best For |
+|------|-------------|----------|
+| **Route** | Team leader directs queries to the most appropriate team member | Clear task delegation to specialized agents |
+| **Collaborate** | All team members work on the same task and outputs are synthesized | Combining multiple perspectives on a single task |
+| **Coordinate** | Team leader orchestrates a conversation among team members | Complex problems requiring discussion and debate |
+
+## Basic Team Configuration
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+# Create team members (agents)
+agent1 = Agent(name="Agent1", model=OpenAIChat(id="gpt-4o"))
+agent2 = Agent(name="Agent2", model=OpenAIChat(id="gpt-4o"))
+
+# Create a team with specified mode
+team = Team(
+    name="My Team",
+    mode="route",  # Choose: "route", "collaborate", or "coordinate"
+    model=OpenAIChat(id="gpt-4o"),  # Team leader model
+    members=[agent1, agent2],
+    instructions=["Team-level instructions here"],
+    markdown=True,
+)
+
+# Run the team
+team.print_response("Your query here", stream=True)
+```
+
+## 1. Route Mode
+
+In Route mode, the team leader analyzes the user query and forwards it to the most appropriate team member. The selected member's response is then returned directly to the user.
+
+### Route Mode Process Flow
+
+1. User sends query to the team
+2. Team leader analyzes the query
+3. Team leader selects the most appropriate team member
+4. Selected member processes the query
+5. Member's response is returned to the user
+
+### Route Mode Configuration
+
+```python
+route_team = Team(
+    name="Route Team",
+    mode="route",
+    model=OpenAIChat(id="gpt-4o"),  # Use a strong model for routing decisions
+    members=[agent1, agent2, agent3],
+    instructions=[
+        "Analyze the user query carefully to determine which team member has the most relevant expertise",
+        "Route to the most appropriate team member based on query content and member specializations",
+        "For queries that don't match any member's expertise, respond with an explanation"
+    ],
+    show_members_responses=True,  # Optional: show which member responded
+)
+```
+
+### Route Mode Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `show_members_responses` | `bool` | False | Show which team member responded |
+| `show_tool_calls` | `bool` | False | Show tool calls in the response |
+| `response_model` | `Type[BaseModel]` | None | Pydantic model for structured output |
+
+### Route Mode Use Cases
+
+- Multilingual response system (route to agent for specific language)
+- Technical support (route to specialist for specific technology)
+- Content creation (route to subject matter expert)
+
+## 2. Collaborate Mode
+
+In Collaborate mode, all team members work on the same task independently and the team leader synthesizes their outputs into a cohesive response.
+
+### Collaborate Mode Process Flow
+
+1. User sends query to the team
+2. All team members receive the same query
+3. Each member processes the query independently
+4. Team leader collects and synthesizes all outputs
+5. Synthesized response is returned to the user
+
+### Collaborate Mode Configuration
+
+```python
+collaborate_team = Team(
+    name="Collaborate Team",
+    mode="collaborate",
+    model=OpenAIChat(id="gpt-4o"),  # Strong model for synthesis
+    members=[researcher, writer, editor],
+    instructions=[
+        "Distribute the same task to all team members",
+        "Each member should contribute based on their expertise",
+        "Synthesize all contributions into a cohesive response",
+        "Ensure the final output integrates the best insights from each member"
+    ],
+    enable_agentic_context=True,  # Allow team leader to maintain shared context
+)
+```
+
+### Collaborate Mode Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enable_agentic_context` | `bool` | False | Allow team leader to maintain context |
+| `share_member_interactions` | `bool` | False | Share outputs between members |
+| `show_team_conversation` | `bool` | False | Show the internal collaboration process |
+| `stream_team_conversation` | `bool` | False | Stream the team conversation |
+
+### Collaborate Mode Use Cases
+
+- Content creation (multiple perspectives combined)
+- Research reports (combine research, analysis, and writing)
+- Recommendation systems (combine different assessment criteria)
+
+## 3. Coordinate Mode
+
+In Coordinate mode, the team leader orchestrates a conversation among team members, directing the discussion flow and synthesizing a final response.
+
+### Coordinate Mode Process Flow
+
+1. User sends query to the team
+2. Team leader initiates a conversation among members
+3. Members contribute sequentially in a conversational format
+4. Team leader guides the discussion and asks follow-up questions
+5. Team leader synthesizes the conversation into a final response
+6. Synthesized response is returned to the user
+
+### Coordinate Mode Configuration
+
+```python
+coordinate_team = Team(
+    name="Coordinate Team",
+    mode="coordinate",
+    model=OpenAIChat(id="gpt-4o"),  # Strong model for coordination
+    members=[critic, optimist, pragmatist],
+    instructions=[
+        "Facilitate a balanced discussion on the user's query",
+        "Ensure each team member contributes from their unique perspective",
+        "Guide the conversation to explore multiple viewpoints",
+        "Ask follow-up questions to deepen the analysis",
+        "Synthesize key insights into a comprehensive response"
+    ],
+    stream_team_conversation=True,  # Show the conversation as it happens
+)
+```
+
+### Coordinate Mode Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `show_team_conversation` | `bool` | False | Show the internal discussion |
+| `stream_team_conversation` | `bool` | False | Stream the team conversation |
+| `enable_agentic_context` | `bool` | False | Allow team leader to maintain context |
+| `num_turns` | `int` | None | Limit conversation to specific number of turns |
+
+### Coordinate Mode Use Cases
+
+- Decision making (multiple stakeholder perspectives)
+- Problem analysis (critical thinking from different angles)
+- Creative brainstorming (diverse idea generation)
+
+## Team Context and Memory
+
+### Agentic Team Context
+
+Enable the team leader to maintain a shared context that is updated during interaction:
+
+```python
+team = Team(
+    # Other parameters...
+    enable_agentic_context=True,  # Team leader maintains shared context
+    share_member_interactions=True,  # Share outputs between members
+)
+```
+
+### Team Memory and State
+
+Teams can maintain memory and state across sessions:
+
+```python
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.storage.sqlite import SqliteStorage
+
+# Create memory and storage
+memory_db = SqliteMemoryDb(table_name="memory", db_file="data/team.db")
+memory = Memory(db=memory_db)
+storage = SqliteStorage(table_name="team_sessions", db_file="data/team.db")
+
+team = Team(
+    # Other parameters...
+    memory=memory,  # Add memory capabilities
+    enable_user_memories=True,  # Create user memories automatically
+    storage=storage,  # Add storage for session persistence
+    add_history_to_messages=True,  # Include session history
+    num_history_interactions=3,  # Number of past interactions to include
+)
+```
+
+## Advanced Team Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | `Model` | Required | Team leader model |
+| `members` | `List[Agent]` | Required | Team member agents |
+| `mode` | `Literal["route", "collaborate", "coordinate"]` | Required | Team operation mode |
+| `name` | `str` | None | Team name |
+| `description` | `str` | None | Team description |
+| `role` | `str` | None | Team role |
+| `instructions` | `List[str]` | [] | Team-level instructions |
+| `response_model` | `Type[BaseModel]` | None | Structured output model |
+| `session_id` | `str` | None | Session identifier |
+| `enable_team_history` | `bool` | False | Include team history |
+| `num_of_interactions_from_history` | `int` | 3 | Number of past interactions |
+| `team_history_tokens` | `int` | 1200 | Maximum tokens for history |
+| `debug_mode` | `bool` | False | Enable debug information |
+| `markdown` | `bool` | False | Use markdown formatting |

@@ -1,0 +1,1084 @@
+---
+description: FastMCP Python v2.0 resources
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 resources, URI templates, content management, and MCP protocol resource development. You focus on creating efficient, type-safe resource systems with proper content handling, template patterns, and discovery mechanisms.
+
+## FastMCP Resources Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   @mcp.resource │    │   URI Template   │    │   Resource      │
+│   Decorator     │───▶│   Processing     │───▶│   Registration  │
+│                 │    │                  │    │                 │
+│ - Function scan │    │ - Parameter      │    │ - Static URI    │
+│ - URI pattern   │    │   extraction     │    │ - Template URI  │
+│ - Content type  │    │ - Validation     │    │ - Content type  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Content       │    │   Discovery      │    │   Access        │
+│   Generation    │    │   & Listing      │    │   Control       │
+│   & Caching     │    │   Mechanisms     │    │   & Security    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_resources_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py          # Package initialization
+│   │   ├── server.py            # Main server with resource registration
+│   │   └── config.py            # Resource configuration
+│   ├── resources/
+│   │   ├── __init__.py          # Resource exports
+│   │   ├── static_resources.py  # Static content resources
+│   │   ├── file_resources.py    # File system resources
+│   │   ├── api_resources.py     # External API resources
+│   │   ├── database_resources.py # Database content resources
+│   │   └── dynamic_resources.py # Dynamic template resources
+│   ├── content/
+│   │   ├── __init__.py          # Content utilities
+│   │   ├── processors.py       # Content processing
+│   │   ├── formatters.py       # Content formatting
+│   │   └── validators.py       # Content validation
+│   ├── templates/
+│   │   ├── __init__.py          # Template utilities
+│   │   ├── uri_templates.py    # URI template handling
+│   │   ├── parameter_extraction.py # Parameter processing
+│   │   └── validation.py       # Template validation
+│   └── storage/
+│       ├── __init__.py          # Storage exports
+│       ├── file_storage.py     # File-based storage
+│       ├── memory_storage.py   # In-memory storage
+│       └── remote_storage.py   # Remote storage adapters
+├── tests/
+│   ├── test_resources/
+│   │   ├── test_static.py
+│   │   ├── test_templates.py
+│   │   └── test_content.py
+│   └── test_storage.py
+└── data/
+    ├── static/                  # Static content files
+    ├── templates/               # Template files
+    └── cache/                   # Cached content
+```
+
+## Core Implementation Patterns
+
+### Static Resource Definition
+
+```python
+# ✅ DO: Proper static resource definition with comprehensive configuration
+from fastmcp import FastMCP
+from fastmcp.server import Context
+from fastmcp.resources.types import TextResource, FileResource, BinaryResource
+from pydantic import BaseModel, Field
+from typing import List, Dict, Union, Optional
+import os
+from pathlib import Path
+
+server = FastMCP(name="resources-server")
+
+# Simple static text resource
+@server.resource("info://about")
+def about_info() -> str:
+    """Provide information about the server."""
+    return """
+    MCP Resource Server v1.0
+    
+    This server provides various resources including:
+    - Static information
+    - File system access
+    - Dynamic content generation
+    - External API data
+    
+    Contact: admin@example.com
+    """
+
+# Static resource with custom metadata
+@server.resource(
+    "config://server",
+    name="Server Configuration",
+    description="Current server configuration and settings",
+    mime_type="application/json"
+)
+def server_config() -> Dict[str, Union[str, int, bool]]:
+    """Return current server configuration."""
+    return {
+        "server_name": "mcp-resources-server",
+        "version": "1.0.0",
+        "debug_mode": False,
+        "max_connections": 100,
+        "supported_formats": ["json", "text", "binary"],
+        "features": {
+            "file_access": True,
+            "api_integration": True,
+            "caching": True,
+            "compression": False
+        }
+    }
+
+# File-based static resource
+@server.resource(
+    "docs://readme",
+    name="README Documentation",
+    description="Project README file",
+    mime_type="text/markdown"
+)
+def readme_content() -> str:
+    """Load README file content."""
+    readme_path = Path("README.md")
+    
+    if not readme_path.exists():
+        return "# README\n\nNo README file found."
+    
+    try:
+        return readme_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"# README\n\nError loading README: {e}"
+
+# Binary resource (image/file)
+@server.resource(
+    "assets://logo",
+    name="Company Logo",
+    description="Company logo image",
+    mime_type="image/png"
+)
+def company_logo() -> bytes:
+    """Return company logo as binary data."""
+    logo_path = Path("assets/logo.png")
+    
+    if not logo_path.exists():
+        # Return a simple 1x1 PNG as fallback
+        return b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00IEND\xaeB`\x82'
+    
+    try:
+        return logo_path.read_bytes()
+    except Exception as e:
+        raise ResourceError(f"Failed to load logo: {e}")
+
+# ❌ DON'T: Define resources without proper error handling or metadata
+@server.resource("bad://resource")
+def bad_resource():  # No return type hint
+    return open("file.txt").read()  # No error handling, file not closed
+```
+
+### Dynamic Resource Templates
+
+```python
+# ✅ DO: Comprehensive dynamic resource templates with parameter validation
+from fastmcp.resources.template import match_uri_template
+from datetime import datetime
+import json
+import re
+
+# User profile template with parameter validation
+@server.resource("user://{user_id}/profile")
+def user_profile(user_id: str) -> Dict[str, Union[str, int, List[str]]]:
+    """Get user profile information by user ID."""
+    
+    # Validate user_id parameter
+    if not user_id or not user_id.isdigit():
+        raise ResourceError("Invalid user_id: must be a positive integer")
+    
+    user_id_int = int(user_id)
+    if user_id_int <= 0:
+        raise ResourceError("Invalid user_id: must be positive")
+    
+    # Simulate user lookup
+    users_db = {
+        1: {
+            "name": "John Doe",
+            "email": "john@example.com",
+            "age": 30,
+            "roles": ["user", "admin"],
+            "created_at": "2023-01-15T10:30:00Z",
+            "last_login": "2024-01-15T14:22:00Z"
+        },
+        2: {
+            "name": "Jane Smith", 
+            "email": "jane@example.com",
+            "age": 28,
+            "roles": ["user"],
+            "created_at": "2023-03-20T09:15:00Z",
+            "last_login": "2024-01-14T16:45:00Z"
+        }
+    }
+    
+    if user_id_int not in users_db:
+        raise ResourceError(f"User not found: {user_id}")
+    
+    return users_db[user_id_int]
+
+# File system template with path validation
+@server.resource("files://{path}")
+def file_content(path: str) -> Union[str, bytes]:
+    """Access file system content with security validation."""
+    
+    # Security validation
+    if not path:
+        raise ResourceError("Path cannot be empty")
+    
+    # Prevent directory traversal
+    if ".." in path or path.startswith("/"):
+        raise ResourceError("Invalid path: directory traversal not allowed")
+    
+    # Restrict to allowed directories
+    allowed_dirs = ["data", "public", "uploads"]
+    path_parts = Path(path).parts
+    
+    if not path_parts or path_parts[0] not in allowed_dirs:
+        raise ResourceError(f"Access denied: path must start with one of {allowed_dirs}")
+    
+    full_path = Path(path)
+    
+    if not full_path.exists():
+        raise ResourceError(f"File not found: {path}")
+    
+    if not full_path.is_file():
+        raise ResourceError(f"Path is not a file: {path}")
+    
+    try:
+        # Determine if file is binary or text
+        if full_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.zip']:
+            return full_path.read_bytes()
+        else:
+            return full_path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise ResourceError(f"Failed to read file {path}: {e}")
+
+# API data template with caching
+@server.resource("api://{service}/{endpoint}")
+async def api_data(service: str, endpoint: str, context: Context) -> Dict[str, Union[str, Dict, List]]:
+    """Fetch data from external APIs with caching."""
+    
+    # Validate service parameter
+    allowed_services = ["jsonplaceholder", "httpbin", "reqres"]
+    if service not in allowed_services:
+        raise ResourceError(f"Unknown service: {service}. Allowed: {allowed_services}")
+    
+    # Validate endpoint parameter
+    if not re.match(r'^[a-zA-Z0-9/_-]+$', endpoint):
+        raise ResourceError("Invalid endpoint format")
+    
+    await context.info(f"Fetching data from {service}/{endpoint}")
+    
+    # Build API URL
+    service_urls = {
+        "jsonplaceholder": "https://jsonplaceholder.typicode.com",
+        "httpbin": "https://httpbin.org",
+        "reqres": "https://reqres.in/api"
+    }
+    
+    base_url = service_urls[service]
+    full_url = f"{base_url}/{endpoint}"
+    
+    try:
+        import httpx
+        
+        async with httpx.AsyncClient() as client:
+            await context.debug(f"Making request to: {full_url}")
+            
+            response = await client.get(full_url, timeout=30.0)
+            response.raise_for_status()
+            
+            await context.info(f"API request successful: {response.status_code}")
+            
+            return {
+                "service": service,
+                "endpoint": endpoint,
+                "status_code": response.status_code,
+                "data": response.json(),
+                "headers": dict(response.headers),
+                "cached": False,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    except httpx.HTTPError as e:
+        await context.error(f"HTTP error: {e}")
+        raise ResourceError(f"Failed to fetch from {service}/{endpoint}: {e}")
+    except Exception as e:
+        await context.error(f"Unexpected error: {e}")
+        raise ResourceError(f"API request failed: {e}")
+
+# Complex template with multiple parameters
+@server.resource("reports://{department}/{year}/{month}/summary")
+def monthly_report(department: str, year: str, month: str) -> Dict[str, Union[str, int, float, Dict]]:
+    """Generate monthly department reports with comprehensive validation."""
+    
+    # Validate department
+    valid_departments = ["sales", "marketing", "engineering", "support", "hr"]
+    if department.lower() not in valid_departments:
+        raise ResourceError(f"Invalid department: {department}. Valid: {valid_departments}")
+    
+    # Validate year
+    try:
+        year_int = int(year)
+        current_year = datetime.now().year
+        if year_int < 2020 or year_int > current_year:
+            raise ResourceError(f"Invalid year: {year}. Must be between 2020 and {current_year}")
+    except ValueError:
+        raise ResourceError(f"Invalid year format: {year}")
+    
+    # Validate month
+    try:
+        month_int = int(month)
+        if month_int < 1 or month_int > 12:
+            raise ResourceError(f"Invalid month: {month}. Must be between 1 and 12")
+    except ValueError:
+        raise ResourceError(f"Invalid month format: {month}")
+    
+    # Generate report data (simulated)
+    import random
+    random.seed(f"{department}{year}{month}")  # Consistent data
+    
+    base_metrics = {
+        "sales": {"revenue": 100000, "deals": 50, "conversion": 0.15},
+        "marketing": {"leads": 1000, "campaigns": 10, "roi": 2.5},
+        "engineering": {"commits": 500, "features": 8, "bugs_fixed": 25},
+        "support": {"tickets": 200, "resolution_time": 4.2, "satisfaction": 0.92},
+        "hr": {"hires": 5, "turnover": 0.08, "satisfaction": 0.88}
+    }
+    
+    dept_base = base_metrics.get(department.lower(), {"value": 1000})
+    
+    # Add some randomness to base metrics
+    report_data = {}
+    for key, value in dept_base.items():
+        if isinstance(value, int):
+            report_data[key] = int(value * (0.8 + random.random() * 0.4))
+        elif isinstance(value, float):
+            report_data[key] = round(value * (0.9 + random.random() * 0.2), 2)
+        else:
+            report_data[key] = value
+    
+    return {
+        "department": department.title(),
+        "period": f"{year}-{month:02d}",
+        "generated_at": datetime.now().isoformat(),
+        "metrics": report_data,
+        "summary": {
+            "total_metrics": len(report_data),
+            "period_type": "monthly",
+            "data_quality": "simulated"
+        }
+    }
+
+# ❌ DON'T: Use templates without proper parameter validation
+@server.resource("unsafe://{param}")
+def unsafe_template(param):  # No validation
+    return f"Unsafe access to: {param}"  # Potential security issue
+```
+
+## Advanced Patterns
+
+### Content Processing and Caching
+
+```python
+# ✅ DO: Implement comprehensive content processing with caching
+from fastmcp.utilities.cache import TimedCache
+from datetime import timedelta
+import hashlib
+import gzip
+import json
+
+# Global cache for expensive resources
+resource_cache = TimedCache(expiration=timedelta(minutes=10))
+
+class ContentProcessor:
+    """Content processing utilities for resources."""
+    
+    @staticmethod
+    def detect_content_type(content: Union[str, bytes], file_path: str = None) -> str:
+        """Detect appropriate content type for content."""
+        
+        if isinstance(content, bytes):
+            # Check for common binary formats
+            if content.startswith(b'\x89PNG'):
+                return "image/png"
+            elif content.startswith(b'\xff\xd8\xff'):
+                return "image/jpeg"
+            elif content.startswith(b'%PDF'):
+                return "application/pdf"
+            elif content.startswith(b'PK'):
+                return "application/zip"
+            else:
+                return "application/octet-stream"
+        
+        # Text content type detection
+        if file_path:
+            extension = Path(file_path).suffix.lower()
+            type_mapping = {
+                '.json': 'application/json',
+                '.xml': 'application/xml',
+                '.html': 'text/html',
+                '.css': 'text/css',
+                '.js': 'application/javascript',
+                '.md': 'text/markdown',
+                '.txt': 'text/plain',
+                '.csv': 'text/csv',
+                '.yaml': 'application/yaml',
+                '.yml': 'application/yaml'
+            }
+            return type_mapping.get(extension, 'text/plain')
+        
+        # Try to parse as JSON
+        try:
+            json.loads(content)
+            return "application/json"
+        except:
+            pass
+        
+        return "text/plain"
+    
+    @staticmethod
+    def format_content(content: Union[str, Dict, List], format_type: str = "json") -> str:
+        """Format content according to specified type."""
+        
+        if format_type == "json":
+            if isinstance(content, str):
+                return content
+            return json.dumps(content, indent=2, ensure_ascii=False)
+        
+        elif format_type == "yaml":
+            try:
+                import yaml
+                if isinstance(content, str):
+                    # Try to parse as JSON first
+                    try:
+                        content = json.loads(content)
+                    except:
+                        return content
+                return yaml.dump(content, default_flow_style=False, allow_unicode=True)
+            except ImportError:
+                return json.dumps(content, indent=2)
+        
+        elif format_type == "xml":
+            if isinstance(content, dict):
+                return dict_to_xml(content)
+            return str(content)
+        
+        else:
+            return str(content)
+    
+    @staticmethod
+    def compress_content(content: Union[str, bytes]) -> bytes:
+        """Compress content using gzip."""
+        
+        if isinstance(content, str):
+            content = content.encode('utf-8')
+        
+        return gzip.compress(content)
+
+def dict_to_xml(data: Dict, root_name: str = "data") -> str:
+    """Convert dictionary to XML format."""
+    
+    def _dict_to_xml_recursive(d: Dict, parent_name: str = "item") -> str:
+        xml_parts = []
+        
+        for key, value in d.items():
+            if isinstance(value, dict):
+                xml_parts.append(f"<{key}>{_dict_to_xml_recursive(value)}</{key}>")
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        xml_parts.append(f"<{key}>{_dict_to_xml_recursive(item)}</{key}>")
+                    else:
+                        xml_parts.append(f"<{key}>{item}</{key}>")
+            else:
+                xml_parts.append(f"<{key}>{value}</{key}>")
+        
+        return "".join(xml_parts)
+    
+    return f"<?xml version='1.0' encoding='UTF-8'?><{root_name}>{_dict_to_xml_recursive(data)}</{root_name}>"
+
+# Cached resource with content processing
+@server.resource("data://processed/{dataset_id}")
+async def processed_dataset(dataset_id: str, context: Context) -> Dict[str, Union[str, Dict, int]]:
+    """Get processed dataset with caching and content optimization."""
+    
+    cache_key = f"dataset_{dataset_id}"
+    
+    # Check cache first
+    cached_result = resource_cache.get(cache_key)
+    if cached_result is not None:
+        await context.info(f"Returning cached dataset: {dataset_id}")
+        cached_result["cached"] = True
+        return cached_result
+    
+    await context.info(f"Processing dataset: {dataset_id}")
+    
+    # Validate dataset_id
+    if not dataset_id.isalnum():
+        raise ResourceError("Dataset ID must be alphanumeric")
+    
+    # Simulate expensive data processing
+    await context.report_progress(10, 100, "Loading raw data...")
+    await asyncio.sleep(0.1)  # Simulate I/O
+    
+    await context.report_progress(30, 100, "Processing data...")
+    
+    # Generate processed data
+    processed_data = {
+        "dataset_id": dataset_id,
+        "records_processed": 10000,
+        "processing_time": "2.3s",
+        "data_quality_score": 0.95,
+        "transformations": [
+            "normalization",
+            "duplicate_removal", 
+            "validation",
+            "enrichment"
+        ],
+        "statistics": {
+            "mean": 42.7,
+            "median": 41.0,
+            "std_dev": 12.3,
+            "min": 1.0,
+            "max": 99.9
+        },
+        "metadata": {
+            "processed_at": datetime.now().isoformat(),
+            "version": "1.0",
+            "format": "processed_json"
+        }
+    }
+    
+    await context.report_progress(80, 100, "Caching results...")
+    
+    # Cache the result
+    resource_cache.set(cache_key, processed_data)
+    
+    await context.report_progress(100, 100, "Processing complete")
+    
+    processed_data["cached"] = False
+    return processed_data
+
+# Content format negotiation
+@server.resource("content://{content_id}.{format}")
+async def formatted_content(content_id: str, format: str, context: Context) -> Union[str, Dict]:
+    """Serve content in different formats based on extension."""
+    
+    # Validate parameters
+    if not content_id.isalnum():
+        raise ResourceError("Content ID must be alphanumeric")
+    
+    supported_formats = ["json", "yaml", "xml", "txt"]
+    if format not in supported_formats:
+        raise ResourceError(f"Unsupported format: {format}. Supported: {supported_formats}")
+    
+    await context.info(f"Serving content {content_id} in {format} format")
+    
+    # Get base content (simulated)
+    base_content = {
+        "content_id": content_id,
+        "title": f"Content Item {content_id}",
+        "description": "Sample content for format demonstration",
+        "data": {
+            "values": [1, 2, 3, 4, 5],
+            "categories": ["A", "B", "C"],
+            "metadata": {
+                "created": "2024-01-01",
+                "modified": "2024-01-15",
+                "version": 2
+            }
+        },
+        "tags": ["sample", "demo", "content"]
+    }
+    
+    # Format content according to requested format
+    processor = ContentProcessor()
+    
+    if format == "json":
+        return base_content
+    else:
+        formatted = processor.format_content(base_content, format)
+        return formatted
+
+# ❌ DON'T: Ignore caching or content processing
+@server.resource("expensive://computation/{id}")
+def bad_expensive_resource(id: str):
+    # No caching, repeated expensive computation
+    result = perform_expensive_computation(id)  # Called every time
+    return result  # No content type consideration
+```
+
+### Database Integration Resources
+
+```python
+# ✅ DO: Implement database resources with proper connection management
+import asyncpg
+from contextlib import asynccontextmanager
+
+class DatabaseResourceManager:
+    """Manage database connections for resources."""
+    
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.pool = None
+    
+    async def initialize(self):
+        """Initialize database connection pool."""
+        self.pool = await asyncpg.create_pool(
+            self.database_url,
+            min_size=1,
+            max_size=5,
+            command_timeout=30
+        )
+    
+    async def close(self):
+        """Close database connection pool."""
+        if self.pool:
+            await self.pool.close()
+    
+    @asynccontextmanager
+    async def get_connection(self):
+        """Get database connection from pool."""
+        if not self.pool:
+            raise ResourceError("Database pool not initialized")
+        
+        async with self.pool.acquire() as connection:
+            yield connection
+
+# Global database manager (would be configured in server lifespan)
+db_manager = DatabaseResourceManager("postgresql://user:pass@localhost/db")
+
+@server.resource("db://users/{user_id}")
+async def database_user(user_id: str, context: Context) -> Dict[str, Union[str, int]]:
+    """Get user data from database."""
+    
+    # Validate user_id
+    if not user_id.isdigit():
+        raise ResourceError("User ID must be numeric")
+    
+    user_id_int = int(user_id)
+    
+    await context.info(f"Fetching user {user_id} from database")
+    
+    try:
+        async with db_manager.get_connection() as conn:
+            # Secure parameterized query
+            query = """
+                SELECT id, username, email, created_at, last_login
+                FROM users 
+                WHERE id = $1 AND deleted_at IS NULL
+            """
+            
+            row = await conn.fetchrow(query, user_id_int)
+            
+            if not row:
+                raise ResourceError(f"User {user_id} not found")
+            
+            await context.info("User data retrieved successfully")
+            
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "email": row["email"],
+                "created_at": row["created_at"].isoformat(),
+                "last_login": row["last_login"].isoformat() if row["last_login"] else None,
+                "source": "database"
+            }
+            
+    except asyncpg.PostgresError as e:
+        await context.error(f"Database error: {e}")
+        raise ResourceError(f"Database query failed: {e}")
+    except Exception as e:
+        await context.error(f"Unexpected database error: {e}")
+        raise ResourceError(f"Failed to fetch user data: {e}")
+
+@server.resource("db://reports/{table}/count")
+async def table_count(table: str, context: Context) -> Dict[str, Union[str, int]]:
+    """Get record count for a database table."""
+    
+    # Validate table name (whitelist approach)
+    allowed_tables = ["users", "orders", "products", "sessions", "logs"]
+    if table not in allowed_tables:
+        raise ResourceError(f"Table access denied: {table}. Allowed: {allowed_tables}")
+    
+    await context.info(f"Getting count for table: {table}")
+    
+    try:
+        async with db_manager.get_connection() as conn:
+            # Use table name safely (from whitelist)
+            query = f"SELECT COUNT(*) as count FROM {table}"
+            
+            row = await conn.fetchrow(query)
+            count = row["count"]
+            
+            await context.info(f"Table {table} has {count} records")
+            
+            return {
+                "table": table,
+                "count": count,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    except asyncpg.PostgresError as e:
+        await context.error(f"Database error for table {table}: {e}")
+        raise ResourceError(f"Failed to count records in {table}: {e}")
+
+# ❌ DON'T: Use unsafe database queries or ignore connection management
+@server.resource("unsafe://query/{table}")
+async def unsafe_db_query(table: str):
+    # Direct string interpolation - SQL injection risk
+    query = f"SELECT * FROM {table}"  # Unsafe!
+    
+    # No connection management
+    conn = await asyncpg.connect("postgresql://...")  # Connection leak
+    result = await conn.fetch(query)
+    # Connection not closed properly
+    
+    return result  # Raw database data without processing
+```
+
+## Resource Discovery and Listing
+
+```python
+# ✅ DO: Implement comprehensive resource discovery mechanisms
+@server.resource("discovery://resources")
+async def list_all_resources(context: Context) -> Dict[str, Union[List, Dict, int]]:
+    """List all available resources with metadata."""
+    
+    await context.info("Generating resource discovery data")
+    
+    # Get resources from server
+    resources = await server.get_resources()
+    resource_templates = await server.get_resource_templates()
+    
+    static_resources = []
+    dynamic_templates = []
+    
+    # Process static resources
+    for uri, resource in resources.items():
+        resource_info = {
+            "uri": uri,
+            "name": resource.name,
+            "description": resource.description,
+            "mime_type": resource.mime_type,
+            "tags": list(resource.tags),
+            "type": "static"
+        }
+        static_resources.append(resource_info)
+    
+    # Process dynamic templates
+    for uri_template, template in resource_templates.items():
+        template_info = {
+            "uri_template": uri_template,
+            "name": template.name,
+            "description": template.description,
+            "mime_type": template.mime_type,
+            "tags": list(template.tags),
+            "parameters": list(template.parameters.keys()) if template.parameters else [],
+            "type": "template"
+        }
+        dynamic_templates.append(template_info)
+    
+    await context.info(f"Found {len(static_resources)} static resources and {len(dynamic_templates)} templates")
+    
+    return {
+        "discovery": {
+            "generated_at": datetime.now().isoformat(),
+            "server": server.name,
+            "total_static": len(static_resources),
+            "total_templates": len(dynamic_templates)
+        },
+        "static_resources": static_resources,
+        "dynamic_templates": dynamic_templates,
+        "examples": {
+            "static_access": "mcp://resources/info://about",
+            "template_access": "mcp://resources/user://123/profile",
+            "discovery": "mcp://resources/discovery://resources"
+        }
+    }
+
+@server.resource("discovery://categories")
+def resource_categories() -> Dict[str, List[Dict[str, str]]]:
+    """Organize resources by categories based on URI schemes."""
+    
+    categories = {
+        "information": [
+            {"uri": "info://about", "description": "Server information"},
+            {"uri": "config://server", "description": "Server configuration"},
+            {"uri": "docs://readme", "description": "Documentation"}
+        ],
+        "user_data": [
+            {"uri_template": "user://{user_id}/profile", "description": "User profiles"},
+            {"uri_template": "db://users/{user_id}", "description": "Database user records"}
+        ],
+        "file_system": [
+            {"uri_template": "files://{path}", "description": "File system access"},
+            {"uri": "assets://logo", "description": "Static assets"}
+        ],
+        "external_apis": [
+            {"uri_template": "api://{service}/{endpoint}", "description": "External API data"}
+        ],
+        "reports": [
+            {"uri_template": "reports://{department}/{year}/{month}/summary", "description": "Monthly reports"},
+            {"uri_template": "data://processed/{dataset_id}", "description": "Processed datasets"}
+        ],
+        "discovery": [
+            {"uri": "discovery://resources", "description": "All available resources"},
+            {"uri": "discovery://categories", "description": "Resource categories"}
+        ]
+    }
+    
+    return {
+        "categories": categories,
+        "total_categories": len(categories),
+        "organization": "by_uri_scheme",
+        "last_updated": datetime.now().isoformat()
+    }
+
+# ❌ DON'T: Skip resource discovery or provide incomplete metadata
+@server.resource("bad://discovery")
+def bad_discovery():
+    return ["resource1", "resource2"]  # No useful metadata
+```
+
+## Testing Patterns
+
+### Comprehensive Resource Testing
+
+```python
+# ✅ DO: Comprehensive resource testing
+import pytest
+from fastmcp import FastMCP, Client
+from fastmcp.exceptions import ResourceError
+from unittest.mock import Mock, patch, AsyncMock
+
+@pytest.fixture
+async def resources_server():
+    """Create a test server with sample resources."""
+    
+    server = FastMCP(name="test-resources-server")
+    
+    @server.resource("test://static")
+    def test_static() -> str:
+        return "Static test content"
+    
+    @server.resource("test://json")
+    def test_json() -> Dict[str, str]:
+        return {"message": "JSON test content", "type": "test"}
+    
+    @server.resource("test://template/{param}")
+    def test_template(param: str) -> Dict[str, str]:
+        return {"param": param, "message": f"Template test with {param}"}
+    
+    @server.resource("test://error")
+    def test_error() -> str:
+        raise ResourceError("Test error message")
+    
+    return server
+
+@pytest.fixture
+async def resources_client(resources_server):
+    """Create a test client for resources testing."""
+    
+    async with Client(resources_server) as client:
+        yield client
+
+@pytest.mark.asyncio
+async def test_static_resource_access(resources_client):
+    """Test static resource access."""
+    
+    # List resources
+    resources = await resources_client.list_resources()
+    resource_uris = [resource.uri for resource in resources]
+    
+    assert "test://static" in resource_uris
+    assert "test://json" in resource_uris
+    
+    # Read static resource
+    content = await resources_client.read_resource("test://static")
+    assert len(content) == 1
+    assert "Static test content" in content[0].text
+
+@pytest.mark.asyncio
+async def test_json_resource_content(resources_client):
+    """Test JSON resource content handling."""
+    
+    content = await resources_client.read_resource("test://json")
+    assert len(content) == 1
+    
+    # Content should be JSON
+    import json
+    data = json.loads(content[0].text)
+    assert data["message"] == "JSON test content"
+    assert data["type"] == "test"
+
+@pytest.mark.asyncio
+async def test_template_resource_access(resources_client):
+    """Test template resource parameter handling."""
+    
+    # List resource templates
+    templates = await resources_client.list_resource_templates()
+    template_uris = [template.uriTemplate for template in templates]
+    
+    assert "test://template/{param}" in template_uris
+    
+    # Access template with parameter
+    content = await resources_client.read_resource("test://template/hello")
+    assert len(content) == 1
+    
+    import json
+    data = json.loads(content[0].text)
+    assert data["param"] == "hello"
+    assert "hello" in data["message"]
+
+@pytest.mark.asyncio
+async def test_resource_error_handling(resources_client):
+    """Test resource error handling."""
+    
+    # Test accessing error resource
+    with pytest.raises(Exception):  # Should raise an exception
+        await resources_client.read_resource("test://error")
+
+@pytest.mark.asyncio
+async def test_nonexistent_resource(resources_client):
+    """Test accessing non-existent resources."""
+    
+    with pytest.raises(Exception):  # Should raise an exception
+        await resources_client.read_resource("test://nonexistent")
+
+@pytest.mark.asyncio
+async def test_template_parameter_validation():
+    """Test template parameter validation."""
+    
+    server = FastMCP(name="validation-test-server")
+    
+    @server.resource("validate://user/{user_id}")
+    def validate_user_id(user_id: str) -> Dict[str, str]:
+        if not user_id.isdigit():
+            raise ResourceError("User ID must be numeric")
+        return {"user_id": user_id, "valid": True}
+    
+    async with Client(server) as client:
+        # Test valid parameter
+        content = await client.read_resource("validate://user/123")
+        assert len(content) == 1
+        
+        import json
+        data = json.loads(content[0].text)
+        assert data["user_id"] == "123"
+        assert data["valid"] is True
+        
+        # Test invalid parameter
+        with pytest.raises(Exception):
+            await client.read_resource("validate://user/abc")
+
+# ❌ DON'T: Skip resource testing
+def bad_resource_test():
+    # No actual resource functionality testing
+    assert True
+```
+
+## Anti-patterns and Common Mistakes
+
+### Resource Definition Anti-patterns
+
+```python
+# ❌ DON'T: Define resources without proper error handling
+@server.resource("unsafe://file/{path}")
+def unsafe_file_access(path: str) -> str:
+    # No path validation - security risk
+    with open(path) as f:  # Could access any file
+        return f.read()  # No error handling
+
+# ❌ DON'T: Use expensive operations without caching
+@server.resource("slow://computation/{id}")
+def slow_computation(id: str) -> Dict[str, float]:
+    # Expensive computation called every time
+    result = perform_complex_calculation(id)  # No caching
+    return result
+
+# ❌ DON'T: Return inconsistent or unprocessable content
+@server.resource("bad://content")
+def bad_content() -> object:
+    return SomeComplexObject()  # Cannot be serialized
+
+# ❌ DON'T: Ignore content types and MIME types
+@server.resource("typeless://resource")
+def typeless_resource():  # No return type hint
+    return {"data": "value"}  # No MIME type specification
+
+# ✅ DO: Define secure, efficient, well-typed resources
+@server.resource(
+    "secure://file/{filename}",
+    mime_type="text/plain"
+)
+def secure_file_access(filename: str) -> str:
+    """Secure file access with validation and caching."""
+    
+    # Validate filename
+    if not filename.replace("_", "").replace("-", "").isalnum():
+        raise ResourceError("Invalid filename format")
+    
+    # Check cache
+    cache_key = f"file_{filename}"
+    cached = resource_cache.get(cache_key)
+    if cached:
+        return cached
+    
+    # Secure file access
+    safe_path = Path("data") / filename
+    if not safe_path.exists():
+        raise ResourceError(f"File not found: {filename}")
+    
+    try:
+        content = safe_path.read_text()
+        resource_cache.set(cache_key, content)
+        return content
+    except Exception as e:
+        raise ResourceError(f"Failed to read file: {e}")
+```
+
+## Best Practices Summary
+
+### Resource Design
+- Use clear, descriptive URI schemes and patterns
+- Implement proper parameter validation for templates
+- Provide comprehensive error handling and meaningful messages
+- Use appropriate MIME types and content formatting
+
+### Content Management
+- Implement caching for expensive resources
+- Use content processors for format conversion
+- Handle both text and binary content appropriately
+- Provide content compression when beneficial
+
+### Security
+- Validate and sanitize all URI parameters
+- Implement access controls and path restrictions
+- Use parameterized queries for database resources
+- Prevent directory traversal and injection attacks
+
+### Performance
+- Cache frequently accessed resources
+- Use async patterns for I/O operations
+- Implement connection pooling for databases
+- Monitor resource access patterns and optimize
+
+### Discovery
+- Provide resource listing and categorization
+- Include comprehensive metadata in discovery
+- Document URI templates and parameters
+- Offer examples and usage guidelines
+
+### Testing
+- Test both static and template resources
+- Test parameter validation and error scenarios
+- Test content type handling and formatting
+- Test caching and performance characteristics
+
+## References
+- [FastMCP Resources Documentation](mdc:https:/gofastmcp.com/servers/resources)
+- [MCP Resource Specification](mdc:https:/spec.modelcontextprotocol.io/specification/basic/resources)
+- [URI Template Specification](mdc:https:/tools.ietf.org/html/rfc6570)
+- [HTTP Content Types](mdc:https:/developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types)
+- [Python Path Validation](mdc:https:/docs.python.org/3/library/pathlib.html)

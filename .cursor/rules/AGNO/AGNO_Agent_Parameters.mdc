@@ -1,0 +1,168 @@
+---
+description: AGNO agent parameters this is essential when we build in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Agent Parameters Reference
+
+This rule provides a comprehensive reference of all parameters available when creating AGNO agents. Parameters are organized by functional categories for easier reference.
+
+## Core Agent Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | `Model` | Required | The language model powering the agent |
+| `name` | `str` | None | Name of the agent (useful for multi-agent systems) |
+| `description` | `str` | None | Description of the agent's purpose and capabilities |
+| `role` | `str` | None | Role the agent should assume |
+| `instructions` | `List[str]` | [] | List of instructions for guiding agent behavior |
+| `expected_output` | `str` | None | Format specification for the expected response |
+| `markdown` | `bool` | False | Whether the agent should use markdown formatting |
+| `session_id` | `str` | None | Unique identifier for the agent session (auto-generated if None) |
+| `run_id` | `str` | None | Unique identifier for the run (auto-generated if None) |
+
+## Tools and Functionality
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `List[BaseTool]` | [] | List of tools the agent can use |
+| `knowledge` | `Knowledge` | None | Knowledge base for the agent to search |
+| `search_type` | `Literal["hybrid", "semantic", "keyword"]` | "hybrid" | How to search the knowledge base |
+| `verbose` | `bool` | False | Display more detailed information during execution |
+| `debug_mode` | `bool` | False | Enable debug information and logging |
+| `show_tool_calls` | `bool` | False | Show tool calls in the response |
+| `show_tool_calls_in_message` | `bool` | False | Include tool calls in the message sent to the model |
+| `add_citations_to_tool_calls` | `bool` | False | Add citations to tool call responses |
+| `cache_dir` | `str` | ".agno/cache" | Directory for caching data |
+
+## Memory and State Management
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `storage` | `Storage` | None | Storage driver for saving agent sessions |
+| `memory` | `Memory` | None | Memory driver for user memories and preferences |
+| `enable_agentic_memory` | `bool` | False | Allow agent to manage memories |
+| `enable_user_memories` | `bool` | False | Automatically create user memories |
+| `add_history_to_messages` | `bool` | False | Add historical messages to context |
+| `num_history_runs` | `int` | 0 | Number of history runs to add to messages |
+| `num_history_responses` | `int` | 0 | Number of history responses to add |
+| `read_chat_history` | `bool` | False | Add tool to let agent read chat history |
+| `read_tool_call_history` | `bool` | False | Add tool to read previous tool calls |
+
+## Response Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `response_model` | `Type[BaseModel]` | None | Pydantic model for structured output |
+| `structured_outputs` | `bool` | False | Format responses as structured JSON |
+| `json_mode` | `bool` | False | Force model to return valid JSON |
+| `max_tokens` | `int` | None | Maximum tokens in the response |
+| `temperature` | `float` | None | Controls randomness (0.0 to 2.0) |
+| `top_p` | `float` | None | Controls diversity via nucleus sampling |
+| `top_k` | `int` | None | Limits vocabulary to top K tokens |
+| `frequency_penalty` | `float` | None | Penalizes repeated tokens |
+| `presence_penalty` | `float` | None | Penalizes tokens already used |
+
+## Knowledge Search Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `knowledge_search_params` | `dict` | {} | Customized knowledge search settings |
+| `knowledge_search_k` | `int` | 5 | Number of results to retrieve |
+| `knowledge_search_score_threshold` | `float` | 0.0 | Minimum similarity score to include |
+| `knowledge_search_rerank` | `bool` | False | Apply re-ranking to results |
+| `knowledge_max_tokens` | `int` | None | Maximum tokens for knowledge content |
+
+## Runtime Behavior
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_retries` | `int` | 0 | Maximum retries on API failure |
+| `retry_sleep` | `float` | 1.0 | Seconds to wait between retries |
+| `add_datetime_to_instructions` | `bool` | False | Add current date/time to instructions |
+| `stream` | `bool` | False | Stream the response as it's generated |
+| `stream_intermediate_steps` | `bool` | False | Stream intermediate reasoning steps |
+| `show_full_reasoning` | `bool` | False | Show all reasoning steps in the response |
+| `show_reasoning_stream` | `bool` | False | Stream reasoning in human-readable format |
+
+## Agent.run() Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `message` | `str` | Required | The user message or query |
+| `user_id` | `str` | None | User identifier for memory and personalization |
+| `stream` | `bool` | False | Stream the response as it's generated |
+| `max_tokens` | `int` | None | Override agent's max_tokens for this run |
+| `temperature` | `float` | None | Override temperature for this run |
+| `top_p` | `float` | None | Override top_p for this run |
+| `top_k` | `int` | None | Override top_k for this run |
+| `knowledge_search_params` | `dict` | None | Override knowledge search settings |
+| `show_full_reasoning` | `bool` | False | Show complete reasoning process |
+| `stream_intermediate_steps` | `bool` | False | Stream each reasoning step |
+| ` debug_mode` | `bool` | False | Show a complete debug log |
+
+## Example Usage
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.storage.sqlite import SqliteStorage
+
+# Comprehensive agent with multiple parameter categories
+agent = Agent(
+    # Core parameters
+    name="FinanceAdvisor",
+    model=Claude(id="claude-4-sonnet-latest"),
+    role="You are a helpful financial advisor",
+    instructions=[
+        "Provide accurate financial data",
+        "Explain concepts clearly",
+        "Format data in tables when appropriate"
+    ],
+    expected_output=["A curated list of data"]
+    
+    # Tools and functionality
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, company_info=True)
+    ],
+    show_tool_calls=True,
+    
+    # Memory and state
+    storage=SqliteStorage(
+        table_name="agent_sessions", 
+        db_file="data/examople.db"
+    ),
+    memory=Memory(
+        model=Claude(id="claude-4-sonnet-latest"),
+        db=SqliteMemoryDb(
+            table_name="user_memories", 
+            db_file="data/finance.db"
+        )
+    ),
+    enable_agentic_memory=True,
+    add_history_to_messages=True,
+    num_history_runs=3,
+    
+    # Response configuration
+    markdown=True,
+    temperature=0.7,
+    
+    # Runtime behavior
+    debug_mode=True,
+    add_datetime_to_instructions=True
+)
+
+# Running the agent with specific parameters
+agent.print_response(
+    "What are the recent trends in tech stocks?",
+    user_id="john_doe@example.com",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True
+)
+```

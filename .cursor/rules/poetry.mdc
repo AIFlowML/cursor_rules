@@ -1,0 +1,134 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Poetry Package Management
+
+- **USE Poetry local in the termial export PATH="$HOME/.local/bin:$PATH" to avoid forget. 
+
+- **Installation & Setup**
+  - Install Poetry globally: `curl -sSL https://install.python-poetry.org | python3 -`
+  - Configure Poetry to create virtual environments in the project directory: `poetry config virtualenvs.in-project true`
+  - Verify installation: `poetry --version`
+
+- **Project Initialization**
+  - Create new project: `poetry new project-name` or `poetry init` in existing directory
+  - Always specify Python 3.10+ compatibility: `poetry add --python "^3.10"`
+  - Use `.python-version` file to specify exact Python version for tools like pyenv
+
+- **Core pyproject.toml Structure**
+  ```toml
+  [tool.poetry]
+  name = "project-name"
+  version = "0.1.0"
+  description = "Project description"
+  authors = ["Author Name <email@example.com>"]
+  readme = "README.md"
+  packages = [{include = "package_name"}]
+
+  [tool.poetry.dependencies]
+  python = "^3.10"
+  # Add production dependencies here
+
+  [tool.poetry.group.dev.dependencies]
+  # Add development dependencies here
+  ruff = "^0.1.0"
+  pytest = "^7.4.0"
+
+  [build-system]
+  requires = ["poetry-core"]
+  build-backend = "poetry.core.masonry.api"
+  
+  [tool.ruff]
+  line-length = 88
+  target-version = "py310"
+  ```
+
+- **Dependency Management**
+  - Add production dependencies: `poetry add package-name`
+  - Add development dependencies: `poetry add --group dev package-name`
+  - Add dependencies with version constraints: `poetry add package-name@^2.0.0`
+  - Update dependencies: `poetry update [package-name]`
+  - Remove dependencies: `poetry remove package-name`
+
+- **Virtual Environment Management**
+  - Create/update virtual environment: `poetry install`
+  - Activate virtual environment: `poetry shell`
+  - Run commands in virtual environment: `poetry run python script.py`
+  - Export requirements.txt (if needed): `poetry export -f requirements.txt --output requirements.txt`
+
+- **Project Execution**
+  - ✅ **DO**: Use `poetry run python script.py` to run scripts
+  - ❌ **DON'T**: Use direct `python script.py` without activating environment
+  - ✅ **DO**: Define scripts in pyproject.toml for common operations
+    ```toml
+    [tool.poetry.scripts]
+    start = "package_name.main:main"
+    dev = "package_name.main:dev"
+    test = "pytest"
+    ```
+  - Run defined scripts: `poetry run start`
+
+- **Testing Integration**
+  - Configure pytest in pyproject.toml:
+    ```toml
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]
+    python_files = "test_*.py"
+    python_functions = "test_*"
+    ```
+  - Run tests: `poetry run pytest` or `poetry run test` (if script defined)
+
+- **Linting & Formatting**
+  - Use Ruff for linting and formatting:
+    ```toml
+    [tool.ruff]
+    line-length = 88
+    target-version = "py310"
+    select = ["E", "F", "I"]
+    ignore = []
+    
+    [tool.ruff.per-file-ignores]
+    "__init__.py" = ["F401"]
+    
+    [tool.ruff.isort]
+    known-first-party = ["package_name"]
+    ```
+  - Run linter: `poetry run ruff check .`
+  - Run formatter: `poetry run ruff format .`
+
+- **Continuous Integration**
+  - Include poetry.lock in version control
+  - Use Poetry in CI pipelines:
+    ```yaml
+    # Example GitHub Actions workflow
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+      - name: Install dependencies
+        run: poetry install
+      - name: Run tests
+        run: poetry run pytest
+    ```
+
+- **Publishing Packages**
+  - Build package: `poetry build`
+  - Publish to PyPI: `poetry publish --build`
+  - Configure private repositories:
+    ```bash
+    poetry config repositories.my-repo https://my-repo.example.com/simple/
+    poetry publish --repository my-repo
+    ```
+
+- **Best Practices**
+  - Keep poetry.lock in version control
+  - Use semantic versioning for your package
+  - Group dependencies logically (dev, test, docs)
+  - Document all dependencies in README.md
+  - Use `poetry update --dry-run` to preview dependency changes
+  - Regularly audit dependencies: `poetry show --tree`

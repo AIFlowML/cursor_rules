@@ -1,0 +1,355 @@
+---
+description: AGNO provides robust support for structured outputs
+globs: 
+alwaysApply: false
+---
+# AGNO Structured Output
+
+AGNO provides robust support for structured outputs, allowing agents to return data in well-defined formats. This is essential for integrating agents with applications, ensuring consistent data structures, and enabling programmatic access to agent responses.
+
+## Structured Output Methods
+
+AGNO provides three main approaches to structured outputs:
+
+1. **Response Models**: Define Pydantic models for structured agent responses
+2. **JSON Mode**: Force models to return valid JSON
+3. **Structured Output Flag**: Enable general structured output capabilities
+
+## Using Response Models (Recommended)
+
+The most robust approach is to define a Pydantic model for your agent's response:
+
+```python
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Define a structured output model
+class StockAnalysis(BaseModel):
+    symbol: str = Field(..., description="Stock ticker symbol")
+    company_name: str = Field(..., description="Full company name")
+    current_price: float = Field(..., description="Current stock price")
+    recommendation: str = Field(..., description="Buy, Hold, or Sell recommendation")
+    analysis: str = Field(..., description="Detailed analysis rationale")
+    risk_level: str = Field(..., description="Low, Medium, or High risk assessment")
+    target_price: Optional[float] = Field(None, description="12-month price target if available")
+
+# Create agent with response model
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=StockAnalysis,  # Define expected response structure
+    instructions=[
+        "Analyze the given stock and provide a recommendation",
+        "Include current price, risk assessment, and rationale",
+    ],
+)
+
+# Run agent with structured output
+response = agent.run("Analyze AAPL stock")
+
+# Access structured fields
+print(f"Symbol: {response.content.symbol}")
+print(f"Recommendation: {response.content.recommendation}")
+print(f"Risk Level: {response.content.risk_level}")
+print(f"Analysis: {response.content.analysis}")
+```
+
+## JSON Mode
+
+For simpler cases, you can enable JSON mode without defining a model:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Create agent with JSON mode
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    json_mode=True,  # Force model to return valid JSON
+    instructions=[
+        "Return a JSON object containing stock analysis",
+        "Include symbol, price, and recommendation fields",
+    ],
+)
+
+# Run agent
+response = agent.run("Analyze TSLA stock")
+
+# Response content will be a Python dictionary
+analysis = response.content
+print(f"Symbol: {analysis['symbol']}")
+print(f"Price: {analysis['price']}")
+print(f"Recommendation: {analysis['recommendation']}")
+```
+
+## Structured Outputs Flag
+
+For models that support native structured output:
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+
+# Create agent with structured outputs
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    structured_outputs=True,  # Enable structured output capability
+    instructions=[
+        "Return a JSON object with the analysis result",
+        "Include fields for symbol, price, and recommendation",
+    ],
+)
+
+# Run agent
+response = agent.run("Analyze MSFT stock")
+
+# Response content will be a Python dictionary
+analysis = response.content
+print(f"Symbol: {analysis['symbol']}")
+print(f"Price: {analysis['price']}")
+```
+
+## Advanced Pydantic Models
+
+For complex data structures, define nested Pydantic models:
+
+```python
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.yfinance import YFinanceTools
+
+# Define nested models
+class FinancialMetric(BaseModel):
+    name: str = Field(..., description="Name of the financial metric")
+    value: float = Field(..., description="Value of the metric")
+    trend: str = Field(..., description="Increasing, Decreasing, or Stable")
+    importance: str = Field(..., description="Low, Medium, or High importance")
+
+class CompetitorInfo(BaseModel):
+    name: str = Field(..., description="Competitor company name")
+    symbol: str = Field(..., description="Competitor stock symbol")
+    relative_strength: str = Field(..., description="Weaker, Similar, or Stronger")
+
+class StockReport(BaseModel):
+    symbol: str = Field(..., description="Stock ticker symbol")
+    company_name: str = Field(..., description="Full company name")
+    current_price: float = Field(..., description="Current stock price in USD")
+    sector: str = Field(..., description="Industry sector")
+    recommendation: str = Field(..., description="Buy, Hold, or Sell recommendation")
+    summary: str = Field(..., description="Executive summary of analysis")
+    key_metrics: List[FinancialMetric] = Field(..., description="Key financial metrics")
+    competitors: List[CompetitorInfo] = Field(..., description="Major competitors")
+    risks: List[str] = Field(..., description="Key risk factors")
+    opportunities: List[str] = Field(..., description="Growth opportunities")
+
+# Create agent with complex response model
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[YFinanceTools(stock_price=True, company_info=True)],
+    response_model=StockReport,  # Use the complex model
+    instructions=[
+        "Provide a comprehensive stock analysis report",
+        "Include key metrics, competitors, risks, and opportunities",
+    ],
+)
+
+# Run agent
+response = agent.run("Create a detailed analysis report for NVDA")
+
+# Access nested structured data
+report = response.content
+print(f"Company: {report.company_name} ({report.symbol})")
+print(f"Recommendation: {report.recommendation}")
+print(f"Current Price: ${report.current_price}")
+print("\nKey Metrics:")
+for metric in report.key_metrics:
+    print(f"- {metric.name}: {metric.value} ({metric.trend}, {metric.importance} importance)")
+print("\nCompetitors:")
+for competitor in report.competitors:
+    print(f"- {competitor.name} ({competitor.symbol}): {competitor.relative_strength}")
+```
+
+## Handling Model Limitations
+
+Some models may struggle with complex structured outputs. Apply these techniques:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# For complex structures with simpler models
+agent = Agent(
+    model=OpenAIChat(id="gpt-3.5-turbo"),  # Less capable model
+    response_model=YourComplexModel,
+    # Help the model succeed with structured output
+    instructions=[
+        "Follow the output format exactly as specified",
+        "Ensure all required fields are included",
+        "Use the exact field names as defined in the model",
+        "Provide default values when information is unavailable",
+    ],
+    # Give the model more time to think
+    temperature=0.2,  # Lower temperature for more predictable outputs
+)
+```
+
+## Team Support for Structured Outputs
+
+Agent teams can also use structured outputs:
+
+```python
+from typing import List
+from pydantic import BaseModel, Field
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+# Define response model
+class NewsArticle(BaseModel):
+    title: str = Field(..., description="Article title")
+    summary: str = Field(..., description="Article summary")
+    source: str = Field(..., description="News source")
+    url: str = Field(..., description="Link to the article")
+
+# Create specialized agents with same response model
+news_finder = Agent(
+    name="NewsFinder",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[...],  # News search tools
+    response_model=NewsArticle,
+)
+
+content_summarizer = Agent(
+    name="ContentSummarizer",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[...],  # Content extraction tools
+    response_model=NewsArticle,
+)
+
+# Create team that routes to either agent
+news_team = Team(
+    name="NewsTeam",
+    mode="route",
+    model=OpenAIChat(id="gpt-4o"),
+    members=[news_finder, content_summarizer],
+)
+
+# Team response maintains structured output
+response = news_team.run("Find me the latest news on AI regulations")
+article = response.content  # NewsArticle model
+```
+
+## Best Practices
+
+1. **Model Definition**:
+   - Make field descriptions clear and precise
+   - Use appropriate field types (str, float, bool, etc.)
+   - Define nested structures for complex data
+   - Mark optional fields with `Optional[Type]` and provide defaults
+
+2. **Agent Configuration**:
+   - Use more capable models for complex structured outputs (GPT-4, Claude 3)
+   - Provide examples in instructions for difficult structures
+   - Use lower temperature for more consistent outputs
+   - Add validation instructions to guide the model
+
+3. **Error Handling**:
+   - Add validation code to handle potential model errors
+   - Implement fallbacks for failed structured outputs
+   - Log and monitor structured output performance
+
+## Complete Structured Output Example
+
+```python
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, validator
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+# Define comprehensive model with validation
+class FinancialRatio(BaseModel):
+    name: str
+    value: float
+    industry_average: Optional[float] = None
+    assessment: str
+
+    @validator('assessment')
+    def validate_assessment(cls, v):
+        valid_assessments = ["Poor", "Below Average", "Average", "Good", "Excellent"]
+        if v not in valid_assessments:
+            raise ValueError(f"Assessment must be one of {valid_assessments}")
+        return v
+
+class FinancialOutlook(BaseModel):
+    time_period: str = Field(..., description="Short-term, Mid-term, or Long-term")
+    projection: str
+    confidence: str = Field(..., description="Low, Medium, or High")
+
+class InvestmentAnalysis(BaseModel):
+    symbol: str
+    company_name: str
+    current_price: float
+    target_price: float
+    recommendation: str = Field(..., description="Strong Buy, Buy, Hold, Sell, Strong Sell")
+    rationale: str
+    key_ratios: List[FinancialRatio]
+    outlook: List[FinancialOutlook]
+    risk_level: str = Field(..., description="Low, Medium, High, Very High")
+    pros: List[str]
+    cons: List[str]
+
+# Create agent with comprehensive response model
+financial_advisor = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            financial_data=True,
+        ),
+    ],
+    response_model=InvestmentAnalysis,
+    instructions=[
+        "Provide a comprehensive investment analysis",
+        "Base your recommendation on financial data and analyst opinions",
+        "Include detailed ratios with industry comparisons",
+        "Provide outlook for different time periods",
+        "List pros and cons of the investment",
+    ],
+)
+
+# Run the agent with structured output
+response = financial_advisor.run("Analyze AMZN as a potential investment")
+
+# Access the structured data
+analysis = response.content
+print(f"Investment Analysis: {analysis.company_name} ({analysis.symbol})")
+print(f"Current Price: ${analysis.current_price}")
+print(f"Target Price: ${analysis.target_price}")
+print(f"Recommendation: {analysis.recommendation} (Risk: {analysis.risk_level})")
+print(f"\nRationale: {analysis.rationale}")
+
+print("\nKey Financial Ratios:")
+for ratio in analysis.key_ratios:
+    industry_avg = f"(Industry: {ratio.industry_average})" if ratio.industry_average else ""
+    print(f"- {ratio.name}: {ratio.value} {industry_avg} - {ratio.assessment}")
+
+print("\nOutlook:")
+for outlook in analysis.outlook:
+    print(f"- {outlook.time_period}: {outlook.projection} (Confidence: {outlook.confidence})")
+
+print("\nPros:")
+for pro in analysis.pros:
+    print(f"- {pro}")
+
+print("\nCons:")
+for con in analysis.cons:
+    print(f"- {con}")
+```

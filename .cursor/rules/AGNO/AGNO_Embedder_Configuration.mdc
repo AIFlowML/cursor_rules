@@ -1,0 +1,302 @@
+---
+description: AGNO Embedder Configuration.
+globs: 
+alwaysApply: false
+---
+# AGNO Embedder Configuration
+
+Embedders convert text into vector representations, which are essential for knowledge storage and retrieval in AGNO. This rule provides guidelines for configuring and using embedders effectively.
+
+## Supported Embedder Providers
+
+AGNO supports multiple embedder providers:
+
+| Provider | Models | Import Path |
+|----------|--------|-------------|
+| OpenAI | text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002 | `agno.embedder.openai` |
+| Cohere | embed-english-v3.0, embed-multilingual-v3.0 | `agno.embedder.cohere` |
+| HuggingFace | BAAI/bge-small-en, BAAI/bge-large-en, etc. | `agno.embedder.huggingface` |
+| Google | textembedding-gecko | `agno.embedder.google` | 
+| Azure | Azure OpenAI embeddings | `agno.embedder.azure` |
+| Ollama | llama, nomic-embed, etc. | `agno.embedder.ollama` |
+| Mistral | mistral-embed | `agno.embedder.mistral.mistral` |
+| AWS | Bedrock embeddings | `agno.embedder.aws.bedrock` |
+
+## Basic Embedder Configuration
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+
+# Create an OpenAI embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",  # Model ID
+    dimensions=1536,  # Output dimensions
+    api_key=os.environ.get("OPENAI_API_KEY"),  # API key
+)
+```
+
+## Provider-Specific Configuration
+
+### OpenAI Embedders
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+
+# OpenAI text-embedding-3-small (1536 dimensions)
+embedder_small = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+
+# OpenAI text-embedding-3-large (3072 dimensions)
+embedder_large = OpenAIEmbedder(
+    id="text-embedding-3-large",
+    dimensions=3072,
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+
+# OpenAI text-embedding-ada-002 (legacy, 1536 dimensions)
+embedder_ada = OpenAIEmbedder(
+    id="text-embedding-ada-002",
+    dimensions=1536,
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+```
+
+### Cohere Embedders
+
+```python
+from agno.embedder.cohere import CohereEmbedder
+
+# Cohere English embeddings
+embedder_english = CohereEmbedder(
+    id="embed-english-v3.0",
+    api_key=os.environ.get("COHERE_API_KEY"),
+    input_type="search_query",  # or "search_document", "classification", etc.
+)
+
+# Cohere Multilingual embeddings
+embedder_multilingual = CohereEmbedder(
+    id="embed-multilingual-v3.0",
+    api_key=os.environ.get("COHERE_API_KEY"),
+)
+```
+
+### HuggingFace Embedders
+
+```python
+from agno.embedder.huggingface import HuggingFaceEmbedder
+
+# Local HuggingFace BGE model
+embedder_local = HuggingFaceEmbedder(
+    id="BAAI/bge-small-en-v1.5",
+    device="cuda",  # or "cpu"
+)
+
+# HuggingFace Inference Endpoints
+embedder_endpoint = HuggingFaceEmbedder(
+    id="BAAI/bge-large-en-v1.5",
+    api_key=os.environ.get("HF_API_KEY"),
+    use_inference_endpoint=True,
+)
+```
+
+### Local Embedders with Ollama
+
+```python
+from agno.embedder.ollama import OllamaEmbedder
+
+# Ollama embeddings
+embedder_ollama = OllamaEmbedder(
+    id="nomic-embed-text",  # or other models available in Ollama
+    host="http://localhost:11434",
+)
+```
+
+## Integrating Embedders with Vector Databases
+
+Embedders are required when setting up vector databases:
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Create an embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+)
+
+# Create a vector database using the embedder
+vector_db = LanceDb(
+    uri="data/lancedb",
+    table_name="documents",
+    search_type=SearchType.hybrid,
+    embedder=embedder,  # Embedder is required for vector DB
+)
+```
+
+## Complete Knowledge Pipeline with Embedders
+
+```python
+from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.file import FileKnowledge
+from agno.models.anthropic import Claude
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# 1. Create embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+)
+
+# 2. Create vector database with embedder
+vector_db = LanceDb(
+    uri="data/lancedb",
+    table_name="documents",
+    search_type=SearchType.hybrid,
+    embedder=embedder,
+)
+
+# 3. Create knowledge source with vector database
+knowledge = FileKnowledge(
+    files=["data/document1.pdf", "data/document2.pdf"],
+    vector_db=vector_db,
+)
+
+# 4. Create agent with knowledge
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    knowledge=knowledge,
+)
+```
+
+## Batch Embedding
+
+For large documents, batch processing can be more efficient:
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+    # Configure batch processing
+    batch_size=100,  # Process 100 chunks at a time
+)
+```
+
+## Caching Embeddings
+
+To improve performance and reduce API costs, enable caching:
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+    # Enable embedding cache
+    cache_dir=".agno/embedding_cache",
+    use_cache=True,
+)
+```
+
+## Best Practices
+
+1. **Model Selection**:
+   - Use smaller models for development and cost-sensitive applications
+   - Use larger models for production systems requiring higher accuracy
+   - Match the embedder to your content language (e.g., multilingual for non-English)
+
+2. **Dimension Considerations**:
+   - Higher dimensions generally offer better performance but consume more storage
+   - Match dimensions to your vector database specifications
+   - Common dimensions: 1536 (OpenAI), 1024 (Cohere), 768 (many HuggingFace models)
+
+3. **Performance Optimization**:
+   - Enable caching for frequently accessed content
+   - Use batch processing for large document collections
+   - Run local models on GPU when available
+
+4. **Cost Management**:
+   - Use caching to avoid redundant API calls
+   - Consider self-hosted models for high-volume applications
+   - Monitor usage to prevent unexpected costs
+
+## Choosing the Right Embedder
+
+Selection criteria for embedders:
+
+1. **Accuracy Requirements**:
+   - High accuracy: OpenAI text-embedding-3-large, Cohere embed-english-v3.0
+   - Medium accuracy: OpenAI text-embedding-3-small, BGE large models
+   - Lower accuracy but cheaper: Smaller open-source models
+
+2. **Language Support**:
+   - English-only content: Any provider
+   - Multilingual content: Cohere multilingual, BGE multilingual models
+
+3. **Hosting Considerations**:
+   - Cloud-only: OpenAI, Cohere API, HuggingFace Endpoints
+   - Self-hosted: HuggingFace local models, Ollama
+
+4. **Cost Factors**:
+   - API-based (pay per token): OpenAI, Cohere, etc.
+   - Self-hosted (upfront hardware cost): HuggingFace, Ollama
+
+## Example: Advanced Embedder Setup
+
+```python
+import os
+from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.directory import DirectoryKnowledge
+from agno.models.anthropic import Claude
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Environment-aware embedder selection
+if os.environ.get("ENVIRONMENT") == "production":
+    # Production: Use high-quality embeddings
+    embedder = OpenAIEmbedder(
+        id="text-embedding-3-large",
+        dimensions=3072,
+        use_cache=True,
+        cache_dir="/persistent/cache/embeddings",
+        batch_size=50,
+    )
+else:
+    # Development: Use cost-effective embeddings
+    embedder = OpenAIEmbedder(
+        id="text-embedding-3-small",
+        dimensions=1536,
+        use_cache=True,
+        cache_dir=".agno/embedding_cache",
+    )
+
+# Create vector database with the selected embedder
+vector_db = LanceDb(
+    uri=os.environ.get("VECTORDB_PATH", "data/lancedb"),
+    table_name="knowledge_base",
+    search_type=SearchType.hybrid,
+    embedder=embedder,
+)
+
+# Create knowledge source
+knowledge = DirectoryKnowledge(
+    directory="data/docs",
+    vector_db=vector_db,
+    load_on_init=False,  # Don't load immediately
+)
+
+# Create agent with knowledge
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    knowledge=knowledge,
+)
+
+# Load knowledge when needed
+knowledge.load()
+```

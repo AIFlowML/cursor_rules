@@ -1,0 +1,1023 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in ElizaOS v2, TypeScript, end-to-end testing strategies, Playwright, and system testing. You focus on testing complete user journeys, multi-platform scenarios, and ensuring production-like reliability.
+
+## ElizaOS E2E Testing Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Test Orchestr  │    │  Platform Sims   │    │  Agent Behavior │
+│  - Setup Env    │───▶│  - Discord Bot   │───▶│  - Conversations│
+│  - Data Seed    │    │  - Twitter API   │    │  - Actions      │
+│  - Cleanup      │    │  - Telegram Bot  │    │  - Memory Mgmt  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  User Journeys  │    │  Performance     │    │  Error Scenarios│
+│  - Multi-step   │    │  - Load Testing  │    │  - Network Fail │
+│  - Cross-platform     │  - Memory Usage  │    │  - API Errors   │
+│  - Long Sessions│    │  - Response Time │    │  - Recovery     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+eliza/
+├── tests/
+│   ├── e2e/
+│   │   ├── setup/
+│   │   │   ├── environment.ts        # Test environment setup
+│   │   │   ├── fixtures/             # Test data and configurations
+│   │   │   ├── mock-services/        # Mock external services
+│   │   │   └── test-agents/          # Test agent configurations
+│   │   ├── journeys/
+│   │   │   ├── conversation-flow.e2e.ts
+│   │   │   ├── multi-platform.e2e.ts
+│   │   │   └── plugin-workflows.e2e.ts
+│   │   ├── platforms/
+│   │   │   ├── discord.e2e.ts
+│   │   │   ├── twitter.e2e.ts
+│   │   │   └── telegram.e2e.ts
+│   │   ├── performance/
+│   │   │   ├── load-testing.e2e.ts
+│   │   │   ├── memory-usage.e2e.ts
+│   │   │   └── response-time.e2e.ts
+│   │   ├── error-scenarios/
+│   │   │   ├── network-failures.e2e.ts
+│   │   │   ├── api-errors.e2e.ts
+│   │   │   └── recovery-tests.e2e.ts
+│   │   └── utils/
+│   │       ├── agent-controller.ts
+│   │       ├── platform-simulators.ts
+│   │       └── test-helpers.ts
+│   └── docker/
+│       ├── docker-compose.e2e.yml    # E2E test environment
+│       ├── test-services/            # Mock services
+│       └── monitoring/               # Test monitoring
+└── playwright.config.ts
+```
+
+## Core E2E Testing Patterns
+
+### Test Environment Setup
+
+```typescript
+// ✅ DO: Comprehensive E2E test environment setup
+import { test as base, expect } from '@playwright/test';
+import { AgentRuntime, Character } from '@elizaos/core';
+import { PostgresDatabaseAdapter } from '@elizaos/adapter-postgres';
+import Docker from 'dockerode';
+
+export interface E2ETestFixtures {
+  agentRuntime: AgentRuntime;
+  testDatabase: PostgresDatabaseAdapter;
+  mockServices: MockServiceManager;
+  platformSimulators: PlatformSimulatorManager;
+}
+
+export class E2ETestEnvironment {
+  private docker: Docker;
+  private containers: Map<string, any> = new Map();
+  private services: Map<string, any> = new Map();
+
+  constructor() {
+    this.docker = new Docker();
+  }
+
+  async setup(): Promise<void> {
+    console.log('Setting up E2E test environment...');
+
+    // Start required services
+    await this.startDatabase();
+    await this.startMockServices();
+    await this.startMonitoring();
+
+    // Wait for services to be ready
+    await this.waitForServices();
+  }
+
+  private async startDatabase(): Promise<void> {
+    const dbContainer = await this.docker.createContainer({
+      Image: 'postgres:15',
+      name: 'e2e-test-postgres',
+      Env: [
+        'POSTGRES_DB=test_eliza_e2e',
+        'POSTGRES_USER=test',
+        'POSTGRES_PASSWORD=test'
+      ],
+      HostConfig: {
+        PortBindings: { '5432/tcp': [{ HostPort: '5434' }] },
+        AutoRemove: true
+      }
+    });
+
+    await dbContainer.start();
+    this.containers.set('postgres', dbContainer);
+
+    // Add pgvector extension
+    await this.waitForDatabase();
+    await this.setupDatabaseSchema();
+  }
+
+  private async startMockServices(): Promise<void> {
+    // Mock Discord API
+    const discordMock = await this.docker.createContainer({
+      Image: 'wiremock/wiremock:latest',
+      name: 'e2e-discord-mock',
+      Cmd: ['--port', '8080', '--verbose'],
+      HostConfig: {
+        PortBindings: { '8080/tcp': [{ HostPort: '8080' }] },
+        AutoRemove: true
+      }
+    });
+
+    await discordMock.start();
+    this.containers.set('discord-mock', discordMock);
+
+    // Mock Twitter API
+    const twitterMock = await this.docker.createContainer({
+      Image: 'wiremock/wiremock:latest',
+      name: 'e2e-twitter-mock',
+      Cmd: ['--port', '8081', '--verbose'],
+      HostConfig: {
+        PortBindings: { '8081/tcp': [{ HostPort: '8081' }] },
+        AutoRemove: true
+      }
+    });
+
+    await twitterMock.start();
+    this.containers.set('twitter-mock', twitterMock);
+  }
+
+  private async startMonitoring(): Promise<void> {
+    // Prometheus for metrics
+    const prometheus = await this.docker.createContainer({
+      Image: 'prom/prometheus:latest',
+      name: 'e2e-prometheus',
+      HostConfig: {
+        PortBindings: { '9090/tcp': [{ HostPort: '9090' }] },
+        AutoRemove: true
+      }
+    });
+
+    await prometheus.start();
+    this.containers.set('prometheus', prometheus);
+  }
+
+  async cleanup(): Promise<void> {
+    console.log('Cleaning up E2E test environment...');
+
+    for (const [name, container] of this.containers) {
+      try {
+        await container.kill();
+        await container.remove();
+        console.log(`Stopped container: ${name}`);
+      } catch (error) {
+        console.warn(`Failed to stop container ${name}:`, error);
+      }
+    }
+
+    this.containers.clear();
+    this.services.clear();
+  }
+
+  private async waitForServices(): Promise<void> {
+    const maxRetries = 30;
+    const delay = 1000;
+
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        // Check database
+        const dbAdapter = new PostgresDatabaseAdapter({
+          connectionString: 'postgresql://test:test@localhost:5434/test_eliza_e2e'
+        });
+        await dbAdapter.init();
+        await dbAdapter.close();
+
+        // Check mock services
+        const discordResponse = await fetch('http://localhost:8080/__admin/health');
+        const twitterResponse = await fetch('http://localhost:8081/__admin/health');
+
+        if (discordResponse.ok && twitterResponse.ok) {
+          console.log('All services are ready');
+          return;
+        }
+      } catch (error) {
+        console.log(`Waiting for services... (${i + 1}/${maxRetries})`);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    throw new Error('Services failed to start within timeout');
+  }
+
+  private async waitForDatabase(): Promise<void> {
+    // Implementation for waiting for database to be ready
+    const maxRetries = 30;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const dbAdapter = new PostgresDatabaseAdapter({
+          connectionString: 'postgresql://test:test@localhost:5434/test_eliza_e2e'
+        });
+        await dbAdapter.init();
+        await dbAdapter.close();
+        return;
+      } catch (error) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    throw new Error('Database failed to start');
+  }
+
+  private async setupDatabaseSchema(): Promise<void> {
+    const dbAdapter = new PostgresDatabaseAdapter({
+      connectionString: 'postgresql://test:test@localhost:5434/test_eliza_e2e'
+    });
+    
+    await dbAdapter.init();
+    
+    // Add vector extension
+    await dbAdapter.query('CREATE EXTENSION IF NOT EXISTS vector');
+    
+    // Create test schema
+    // Implementation for schema setup
+    
+    await dbAdapter.close();
+  }
+}
+
+// Test fixture setup
+export const test = base.extend<E2ETestFixtures>({
+  agentRuntime: async ({}, use) => {
+    const dbAdapter = new PostgresDatabaseAdapter({
+      connectionString: 'postgresql://test:test@localhost:5434/test_eliza_e2e'
+    });
+
+    const character: Character = {
+      name: 'E2E_TestAgent',
+      bio: 'An agent for end-to-end testing',
+      lore: 'Created specifically for comprehensive E2E testing scenarios',
+      messageExamples: [
+        [
+          { user: '{{user1}}', content: { text: 'Hello' } },
+          { user: '{{agent}}', content: { text: 'Hello! I am ready for testing.' } }
+        ]
+      ],
+      postExamples: [],
+      topics: ['testing', 'e2e', 'automation'],
+      style: {
+        all: ['helpful', 'responsive', 'reliable'],
+        chat: ['friendly', 'clear'],
+        post: ['engaging', 'informative']
+      },
+      adjectives: ['intelligent', 'thorough', 'consistent'],
+      settings: {
+        secrets: {},
+        voice: { model: 'en_US-female' }
+      }
+    };
+
+    const runtime = new AgentRuntime({
+      character,
+      databaseAdapter: dbAdapter,
+      token: process.env.E2E_TEST_OPENAI_API_KEY || 'test-token',
+      modelProvider: 'openai'
+    });
+
+    await runtime.initialize();
+    await use(runtime);
+    await runtime.stop();
+  },
+
+  testDatabase: async ({}, use) => {
+    const dbAdapter = new PostgresDatabaseAdapter({
+      connectionString: 'postgresql://test:test@localhost:5434/test_eliza_e2e'
+    });
+    
+    await dbAdapter.init();
+    await use(dbAdapter);
+    await dbAdapter.close();
+  },
+
+  mockServices: async ({}, use) => {
+    const mockManager = new MockServiceManager();
+    await mockManager.setup();
+    await use(mockManager);
+    await mockManager.cleanup();
+  },
+
+  platformSimulators: async ({}, use) => {
+    const simulatorManager = new PlatformSimulatorManager();
+    await simulatorManager.setup();
+    await use(simulatorManager);
+    await simulatorManager.cleanup();
+  }
+});
+```
+
+### User Journey Testing
+
+```typescript
+// ✅ DO: Test complete user journeys and workflows
+import { test, expect } from './e2e-fixtures.js';
+import { AgentController } from '../utils/agent-controller.js';
+import { ConversationSimulator } from '../utils/conversation-simulator.js';
+
+test.describe('User Journey Tests', () => {
+  test.describe.configure({ mode: 'serial' }); // Run tests in sequence
+
+  test('complete conversation flow with memory persistence', async ({ 
+    agentRuntime, 
+    testDatabase,
+    platformSimulators 
+  }) => {
+    const agentController = new AgentController(agentRuntime);
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    // Start the conversation
+    await test.step('User sends initial greeting', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Hello! I am new here.',
+        author: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1', name: 'general' }
+      });
+
+      expect(response).toBeDefined();
+      expect(response.content).toContain('Hello');
+      expect(response.content).toContain('TestUser');
+    });
+
+    // Continue conversation with context
+    await test.step('User asks for help with context', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Can you help me understand what you can do?',
+        author: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1', name: 'general' }
+      });
+
+      expect(response.content).toContain('help');
+      
+      // Verify agent remembers the previous interaction
+      expect(response.content).not.toContain('new here'); // Should not repeat greeting context
+    });
+
+    // Test memory persistence across sessions
+    await test.step('Restart agent and test memory persistence', async () => {
+      await agentController.restart();
+
+      const response = await discordSim.sendMessage({
+        content: 'Do you remember me?',
+        author: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1', name: 'general' }
+      });
+
+      expect(response.content).toMatch(/remember|recall|previous|before/i);
+    });
+
+    // Verify conversation history in database
+    await test.step('Verify conversation history persisted', async () => {
+      const memories = await testDatabase.getMemories({
+        roomId: 'channel-1',
+        count: 10
+      });
+
+      expect(memories.length).toBeGreaterThan(3);
+      expect(memories.some(m => m.content.text?.includes('new here'))).toBe(true);
+      expect(memories.some(m => m.content.text?.includes('help me understand'))).toBe(true);
+      expect(memories.some(m => m.content.text?.includes('remember me'))).toBe(true);
+    });
+  });
+
+  test('multi-user conversation management', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    // User 1 starts conversation
+    await test.step('User 1 initiates conversation', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Hello, I am Alice',
+        author: { id: 'user-alice', username: 'Alice' },
+        channel: { id: 'channel-group', name: 'group-chat' }
+      });
+
+      expect(response.content).toContain('Alice');
+    });
+
+    // User 2 joins conversation
+    await test.step('User 2 joins conversation', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Hi everyone, I am Bob',
+        author: { id: 'user-bob', username: 'Bob' },
+        channel: { id: 'channel-group', name: 'group-chat' }
+      });
+
+      expect(response.content).toContain('Bob');
+      // Agent should acknowledge both users
+      expect(response.content).toMatch(/alice|everyone|both/i);
+    });
+
+    // Test context switching between users
+    await test.step('Agent maintains context for different users', async () => {
+      // Alice asks a question
+      const aliceResponse = await discordSim.sendMessage({
+        content: 'What is my name?',
+        author: { id: 'user-alice', username: 'Alice' },
+        channel: { id: 'channel-group', name: 'group-chat' }
+      });
+      expect(aliceResponse.content).toContain('Alice');
+
+      // Bob asks the same question
+      const bobResponse = await discordSim.sendMessage({
+        content: 'What is my name?',
+        author: { id: 'user-bob', username: 'Bob' },
+        channel: { id: 'channel-group', name: 'group-chat' }
+      });
+      expect(bobResponse.content).toContain('Bob');
+    });
+  });
+
+  test('cross-platform conversation continuity', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+    const twitterSim = await platformSimulators.getTwitterSimulator();
+
+    // Start conversation on Discord
+    await test.step('Start conversation on Discord', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'I am planning a trip to Tokyo',
+        author: { id: 'user-cross-platform', username: 'Traveler' },
+        channel: { id: 'channel-travel', name: 'travel' }
+      });
+
+      expect(response.content).toMatch(/tokyo|trip|travel/i);
+    });
+
+    // Continue conversation on Twitter
+    await test.step('Continue conversation on Twitter', async () => {
+      // Simulate the same user interacting on Twitter
+      const response = await twitterSim.sendMessage({
+        content: '@agent Can you recommend restaurants for my Tokyo trip?',
+        author: { id: 'user-cross-platform', username: 'Traveler' }
+      });
+
+      // Agent should remember the Tokyo trip context
+      expect(response.content).toMatch(/tokyo|restaurant|trip/i);
+      expect(response.content).not.toContain('what trip'); // Should not ask for clarification
+    });
+
+    // Verify cross-platform memory linking
+    await test.step('Verify cross-platform memory consistency', async () => {
+      const discordMemories = await agentRuntime.messageManager.getMemories({
+        userId: 'user-cross-platform',
+        count: 10
+      });
+
+      expect(discordMemories.length).toBeGreaterThan(2);
+      expect(discordMemories.some(m => m.content.text?.includes('Tokyo'))).toBe(true);
+    });
+  });
+});
+```
+
+### Platform-Specific E2E Tests
+
+```typescript
+// ✅ DO: Test platform-specific functionality and integrations
+import { test, expect } from './e2e-fixtures.js';
+import { DiscordBotSimulator } from '../utils/platform-simulators.js';
+
+test.describe('Discord Platform E2E Tests', () => {
+  test('Discord slash command interaction', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Register slash commands', async () => {
+      await discordSim.registerSlashCommand({
+        name: 'help',
+        description: 'Get help information'
+      });
+
+      await discordSim.registerSlashCommand({
+        name: 'memory',
+        description: 'Query agent memory',
+        options: [{
+          name: 'query',
+          description: 'Search query',
+          type: 'STRING',
+          required: true
+        }]
+      });
+    });
+
+    await test.step('Execute help command', async () => {
+      const response = await discordSim.executeSlashCommand({
+        name: 'help',
+        user: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1' }
+      });
+
+      expect(response.type).toBe('CHANNEL_MESSAGE_WITH_SOURCE');
+      expect(response.data.content).toContain('help');
+    });
+
+    await test.step('Execute memory command with parameter', async () => {
+      // First create some memory
+      await discordSim.sendMessage({
+        content: 'I love pizza',
+        author: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1' }
+      });
+
+      // Then query memory
+      const response = await discordSim.executeSlashCommand({
+        name: 'memory',
+        options: [{ name: 'query', value: 'pizza' }],
+        user: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1' }
+      });
+
+      expect(response.data.content).toContain('pizza');
+    });
+  });
+
+  test('Discord message reactions and interactions', async ({ 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Send message and add reaction', async () => {
+      const message = await discordSim.sendMessage({
+        content: 'This is a great idea!',
+        author: { id: 'user-123', username: 'TestUser' },
+        channel: { id: 'channel-1' }
+      });
+
+      // Agent should respond to the message
+      expect(message.content).toBeDefined();
+
+      // Add reaction to the user's message
+      await discordSim.addReaction({
+        messageId: 'user-message-id',
+        emoji: '👍',
+        userId: 'agent-bot-id'
+      });
+
+      // Verify reaction was added
+      const reactions = await discordSim.getMessageReactions('user-message-id');
+      expect(reactions).toContain('👍');
+    });
+
+    await test.step('Handle button interactions', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Choose an option:',
+        components: [{
+          type: 'ACTION_ROW',
+          components: [{
+            type: 'BUTTON',
+            style: 'PRIMARY',
+            label: 'Option 1',
+            custom_id: 'option_1'
+          }, {
+            type: 'BUTTON',
+            style: 'SECONDARY',
+            label: 'Option 2',
+            custom_id: 'option_2'
+          }]
+        }],
+        author: { id: 'agent-bot-id' }
+      });
+
+      // Simulate button click
+      const buttonResponse = await discordSim.clickButton({
+        customId: 'option_1',
+        user: { id: 'user-123', username: 'TestUser' },
+        message: response
+      });
+
+      expect(buttonResponse.type).toBe('UPDATE_MESSAGE');
+      expect(buttonResponse.data.content).toContain('Option 1');
+    });
+  });
+
+  test('Discord voice channel integration', async ({ 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Join voice channel', async () => {
+      const voiceConnection = await discordSim.joinVoiceChannel({
+        channelId: 'voice-channel-1',
+        guildId: 'guild-1'
+      });
+
+      expect(voiceConnection.status).toBe('CONNECTED');
+    });
+
+    await test.step('Process voice message', async () => {
+      const voiceMessage = await discordSim.receiveVoiceMessage({
+        userId: 'user-123',
+        audioData: 'base64-encoded-audio-data',
+        duration: 5000
+      });
+
+      // Agent should process voice and respond
+      expect(voiceMessage.transcript).toBeDefined();
+      expect(voiceMessage.response).toBeDefined();
+    });
+
+    await test.step('Generate voice response', async () => {
+      const voiceResponse = await discordSim.generateVoiceResponse({
+        text: 'Hello, this is a voice response',
+        voiceModel: 'en_US-female'
+      });
+
+      expect(voiceResponse.audioUrl).toBeDefined();
+      expect(voiceResponse.duration).toBeGreaterThan(0);
+    });
+  });
+});
+```
+
+### Performance E2E Tests
+
+```typescript
+// ✅ DO: Test performance and scalability scenarios
+import { test, expect } from './e2e-fixtures.js';
+import { PerformanceMonitor } from '../utils/performance-monitor.js';
+
+test.describe('Performance E2E Tests', () => {
+  test('concurrent conversation handling', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const monitor = new PerformanceMonitor();
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Handle multiple concurrent conversations', async () => {
+      monitor.start();
+
+      const conversations = Array.from({ length: 10 }, (_, i) => ({
+        userId: `user-${i}`,
+        channelId: `channel-${i}`,
+        username: `User${i}`
+      }));
+
+      // Start concurrent conversations
+      const promises = conversations.map(async (conv, index) => {
+        const messages = [
+          `Hello, I am ${conv.username}`,
+          'What can you help me with?',
+          'Tell me something interesting',
+          'Thank you for your help!'
+        ];
+
+        const responses = [];
+        for (const message of messages) {
+          const response = await discordSim.sendMessage({
+            content: message,
+            author: { id: conv.userId, username: conv.username },
+            channel: { id: conv.channelId, name: `channel-${index}` }
+          });
+          responses.push(response);
+          
+          // Small delay to simulate realistic typing
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        return responses;
+      });
+
+      const results = await Promise.all(promises);
+      const metrics = monitor.stop();
+
+      // Verify all conversations completed successfully
+      expect(results).toHaveLength(10);
+      results.forEach(conversation => {
+        expect(conversation).toHaveLength(4);
+        conversation.forEach(response => {
+          expect(response.content).toBeDefined();
+          expect(response.content.length).toBeGreaterThan(0);
+        });
+      });
+
+      // Performance assertions
+      expect(metrics.averageResponseTime).toBeLessThan(2000); // < 2s average
+      expect(metrics.maxResponseTime).toBeLessThan(5000); // < 5s max
+      expect(metrics.errorRate).toBeLessThan(0.01); // < 1% error rate
+    });
+  });
+
+  test('memory system performance under load', async ({ 
+    agentRuntime, 
+    testDatabase 
+  }) => {
+    const monitor = new PerformanceMonitor();
+
+    await test.step('Create large number of memories', async () => {
+      monitor.start();
+
+      const memoryPromises = Array.from({ length: 1000 }, async (_, i) => {
+        return await agentRuntime.messageManager.createMemory({
+          userId: `user-${i % 10}`, // 10 different users
+          content: { text: `Memory content ${i}` },
+          roomId: `room-${i % 5}`, // 5 different rooms
+          embedding: new Array(1536).fill(Math.random())
+        });
+      });
+
+      const memories = await Promise.all(memoryPromises);
+      const createMetrics = monitor.checkpoint('memory_creation');
+
+      expect(memories).toHaveLength(1000);
+      expect(createMetrics.duration).toBeLessThan(30000); // < 30s for 1000 memories
+    });
+
+    await test.step('Perform memory searches under load', async () => {
+      const searchPromises = Array.from({ length: 100 }, async (_, i) => {
+        return await agentRuntime.messageManager.getMemories({
+          roomId: `room-${i % 5}`,
+          count: 10
+        });
+      });
+
+      const searchResults = await Promise.all(searchPromises);
+      const searchMetrics = monitor.checkpoint('memory_search');
+
+      expect(searchResults).toHaveLength(100);
+      expect(searchMetrics.duration).toBeLessThan(5000); // < 5s for 100 searches
+      expect(searchMetrics.averageResponseTime).toBeLessThan(100); // < 100ms average
+    });
+
+    await test.step('Perform embedding searches under load', async () => {
+      const embeddingPromises = Array.from({ length: 50 }, async (_, i) => {
+        const randomEmbedding = new Array(1536).fill(0).map(() => Math.random());
+        return await agentRuntime.messageManager.searchMemoriesByEmbedding(
+          randomEmbedding,
+          { match_threshold: 0.8, count: 10 }
+        );
+      });
+
+      const embeddingResults = await Promise.all(embeddingPromises);
+      const embeddingMetrics = monitor.stop();
+
+      expect(embeddingResults).toHaveLength(50);
+      expect(embeddingMetrics.duration).toBeLessThan(10000); // < 10s for 50 embedding searches
+    });
+  });
+
+  test('system resource monitoring', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const monitor = new PerformanceMonitor();
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Monitor resource usage during operation', async () => {
+      monitor.startResourceMonitoring();
+
+      // Simulate normal operation for 1 minute
+      const endTime = Date.now() + 60000; // 1 minute
+      let messageCount = 0;
+
+      while (Date.now() < endTime) {
+        await discordSim.sendMessage({
+          content: `Test message ${messageCount++}`,
+          author: { id: 'user-load-test', username: 'LoadTestUser' },
+          channel: { id: 'channel-load-test' }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 message per second
+      }
+
+      const resourceMetrics = monitor.stopResourceMonitoring();
+
+      // Resource usage assertions
+      expect(resourceMetrics.maxMemoryUsage).toBeLessThan(512 * 1024 * 1024); // < 512MB
+      expect(resourceMetrics.averageCpuUsage).toBeLessThan(50); // < 50% CPU
+      expect(resourceMetrics.memoryLeaks).toBe(false);
+      expect(messageCount).toBeGreaterThan(50); // Should process at least 50 messages
+    });
+  });
+});
+```
+
+### Error Scenario E2E Tests
+
+```typescript
+// ✅ DO: Test error scenarios and recovery mechanisms
+import { test, expect } from './e2e-fixtures.js';
+import { NetworkSimulator } from '../utils/network-simulator.js';
+
+test.describe('Error Scenario E2E Tests', () => {
+  test('network failure recovery', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const networkSim = new NetworkSimulator();
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Normal operation before failure', async () => {
+      const response = await discordSim.sendMessage({
+        content: 'Hello, testing network stability',
+        author: { id: 'user-network-test', username: 'NetworkTester' },
+        channel: { id: 'channel-network' }
+      });
+
+      expect(response.content).toBeDefined();
+    });
+
+    await test.step('Simulate network outage', async () => {
+      await networkSim.simulateOutage({
+        duration: 5000, // 5 seconds
+        targets: ['discord-api', 'database']
+      });
+
+      // Attempt to send message during outage
+      await expect(async () => {
+        await discordSim.sendMessage({
+          content: 'This should fail',
+          author: { id: 'user-network-test', username: 'NetworkTester' },
+          channel: { id: 'channel-network' }
+        });
+      }).rejects.toThrow(/network|timeout|connection/i);
+    });
+
+    await test.step('Verify recovery after outage', async () => {
+      // Wait for recovery
+      await networkSim.waitForRecovery();
+
+      // Should work again
+      const response = await discordSim.sendMessage({
+        content: 'Network should be restored now',
+        author: { id: 'user-network-test', username: 'NetworkTester' },
+        channel: { id: 'channel-network' }
+      });
+
+      expect(response.content).toBeDefined();
+      expect(response.content).toContain('restored');
+    });
+
+    await test.step('Verify message queue processing', async () => {
+      // Check if queued messages were processed
+      const memories = await agentRuntime.messageManager.getMemories({
+        roomId: 'channel-network',
+        count: 10
+      });
+
+      expect(memories.length).toBeGreaterThan(2);
+      expect(memories.some(m => m.content.text?.includes('network stability'))).toBe(true);
+      expect(memories.some(m => m.content.text?.includes('restored'))).toBe(true);
+    });
+  });
+
+  test('database failure and recovery', async ({ 
+    agentRuntime, 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Create baseline memories', async () => {
+      await discordSim.sendMessage({
+        content: 'Baseline message before database issues',
+        author: { id: 'user-db-test', username: 'DBTester' },
+        channel: { id: 'channel-db-test' }
+      });
+    });
+
+    await test.step('Simulate database failure', async () => {
+      // Stop the database container
+      const docker = new Docker();
+      const dbContainer = await docker.getContainer('e2e-test-postgres');
+      await dbContainer.stop();
+
+      // Attempt operations during database outage
+      await expect(async () => {
+        await discordSim.sendMessage({
+          content: 'This should fail due to database issues',
+          author: { id: 'user-db-test', username: 'DBTester' },
+          channel: { id: 'channel-db-test' }
+        });
+      }).rejects.toThrow(/database|connection/i);
+    });
+
+    await test.step('Restore database and verify recovery', async () => {
+      // Restart the database container
+      const docker = new Docker();
+      const dbContainer = await docker.getContainer('e2e-test-postgres');
+      await dbContainer.start();
+
+      // Wait for database to be ready
+      await new Promise(resolve => setTimeout(resolve, 10000));
+
+      // Reconnect the agent
+      await agentRuntime.reconnectDatabase();
+
+      // Should work again
+      const response = await discordSim.sendMessage({
+        content: 'Database should be working now',
+        author: { id: 'user-db-test', username: 'DBTester' },
+        channel: { id: 'channel-db-test' }
+      });
+
+      expect(response.content).toBeDefined();
+    });
+  });
+
+  test('API rate limiting and backoff', async ({ 
+    platformSimulators 
+  }) => {
+    const discordSim = await platformSimulators.getDiscordSimulator();
+
+    await test.step('Trigger rate limiting', async () => {
+      // Configure mock to return rate limit responses
+      await discordSim.configureRateLimit({
+        limit: 5,
+        window: 10000, // 10 seconds
+        retryAfter: 5000 // 5 seconds
+      });
+
+      // Send messages rapidly to trigger rate limiting
+      const rapidMessages = Array.from({ length: 10 }, (_, i) => 
+        discordSim.sendMessage({
+          content: `Rapid message ${i}`,
+          author: { id: 'user-rate-test', username: 'RateTester' },
+          channel: { id: 'channel-rate-test' }
+        })
+      );
+
+      const results = await Promise.allSettled(rapidMessages);
+      
+      // Some should succeed, some should be rate limited
+      const successful = results.filter(r => r.status === 'fulfilled').length;
+      const rateLimited = results.filter(r => r.status === 'rejected').length;
+
+      expect(successful).toBeLessThanOrEqual(5);
+      expect(rateLimited).toBeGreaterThan(0);
+    });
+
+    await test.step('Verify automatic retry and backoff', async () => {
+      // Wait for rate limit to reset
+      await new Promise(resolve => setTimeout(resolve, 6000));
+
+      // Should work again with proper backoff
+      const response = await discordSim.sendMessage({
+        content: 'This should work after rate limit reset',
+        author: { id: 'user-rate-test', username: 'RateTester' },
+        channel: { id: 'channel-rate-test' }
+      });
+
+      expect(response.content).toBeDefined();
+    });
+  });
+});
+```
+
+## Best Practices Summary
+
+### E2E Test Strategy
+- Test complete user journeys from start to finish
+- Use production-like environments and configurations
+- Test cross-platform scenarios and data consistency
+- Include performance and load testing scenarios
+
+### Environment Management
+- Use containerized services for consistent test environments
+- Implement proper setup and teardown procedures
+- Use test data that resembles production scenarios
+- Monitor resource usage during tests
+
+### User Journey Testing
+- Test realistic conversation flows and interactions
+- Verify memory persistence and context management
+- Test multi-user and concurrent scenarios
+- Validate cross-platform continuity
+
+### Error Testing
+- Test network failures and recovery mechanisms
+- Verify graceful degradation under load
+- Test API rate limiting and backoff strategies
+- Validate data consistency after failures
+
+### Performance Testing
+- Test with realistic load patterns
+- Monitor response times and resource usage
+- Test memory usage and potential leaks
+- Verify scalability under concurrent load
+
+## References
+- [Playwright Documentation](mdc:https:/playwright.dev)
+- [E2E Testing Best Practices](mdc:https:/martinfowler.com/articles/practical-test-pyramid.html)
+- [Docker Testing Strategies](mdc:https:/docs.docker.com/develop/dev-best-practices)
+- [Performance Testing Guide](mdc:https:/web.dev/performance-testing)

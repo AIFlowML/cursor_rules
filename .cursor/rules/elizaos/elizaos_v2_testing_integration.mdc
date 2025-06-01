@@ -1,0 +1,864 @@
+---
+description: ElizaOS v2, integration testing strategies
+globs: 
+alwaysApply: false
+---
+> You are an expert in ElizaOS v2, TypeScript, integration testing strategies, and system testing. You focus on testing component interactions, runtime behavior, and ensuring proper integration between ElizaOS subsystems.
+
+## ElizaOS Integration Testing Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Test Runtime   │    │  Plugin Manager  │    │  Memory System  │
+│  - Agent Init   │───▶│  - Registration  │───▶│  - Persistence  │
+│  - Lifecycle    │    │  - Dependencies  │    │  - Retrieval    │
+│  - Cleanup      │    │  - Conflicts     │    │  - Embeddings   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Workflow Tests │    │  Component Flow  │    │  External APIs  │
+│  - Multi-step   │    │  - Action Chain  │    │  - HTTP Clients │
+│  - State Trans  │    │  - Provider Link │    │  - Database     │
+│  - Error Recov  │    │  - Evaluator     │    │  - File System  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+eliza/
+├── tests/
+│   ├── integration/
+│   │   ├── setup/
+│   │   │   ├── test-runtime.ts    # Test runtime factory
+│   │   │   ├── test-database.ts   # Test database setup
+│   │   │   └── test-plugins.ts    # Plugin test utilities
+│   │   ├── runtime/
+│   │   │   ├── agent-lifecycle.test.ts
+│   │   │   ├── plugin-loading.test.ts
+│   │   │   └── memory-integration.test.ts
+│   │   ├── workflows/
+│   │   │   ├── conversation-flow.test.ts
+│   │   │   ├── action-chains.test.ts
+│   │   │   └── error-recovery.test.ts
+│   │   ├── plugins/
+│   │   │   ├── api-plugin-integration.test.ts
+│   │   │   ├── client-plugin-integration.test.ts
+│   │   │   └── onchain-plugin-integration.test.ts
+│   │   └── fixtures/
+│   │       ├── test-characters/
+│   │       ├── test-memories/
+│   │       └── test-configurations/
+│   └── docker/
+│       ├── test-postgres/
+│       └── test-services/
+└── vitest.integration.config.ts
+```
+
+## Core Integration Testing Patterns
+
+### Test Runtime Factory
+
+```typescript
+// ✅ DO: Create comprehensive test runtime factory
+import { AgentRuntime, Character, IAgentRuntime } from '@elizaos/core';
+import { PostgresDatabaseAdapter } from '@elizaos/adapter-postgres';
+import { MemoryManager } from '@elizaos/core';
+
+export class TestRuntimeFactory {
+  private static runtimes: IAgentRuntime[] = [];
+  private static dbAdapter: PostgresDatabaseAdapter;
+
+  static async createTestDatabase(): Promise<PostgresDatabaseAdapter> {
+    if (!this.dbAdapter) {
+      this.dbAdapter = new PostgresDatabaseAdapter({
+        connectionString: process.env.TEST_DATABASE_URL || 'postgresql://test:test@localhost:5433/test_eliza'
+      });
+      
+      await this.dbAdapter.init();
+      
+      // Clear existing data
+      await this.dbAdapter.query('TRUNCATE TABLE memories, relationships, participants, rooms, accounts CASCADE');
+    }
+    
+    return this.dbAdapter;
+  }
+
+  static async createTestRuntime(
+    character: Partial<Character> = {},
+    options: {
+      plugins?: any[];
+      providers?: any[];
+      actions?: any[];
+      evaluators?: any[];
+      memoryAdapter?: any;
+    } = {}
+  ): Promise<IAgentRuntime> {
+    const dbAdapter = await this.createTestDatabase();
+    
+    const testCharacter: Character = {
+      name: 'TestAgent',
+      bio: 'A test agent for integration testing',
+      lore: 'Created for testing purposes',
+      messageExamples: [
+        [
+          { user: '{{user1}}', content: { text: 'Hello' } },
+          { user: '{{agent}}', content: { text: 'Hello! How can I help you?' } }
+        ]
+      ],
+      postExamples: [],
+      topics: ['testing', 'integration'],
+      style: {
+        all: ['helpful', 'concise', 'technical'],
+        chat: ['friendly', 'informative'],
+        post: ['engaging', 'brief']
+      },
+      adjectives: ['intelligent', 'reliable', 'efficient'],
+      settings: {
+        secrets: {},
+        voice: {
+          model: 'en_US-female'
+        }
+      },
+      ...character
+    };
+
+    const runtime = new AgentRuntime({
+      character: testCharacter,
+      databaseAdapter: options.memoryAdapter || dbAdapter,
+      token: process.env.TEST_OPENAI_API_KEY || 'test-token',
+      modelProvider: 'openai',
+      actions: options.actions || [],
+      providers: options.providers || [],
+      evaluators: options.evaluators || []
+    });
+
+    // Register plugins if provided
+    if (options.plugins) {
+      for (const plugin of options.plugins) {
+        await runtime.registerPlugin(plugin);
+      }
+    }
+
+    // Initialize the runtime
+    await runtime.initialize();
+
+    this.runtimes.push(runtime);
+    return runtime;
+  }
+
+  static async cleanup(): Promise<void> {
+    // Cleanup all test runtimes
+    for (const runtime of this.runtimes) {
+      try {
+        await runtime.stop();
+      } catch (error) {
+        console.warn('Error stopping runtime:', error);
+      }
+    }
+    this.runtimes = [];
+
+    // Cleanup database connection
+    if (this.dbAdapter) {
+      try {
+        await this.dbAdapter.close();
+      } catch (error) {
+        console.warn('Error closing database:', error);
+      }
+    }
+  }
+
+  static async createTestMemory(
+    runtime: IAgentRuntime,
+    overrides: Partial<any> = {}
+  ): Promise<any> {
+    const memory = {
+      userId: 'test-user',
+      content: { text: 'Test message' },
+      roomId: 'test-room',
+      embedding: new Array(1536).fill(0.1),
+      ...overrides
+    };
+
+    return await runtime.messageManager.createMemory(memory);
+  }
+
+  static async populateTestMemories(
+    runtime: IAgentRuntime,
+    count: number = 10
+  ): Promise<any[]> {
+    const memories = [];
+    
+    for (let i = 0; i < count; i++) {
+      const memory = await this.createTestMemory(runtime, {
+        content: { text: `Test message ${i}` },
+        createdAt: Date.now() - (count - i) * 1000 // Spread over time
+      });
+      memories.push(memory);
+    }
+    
+    return memories;
+  }
+}
+```
+
+### Runtime Integration Tests
+
+```typescript
+// ✅ DO: Comprehensive runtime lifecycle testing
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { TestRuntimeFactory } from '../setup/test-runtime.js';
+import { IAgentRuntime } from '@elizaos/core';
+
+describe('Runtime Integration Tests', () => {
+  let runtime: IAgentRuntime;
+
+  beforeAll(async () => {
+    // Setup test database and dependencies
+    await TestRuntimeFactory.createTestDatabase();
+  });
+
+  afterAll(async () => {
+    await TestRuntimeFactory.cleanup();
+  });
+
+  beforeEach(async () => {
+    runtime = await TestRuntimeFactory.createTestRuntime();
+  });
+
+  describe('Agent Lifecycle', () => {
+    it('should initialize runtime with all components', async () => {
+      expect(runtime.agentId).toBeDefined();
+      expect(runtime.character).toBeDefined();
+      expect(runtime.character.name).toBe('TestAgent');
+      expect(runtime.messageManager).toBeDefined();
+      expect(runtime.databaseAdapter).toBeDefined();
+    });
+
+    it('should load character configuration correctly', async () => {
+      const customCharacter = {
+        name: 'CustomAgent',
+        bio: 'A custom test agent',
+        settings: {
+          voice: { model: 'custom-voice' },
+          secrets: { apiKey: 'test-key' }
+        }
+      };
+
+      const customRuntime = await TestRuntimeFactory.createTestRuntime(customCharacter);
+      
+      expect(customRuntime.character.name).toBe('CustomAgent');
+      expect(customRuntime.character.bio).toBe('A custom test agent');
+      expect(customRuntime.character.settings.voice.model).toBe('custom-voice');
+      expect(customRuntime.character.settings.secrets.apiKey).toBe('test-key');
+    });
+
+    it('should handle runtime stopping gracefully', async () => {
+      const isRunning = runtime.getState() !== 'stopped';
+      expect(isRunning).toBe(true);
+
+      await runtime.stop();
+      
+      const isStopped = runtime.getState() === 'stopped';
+      expect(isStopped).toBe(true);
+    });
+  });
+
+  describe('Memory System Integration', () => {
+    it('should create and retrieve memories', async () => {
+      const memory = await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Integration test memory' },
+        userId: 'test-user-123'
+      });
+
+      expect(memory.id).toBeDefined();
+      expect(memory.content.text).toBe('Integration test memory');
+
+      // Retrieve the memory
+      const retrievedMemories = await runtime.messageManager.getMemories({
+        roomId: memory.roomId,
+        count: 1
+      });
+
+      expect(retrievedMemories).toHaveLength(1);
+      expect(retrievedMemories[0].content.text).toBe('Integration test memory');
+    });
+
+    it('should handle memory search with embeddings', async () => {
+      // Create test memories with different embeddings
+      await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Weather information' },
+        embedding: new Array(1536).fill(0.1)
+      });
+
+      await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Sports news' },
+        embedding: new Array(1536).fill(0.9)
+      });
+
+      // Search for weather-related content
+      const searchResults = await runtime.messageManager.searchMemoriesByEmbedding(
+        new Array(1536).fill(0.1),
+        {
+          match_threshold: 0.8,
+          count: 10
+        }
+      );
+
+      expect(searchResults.length).toBeGreaterThan(0);
+      expect(searchResults[0].content.text).toContain('Weather');
+    });
+
+    it('should maintain memory consistency across operations', async () => {
+      const memories = await TestRuntimeFactory.populateTestMemories(runtime, 5);
+      
+      // Verify all memories were created
+      const allMemories = await runtime.messageManager.getMemories({
+        roomId: memories[0].roomId,
+        count: 10
+      });
+
+      expect(allMemories.length).toBe(5);
+
+      // Verify chronological order
+      for (let i = 1; i < allMemories.length; i++) {
+        expect(allMemories[i].createdAt).toBeGreaterThanOrEqual(allMemories[i-1].createdAt);
+      }
+    });
+  });
+
+  describe('Component Registration', () => {
+    it('should register and access actions', async () => {
+      const testAction = {
+        name: 'TEST_ACTION',
+        description: 'Test action for integration',
+        examples: [[]],
+        validate: async () => true,
+        handler: async () => true
+      };
+
+      const actionRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        actions: [testAction]
+      });
+
+      expect(actionRuntime.actions.has('TEST_ACTION')).toBe(true);
+      const registeredAction = actionRuntime.actions.get('TEST_ACTION');
+      expect(registeredAction.name).toBe('TEST_ACTION');
+    });
+
+    it('should register and access providers', async () => {
+      const testProvider = {
+        get: async () => 'Test provider data'
+      };
+
+      const providerRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        providers: [{ name: 'TEST_PROVIDER', provider: testProvider }]
+      });
+
+      expect(providerRuntime.providers.has('TEST_PROVIDER')).toBe(true);
+      const registeredProvider = providerRuntime.providers.get('TEST_PROVIDER');
+      const result = await registeredProvider.get(providerRuntime, {} as any);
+      expect(result).toBe('Test provider data');
+    });
+
+    it('should register and access evaluators', async () => {
+      const testEvaluator = {
+        name: 'TEST_EVALUATOR',
+        description: 'Test evaluator',
+        examples: [],
+        handler: async () => 0.5
+      };
+
+      const evaluatorRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        evaluators: [testEvaluator]
+      });
+
+      expect(evaluatorRuntime.evaluators.has('TEST_EVALUATOR')).toBe(true);
+      const registeredEvaluator = evaluatorRuntime.evaluators.get('TEST_EVALUATOR');
+      const score = await registeredEvaluator.handler(evaluatorRuntime, {} as any);
+      expect(score).toBe(0.5);
+    });
+  });
+});
+```
+
+### Plugin Integration Tests
+
+```typescript
+// ✅ DO: Test plugin system integration and dependencies
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { TestRuntimeFactory } from '../setup/test-runtime.js';
+import { IAgentRuntime, Plugin } from '@elizaos/core';
+
+// Mock plugin implementations
+const createMockPlugin = (name: string, dependencies: string[] = []): Plugin => ({
+  name,
+  description: `Mock plugin ${name}`,
+  dependencies,
+  actions: [],
+  providers: [],
+  evaluators: [],
+  services: [],
+  
+  async initialize(runtime: IAgentRuntime): Promise<void> {
+    console.log(`Initializing plugin ${name}`);
+  },
+
+  async cleanup(): Promise<void> {
+    console.log(`Cleaning up plugin ${name}`);
+  }
+});
+
+describe('Plugin Integration Tests', () => {
+  let runtime: IAgentRuntime;
+
+  beforeAll(async () => {
+    await TestRuntimeFactory.createTestDatabase();
+  });
+
+  afterAll(async () => {
+    await TestRuntimeFactory.cleanup();
+  });
+
+  beforeEach(async () => {
+    runtime = await TestRuntimeFactory.createTestRuntime();
+  });
+
+  describe('Plugin Loading', () => {
+    it('should load plugins in correct dependency order', async () => {
+      const plugin1 = createMockPlugin('PLUGIN_1');
+      const plugin2 = createMockPlugin('PLUGIN_2', ['PLUGIN_1']);
+      const plugin3 = createMockPlugin('PLUGIN_3', ['PLUGIN_1', 'PLUGIN_2']);
+
+      const pluginRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        plugins: [plugin3, plugin1, plugin2] // Intentionally out of order
+      });
+
+      // Verify all plugins are loaded
+      expect(pluginRuntime.plugins.has('PLUGIN_1')).toBe(true);
+      expect(pluginRuntime.plugins.has('PLUGIN_2')).toBe(true);
+      expect(pluginRuntime.plugins.has('PLUGIN_3')).toBe(true);
+    });
+
+    it('should handle plugin dependency conflicts', async () => {
+      const plugin1 = createMockPlugin('PLUGIN_A', ['PLUGIN_B']);
+      const plugin2 = createMockPlugin('PLUGIN_B', ['PLUGIN_A']);
+
+      await expect(
+        TestRuntimeFactory.createTestRuntime({}, {
+          plugins: [plugin1, plugin2]
+        })
+      ).rejects.toThrow('Circular dependency detected');
+    });
+
+    it('should handle missing plugin dependencies', async () => {
+      const plugin = createMockPlugin('PLUGIN_WITH_MISSING_DEP', ['MISSING_PLUGIN']);
+
+      await expect(
+        TestRuntimeFactory.createTestRuntime({}, {
+          plugins: [plugin]
+        })
+      ).rejects.toThrow('Missing dependency: MISSING_PLUGIN');
+    });
+  });
+
+  describe('Plugin Component Integration', () => {
+    it('should integrate plugin actions with runtime', async () => {
+      const pluginAction = {
+        name: 'PLUGIN_ACTION',
+        description: 'Action from plugin',
+        examples: [[]],
+        validate: vi.fn().mockResolvedValue(true),
+        handler: vi.fn().mockResolvedValue(true)
+      };
+
+      const plugin = {
+        ...createMockPlugin('TEST_PLUGIN'),
+        actions: [pluginAction]
+      };
+
+      const pluginRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        plugins: [plugin]
+      });
+
+      // Test action integration
+      expect(pluginRuntime.actions.has('PLUGIN_ACTION')).toBe(true);
+      
+      const action = pluginRuntime.actions.get('PLUGIN_ACTION');
+      const memory = await TestRuntimeFactory.createTestMemory(pluginRuntime);
+      
+      const isValid = await action.validate(pluginRuntime, memory);
+      expect(isValid).toBe(true);
+      expect(pluginAction.validate).toHaveBeenCalledWith(pluginRuntime, memory);
+
+      const result = await action.handler(pluginRuntime, memory);
+      expect(result).toBe(true);
+      expect(pluginAction.handler).toHaveBeenCalledWith(pluginRuntime, memory, undefined);
+    });
+
+    it('should integrate plugin providers with runtime', async () => {
+      const pluginProvider = {
+        get: vi.fn().mockResolvedValue('Plugin provider data')
+      };
+
+      const plugin = {
+        ...createMockPlugin('PROVIDER_PLUGIN'),
+        providers: [{ name: 'PLUGIN_PROVIDER', provider: pluginProvider }]
+      };
+
+      const pluginRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        plugins: [plugin]
+      });
+
+      expect(pluginRuntime.providers.has('PLUGIN_PROVIDER')).toBe(true);
+      
+      const provider = pluginRuntime.providers.get('PLUGIN_PROVIDER');
+      const memory = await TestRuntimeFactory.createTestMemory(pluginRuntime);
+      
+      const result = await provider.get(pluginRuntime, memory);
+      expect(result).toBe('Plugin provider data');
+      expect(pluginProvider.get).toHaveBeenCalledWith(pluginRuntime, memory, undefined);
+    });
+  });
+
+  describe('Plugin Service Integration', () => {
+    it('should start and stop plugin services', async () => {
+      const mockService = {
+        name: 'TEST_SERVICE',
+        initialize: vi.fn().mockResolvedValue(undefined),
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        cleanup: vi.fn().mockResolvedValue(undefined)
+      };
+
+      const plugin = {
+        ...createMockPlugin('SERVICE_PLUGIN'),
+        services: [mockService]
+      };
+
+      const pluginRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        plugins: [plugin]
+      });
+
+      // Verify service lifecycle
+      expect(mockService.initialize).toHaveBeenCalledWith(pluginRuntime);
+      expect(mockService.start).toHaveBeenCalled();
+
+      await pluginRuntime.stop();
+      expect(mockService.stop).toHaveBeenCalled();
+      expect(mockService.cleanup).toHaveBeenCalled();
+    });
+  });
+});
+```
+
+### Workflow Integration Tests
+
+```typescript
+// ✅ DO: Test complete workflow scenarios end-to-end
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { TestRuntimeFactory } from '../setup/test-runtime.js';
+import { IAgentRuntime, Memory, State } from '@elizaos/core';
+
+describe('Workflow Integration Tests', () => {
+  let runtime: IAgentRuntime;
+
+  beforeAll(async () => {
+    await TestRuntimeFactory.createTestDatabase();
+  });
+
+  afterAll(async () => {
+    await TestRuntimeFactory.cleanup();
+  });
+
+  beforeEach(async () => {
+    // Create runtime with test components
+    const testAction = {
+      name: 'GREET_ACTION',
+      description: 'Greets users',
+      examples: [[]],
+      validate: async (runtime: IAgentRuntime, message: Memory) => {
+        return message.content.text?.toLowerCase().includes('hello') || false;
+      },
+      handler: async (runtime: IAgentRuntime, message: Memory, state?: State) => {
+        const response = `Hello ${message.userId}! How can I help you?`;
+        await runtime.messageManager.createMemory({
+          userId: runtime.agentId,
+          content: { text: response, action: 'GREET_ACTION' },
+          roomId: message.roomId,
+          embedding: new Array(1536).fill(0)
+        });
+        return true;
+      }
+    };
+
+    const contextProvider = {
+      get: async (runtime: IAgentRuntime, message: Memory, state?: State) => {
+        const memories = await runtime.messageManager.getMemories({
+          roomId: message.roomId,
+          count: 3
+        });
+        return `Recent context: ${memories.map(m => m.content.text).join(', ')}`;
+      }
+    };
+
+    const relevanceEvaluator = {
+      name: 'RELEVANCE_EVALUATOR',
+      description: 'Evaluates message relevance',
+      examples: [],
+      handler: async (runtime: IAgentRuntime, message: Memory, state?: State) => {
+        const hasGreeting = message.content.text?.toLowerCase().includes('hello') || false;
+        return hasGreeting ? 0.9 : 0.3;
+      }
+    };
+
+    runtime = await TestRuntimeFactory.createTestRuntime({}, {
+      actions: [testAction],
+      providers: [{ name: 'CONTEXT_PROVIDER', provider: contextProvider }],
+      evaluators: [relevanceEvaluator]
+    });
+  });
+
+  describe('Message Processing Workflow', () => {
+    it('should process message through complete pipeline', async () => {
+      // Create initial user message
+      const userMessage = await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Hello there!' },
+        userId: 'user-123'
+      });
+
+      // Validate action can handle the message
+      const greetAction = runtime.actions.get('GREET_ACTION');
+      const isValid = await greetAction.validate(runtime, userMessage);
+      expect(isValid).toBe(true);
+
+      // Execute the action
+      const result = await greetAction.handler(runtime, userMessage);
+      expect(result).toBe(true);
+
+      // Verify response was created
+      const allMemories = await runtime.messageManager.getMemories({
+        roomId: userMessage.roomId,
+        count: 10
+      });
+
+      expect(allMemories.length).toBe(2); // Original + response
+      const responseMemory = allMemories.find(m => m.userId === runtime.agentId);
+      expect(responseMemory).toBeDefined();
+      expect(responseMemory.content.text).toContain('Hello user-123!');
+      expect(responseMemory.content.action).toBe('GREET_ACTION');
+    });
+
+    it('should provide context through provider chain', async () => {
+      // Create conversation history
+      const messages = [
+        'Hello there!',
+        'How are you today?',
+        'What can you help me with?'
+      ];
+
+      for (const text of messages) {
+        await TestRuntimeFactory.createTestMemory(runtime, {
+          content: { text },
+          userId: 'user-123'
+        });
+      }
+
+      // Get context from provider
+      const contextProvider = runtime.providers.get('CONTEXT_PROVIDER');
+      const lastMessage = await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Tell me about our conversation' },
+        userId: 'user-123'
+      });
+
+      const context = await contextProvider.get(runtime, lastMessage);
+      
+      expect(context).toContain('Recent context:');
+      expect(context).toContain('Hello there!');
+      expect(context).toContain('How are you today?');
+      expect(context).toContain('What can you help me with?');
+    });
+
+    it('should evaluate message relevance correctly', async () => {
+      const relevanceEvaluator = runtime.evaluators.get('RELEVANCE_EVALUATOR');
+
+      // Test relevant message
+      const relevantMessage = await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Hello, I need help' }
+      });
+
+      const relevantScore = await relevanceEvaluator.handler(runtime, relevantMessage);
+      expect(relevantScore).toBe(0.9);
+
+      // Test irrelevant message
+      const irrelevantMessage = await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Random technical information' }
+      });
+
+      const irrelevantScore = await relevanceEvaluator.handler(runtime, irrelevantMessage);
+      expect(irrelevantScore).toBe(0.3);
+    });
+  });
+
+  describe('State Management Workflow', () => {
+    it('should maintain conversation state across messages', async () => {
+      const roomId = 'test-conversation-room';
+      
+      // Simulate conversation flow
+      const conversation = [
+        { userId: 'user-1', text: 'Hello!' },
+        { userId: runtime.agentId, text: 'Hello! How can I help?' },
+        { userId: 'user-1', text: 'I need information about weather' },
+        { userId: runtime.agentId, text: 'I can help with weather information' }
+      ];
+
+      for (const message of conversation) {
+        await TestRuntimeFactory.createTestMemory(runtime, {
+          content: { text: message.text },
+          userId: message.userId,
+          roomId
+        });
+      }
+
+      // Verify conversation state
+      const conversationMemories = await runtime.messageManager.getMemories({
+        roomId,
+        count: 10
+      });
+
+      expect(conversationMemories.length).toBe(4);
+      
+      // Verify conversation flow
+      expect(conversationMemories[0].content.text).toBe('Hello!');
+      expect(conversationMemories[0].userId).toBe('user-1');
+      expect(conversationMemories[1].userId).toBe(runtime.agentId);
+      expect(conversationMemories[3].content.text).toContain('weather information');
+    });
+
+    it('should handle concurrent conversations', async () => {
+      const room1 = 'room-1';
+      const room2 = 'room-2';
+
+      // Create memories in different rooms
+      await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Room 1 message' },
+        roomId: room1,
+        userId: 'user-1'
+      });
+
+      await TestRuntimeFactory.createTestMemory(runtime, {
+        content: { text: 'Room 2 message' },
+        roomId: room2,
+        userId: 'user-2'
+      });
+
+      // Verify room isolation
+      const room1Memories = await runtime.messageManager.getMemories({
+        roomId: room1,
+        count: 10
+      });
+
+      const room2Memories = await runtime.messageManager.getMemories({
+        roomId: room2,
+        count: 10
+      });
+
+      expect(room1Memories.length).toBe(1);
+      expect(room2Memories.length).toBe(1);
+      expect(room1Memories[0].content.text).toBe('Room 1 message');
+      expect(room2Memories[0].content.text).toBe('Room 2 message');
+    });
+  });
+
+  describe('Error Recovery Workflow', () => {
+    it('should handle action execution failures gracefully', async () => {
+      const failingAction = {
+        name: 'FAILING_ACTION',
+        description: 'Action that fails',
+        examples: [[]],
+        validate: async () => true,
+        handler: async () => {
+          throw new Error('Action execution failed');
+        }
+      };
+
+      const errorRuntime = await TestRuntimeFactory.createTestRuntime({}, {
+        actions: [failingAction]
+      });
+
+      const message = await TestRuntimeFactory.createTestMemory(errorRuntime);
+      const action = errorRuntime.actions.get('FAILING_ACTION');
+
+      await expect(action.handler(errorRuntime, message)).rejects.toThrow('Action execution failed');
+      
+      // Verify runtime is still functional after error
+      const memories = await errorRuntime.messageManager.getMemories({
+        roomId: message.roomId,
+        count: 10
+      });
+      expect(memories.length).toBe(1); // Original message still there
+    });
+
+    it('should handle database connection failures', async () => {
+      // Simulate database failure
+      const dbErrorRuntime = await TestRuntimeFactory.createTestRuntime();
+      
+      // Mock database error
+      const originalCreateMemory = dbErrorRuntime.messageManager.createMemory;
+      dbErrorRuntime.messageManager.createMemory = vi.fn().mockRejectedValue(
+        new Error('Database connection failed')
+      );
+
+      await expect(
+        TestRuntimeFactory.createTestMemory(dbErrorRuntime)
+      ).rejects.toThrow('Database connection failed');
+
+      // Restore original method
+      dbErrorRuntime.messageManager.createMemory = originalCreateMemory;
+      
+      // Verify recovery
+      const memory = await TestRuntimeFactory.createTestMemory(dbErrorRuntime);
+      expect(memory).toBeDefined();
+    });
+  });
+});
+```
+
+## Best Practices Summary
+
+### Integration Test Strategy
+- Test component interactions, not just individual units
+- Use real database connections with test data
+- Verify complete workflows from input to output
+- Test error recovery and edge cases
+
+### Test Environment Management
+- Use isolated test databases
+- Clean up resources after each test
+- Use factories for consistent test data
+- Mock external dependencies but use real core components
+
+### Workflow Testing
+- Test realistic user scenarios
+- Verify state persistence across operations
+- Test concurrent operations and race conditions
+- Validate error handling and recovery
+
+### Plugin Integration
+- Test plugin loading and dependency resolution
+- Verify component registration works correctly
+- Test plugin lifecycle management
+- Validate cross-plugin interactions
+
+### Performance Considerations
+- Monitor test execution time
+- Test with realistic data volumes
+- Verify memory usage during tests
+- Test concurrent operations
+
+## References
+- [Integration Testing Best Practices](mdc:https:/martinfowler.com/bliki/IntegrationTest.html)
+- [Database Testing Strategies](mdc:https:/www.postgresql.org/docs/current/regress.html)
+- [Node.js Testing Patterns](mdc:https:/nodejs.org/en/docs/guides/testing)
+- [TypeScript Integration Testing](mdc:https:/github.com/microsoft/TypeScript/wiki/Coding-guidelines)

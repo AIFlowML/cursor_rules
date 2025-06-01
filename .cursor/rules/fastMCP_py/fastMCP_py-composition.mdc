@@ -1,0 +1,645 @@
+---
+description: FastMCP Python v2.0 Composition and Architecture
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 Composition 7 Architecture
+
+# FastMCP Python Server Composition & Architecture
+
+## Overview
+FastMCP Python v2.0 provides advanced server composition capabilities for building modular, scalable MCP server architectures. This includes server mounting, proxy patterns, OpenAPI integration, FastAPI conversion, and sophisticated server composition strategies.
+
+## Core Architecture Patterns
+
+### **Server Mounting vs Importing**
+- **Mounting**: Creates prefixed namespacing with isolation
+- **Importing**: Direct integration into parent server
+- **Proxy Mounting**: Transparent proxying of remote/local servers
+
+```python
+# ✅ DO: Server mounting with prefixes
+weather_app = FastMCP(name="weather")
+news_app = FastMCP(name="news")
+main_app = FastMCP(name="main")
+
+# Mount with automatic prefixing
+main_app.mount("weather", weather_app)
+main_app.mount("news", news_app)
+
+# ✅ DO: Direct importing for tight integration
+await main_app.import_server("internal", internal_server)
+
+# ✅ DO: Proxy mounting for remote servers
+main_app.mount("external", FastMCP.as_proxy("http://api.example.com/mcp"))
+```
+
+### **Modular Server Design**
+```python
+# ✅ DO: Create focused, single-responsibility servers
+@dataclass
+class WeatherService:
+    api_key: str
+    base_url: str = "https://api.weather.com"
+
+# Create focused server modules
+weather_app = FastMCP(name="weather-service")
+
+@weather_app.tool()
+async def get_weather(location: str, service: WeatherService) -> str:
+    """Get current weather for location."""
+    # Implementation
+    return f"Weather for {location}"
+
+@weather_app.resource("weather://forecast/{location}")
+async def weather_forecast(location: str) -> str:
+    """Weather forecast resource."""
+    return f"Forecast for {location}"
+
+# ❌ DON'T: Create monolithic servers with mixed concerns
+# Avoid putting weather, news, auth, and database logic in one server
+```
+
+## Server Mounting Patterns
+
+### **Basic Mounting with Prefixes**
+```python
+# ✅ DO: Mount with clear prefixes and separators
+main_app = FastMCP(name="application-hub")
+
+# Mount sub-applications
+main_app.mount("weather", weather_app)
+main_app.mount("news", news_app) 
+main_app.mount("user", user_service)
+
+# Custom separators for different components
+main_app.mount(
+    "admin",
+    admin_app,
+    tool_separator=":",      # admin:get_users
+    resource_separator="/",  # admin/resource://users
+    prompt_separator="."     # admin.user_prompt
+)
+
+# ❌ DON'T: Use unclear or conflicting prefixes
+# main_app.mount("", weather_app)  # Empty prefix causes conflicts
+# main_app.mount("api", weather_app)
+# main_app.mount("api", news_app)  # Duplicate prefix
+```
+
+### **Conditional Mounting**
+```python
+# ✅ DO: Mount servers conditionally based on configuration
+class AppConfig(BaseSettings):
+    enable_weather: bool = True
+    enable_news: bool = True
+    enable_admin: bool = False
+
+config = AppConfig()
+main_app = FastMCP(name="configurable-app")
+
+if config.enable_weather:
+    main_app.mount("weather", create_weather_server())
+
+if config.enable_news:
+    main_app.mount("news", create_news_server())
+
+if config.enable_admin:
+    main_app.mount("admin", create_admin_server())
+```
+
+### **Dynamic Server Management**
+```python
+# ✅ DO: Support dynamic mounting/unmounting
+class ServerManager:
+    def __init__(self, main_app: FastMCP):
+        self.main_app = main_app
+        self.mounted_servers: dict[str, FastMCP] = {}
+    
+    async def mount_server(self, prefix: str, server: FastMCP):
+        """Mount a server dynamically."""
+        if prefix in self.mounted_servers:
+            await self.unmount_server(prefix)
+        
+        self.main_app.mount(prefix, server)
+        self.mounted_servers[prefix] = server
+    
+    async def unmount_server(self, prefix: str):
+        """Unmount a server dynamically."""
+        if prefix in self.mounted_servers:
+            self.main_app.unmount(prefix)
+            del self.mounted_servers[prefix]
+```
+
+## Proxy Server Patterns
+
+### **Remote Server Proxying**
+```python
+# ✅ DO: Create proxies for remote MCP servers
+remote_proxy = FastMCP.as_proxy("http://api.external.com/mcp")
+
+# ✅ DO: Proxy with authentication
+auth_proxy = FastMCP.as_proxy(
+    "http://secure-api.com/mcp",
+    auth="oauth"  # or custom httpx.Auth
+)
+
+# ✅ DO: Proxy multiple remote servers
+main_app = FastMCP(name="proxy-hub")
+main_app.mount("service1", FastMCP.as_proxy("http://service1.com/mcp"))
+main_app.mount("service2", FastMCP.as_proxy("http://service2.com/mcp"))
+main_app.mount("service3", FastMCP.as_proxy("http://service3.com/mcp"))
+```
+
+### **Local Server Proxying** 
+```python
+# ✅ DO: Proxy local servers for isolation
+local_server = FastMCP(name="local-service")
+
+@local_server.tool()
+def local_tool() -> str:
+    return "Local result"
+
+# Create proxy for controlled access
+proxy = FastMCP.as_proxy(local_server)
+main_app.mount("isolated", proxy)
+```
+
+### **Hybrid Proxy Architecture**
+```python
+# ✅ DO: Combine local and remote proxies
+class HybridApp:
+    def __init__(self):
+        self.main_app = FastMCP(name="hybrid-system")
+        
+        # Local services
+        self.main_app.mount("auth", self.create_auth_service())
+        self.main_app.mount("local", self.create_local_service())
+        
+        # Remote proxies
+        self.main_app.mount("weather", 
+            FastMCP.as_proxy("http://weather-api.com/mcp"))
+        self.main_app.mount("news", 
+            FastMCP.as_proxy("http://news-api.com/mcp"))
+    
+    def create_auth_service(self) -> FastMCP:
+        auth_app = FastMCP(name="auth-service")
+        
+        @auth_app.tool()
+        async def authenticate(token: str) -> dict:
+            # Local authentication logic
+            return {"valid": True, "user_id": "123"}
+        
+        return auth_app
+```
+
+## OpenAPI Integration Patterns
+
+### **OpenAPI to MCP Conversion**
+```python
+# ✅ DO: Convert OpenAPI specs to MCP servers
+import httpx
+
+# Load OpenAPI specification
+with open("api-spec.json") as f:
+    openapi_spec = json.load(f)
+
+# Create HTTP client for API calls
+client = httpx.AsyncClient(
+    base_url="https://api.example.com",
+    headers={"Authorization": "Bearer YOUR_TOKEN"}
+)
+
+# Convert to FastMCP server
+api_server = FastMCP.from_openapi(
+    openapi_spec=openapi_spec,
+    client=client,
+    name="external-api-server"
+)
+```
+
+### **Route Mapping Configuration**
+```python
+from fastmcp.server.openapi import RouteMap, MCPType
+
+# ✅ DO: Configure route mappings explicitly
+route_maps = [
+    # Convert GET endpoints to resources
+    RouteMap(
+        methods=["GET"],
+        pattern=r"/users/\d+",
+        mcp_type=MCPType.RESOURCE_TEMPLATE,
+        tags={"user", "profile"}
+    ),
+    
+    # Convert POST/PUT/DELETE to tools
+    RouteMap(
+        methods=["POST", "PUT", "DELETE"],
+        pattern=r".*",
+        mcp_type=MCPType.TOOL,
+        tags={"write", "mutation"}
+    ),
+    
+    # Exclude health check endpoints
+    RouteMap(
+        methods=["*"],
+        pattern=r"/health.*",
+        mcp_type=MCPType.EXCLUDE
+    )
+]
+
+api_server = FastMCP.from_openapi(
+    openapi_spec=openapi_spec,
+    client=client,
+    route_maps=route_maps
+)
+```
+
+### **Custom Component Generation**
+```python
+# ✅ DO: Customize MCP component generation
+def custom_component_fn(route, mcp_type: MCPType):
+    """Custom logic for creating MCP components."""
+    if "admin" in route.tags:
+        # Special handling for admin routes
+        return create_admin_component(route, mcp_type)
+    
+    # Default component creation
+    return None
+
+api_server = FastMCP.from_openapi(
+    openapi_spec=openapi_spec,
+    client=client,
+    mcp_component_fn=custom_component_fn
+)
+```
+
+## FastAPI Integration
+
+### **FastAPI to MCP Conversion**
+```python
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+# ✅ DO: Create FastAPI app
+fastapi_app = FastAPI(title="My API")
+
+@fastapi_app.get("/users")
+async def get_users():
+    return [{"id": 1, "name": "John"}]
+
+@fastapi_app.post("/users")
+async def create_user(name: str):
+    return {"id": 2, "name": name}
+
+# Convert to MCP server
+mcp_server = FastMCP.from_fastapi(
+    app=fastapi_app,
+    name="fastapi-converted-server"
+)
+
+# Mount in main application
+main_app.mount("api", mcp_server)
+```
+
+### **FastAPI with Route Filtering**
+```python
+# ✅ DO: Filter FastAPI routes during conversion
+from fastmcp.server.openapi import RouteMap, MCPType
+
+route_maps = [
+    # Only convert user-related endpoints
+    RouteMap(
+        methods=["*"],
+        pattern=r"/users.*",
+        mcp_type=MCPType.TOOL,
+        tags={"user-api"}
+    ),
+    
+    # Exclude internal endpoints
+    RouteMap(
+        methods=["*"],
+        pattern=r"/internal.*",
+        mcp_type=MCPType.EXCLUDE
+    )
+]
+
+mcp_server = FastMCP.from_fastapi(
+    app=fastapi_app,
+    route_maps=route_maps,
+    name="filtered-api"
+)
+```
+
+## Advanced Composition Patterns
+
+### **Layered Architecture**
+```python
+# ✅ DO: Create layered server architecture
+class LayeredApplication:
+    def __init__(self):
+        # Core layer
+        self.core = FastMCP(name="core-services")
+        self._setup_core_services()
+        
+        # Business layer
+        self.business = FastMCP(name="business-logic")
+        self.business.mount("core", self.core)
+        self._setup_business_logic()
+        
+        # API layer
+        self.api = FastMCP(name="api-gateway")
+        self.api.mount("business", self.business)
+        self._setup_api_layer()
+    
+    def _setup_core_services(self):
+        @self.core.tool()
+        async def validate_user(user_id: str) -> bool:
+            # Core validation logic
+            return True
+    
+    def _setup_business_logic(self):
+        @self.business.tool()
+        async def process_order(order_data: dict) -> dict:
+            # Business logic using core services
+            return {"status": "processed"}
+    
+    def _setup_api_layer(self):
+        @self.api.tool()
+        async def create_order(customer_id: str, items: list) -> dict:
+            # API layer orchestration
+            return {"order_id": "123"}
+```
+
+### **Plugin Architecture**
+```python
+# ✅ DO: Create plugin-based architecture
+class PluginManager:
+    def __init__(self, main_app: FastMCP):
+        self.main_app = main_app
+        self.plugins: dict[str, FastMCP] = {}
+    
+    def register_plugin(self, name: str, plugin: FastMCP):
+        """Register a plugin server."""
+        self.plugins[name] = plugin
+        self.main_app.mount(f"plugin_{name}", plugin)
+    
+    def load_plugins_from_directory(self, plugin_dir: Path):
+        """Load plugins from directory."""
+        for plugin_file in plugin_dir.glob("*.py"):
+            plugin_name = plugin_file.stem
+            plugin = self.load_plugin_from_file(plugin_file)
+            if plugin:
+                self.register_plugin(plugin_name, plugin)
+    
+    def load_plugin_from_file(self, plugin_file: Path) -> FastMCP | None:
+        """Load plugin from Python file."""
+        # Implementation for dynamic plugin loading
+        pass
+
+# Usage
+main_app = FastMCP(name="plugin-host")
+plugin_manager = PluginManager(main_app)
+plugin_manager.load_plugins_from_directory(Path("plugins/"))
+```
+
+### **Service Discovery Pattern**
+```python
+# ✅ DO: Implement service discovery
+class ServiceRegistry:
+    def __init__(self):
+        self.services: dict[str, str] = {}  # name -> url
+    
+    def register_service(self, name: str, url: str):
+        """Register a service endpoint."""
+        self.services[name] = url
+    
+    def discover_services(self) -> dict[str, FastMCP]:
+        """Discover and create proxy servers for all services."""
+        proxies = {}
+        for name, url in self.services.items():
+            try:
+                proxies[name] = FastMCP.as_proxy(url)
+            except Exception as e:
+                logger.warning(f"Failed to create proxy for {name}: {e}")
+        return proxies
+
+# Usage
+registry = ServiceRegistry()
+registry.register_service("weather", "http://weather.svc:8080/mcp")
+registry.register_service("user", "http://user.svc:8080/mcp")
+
+main_app = FastMCP(name="service-mesh")
+for name, proxy in registry.discover_services().items():
+    main_app.mount(name, proxy)
+```
+
+## Configuration Management
+
+### **Environment-Based Composition**
+```python
+# ✅ DO: Configure composition via environment
+class CompositionConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="APP_")
+    
+    enable_weather: bool = True
+    enable_news: bool = True
+    weather_api_url: str = "http://weather-api:8080/mcp"
+    news_api_url: str = "http://news-api:8080/mcp"
+    
+    # Service discovery
+    service_registry_url: str | None = None
+    auto_discover_services: bool = False
+
+def create_application(config: CompositionConfig) -> FastMCP:
+    """Create application based on configuration."""
+    app = FastMCP(name="configured-app")
+    
+    if config.enable_weather:
+        weather_server = FastMCP.as_proxy(config.weather_api_url)
+        app.mount("weather", weather_server)
+    
+    if config.enable_news:
+        news_server = FastMCP.as_proxy(config.news_api_url)
+        app.mount("news", news_server)
+    
+    if config.auto_discover_services and config.service_registry_url:
+        # Implement service discovery
+        pass
+    
+    return app
+```
+
+### **Configuration Validation**
+```python
+# ✅ DO: Validate composition configuration
+from pydantic import field_validator
+
+class ServerConfig(BaseSettings):
+    servers: dict[str, dict[str, Any]]
+    
+    @field_validator("servers")
+    @classmethod
+    def validate_servers(cls, v):
+        """Validate server configurations."""
+        for name, config in v.items():
+            if "url" not in config and "type" not in config:
+                raise ValueError(f"Server {name} must have 'url' or 'type'")
+        return v
+
+# Configuration file: config.yaml
+# servers:
+#   weather:
+#     url: "http://weather-api:8080/mcp"
+#     auth: "oauth"
+#   news:
+#     type: "fastapi"
+#     module: "news.api:app"
+```
+
+## Error Handling in Composition
+
+### **Graceful Degradation**
+```python
+# ✅ DO: Handle server mounting failures gracefully
+class ResilientComposition:
+    def __init__(self, main_app: FastMCP):
+        self.main_app = main_app
+        self.failed_mounts: list[str] = []
+    
+    async def mount_with_fallback(self, prefix: str, server_factory: Callable):
+        """Mount server with error handling."""
+        try:
+            server = await server_factory()
+            self.main_app.mount(prefix, server)
+            logger.info(f"Successfully mounted {prefix}")
+        except Exception as e:
+            logger.error(f"Failed to mount {prefix}: {e}")
+            self.failed_mounts.append(prefix)
+            
+            # Mount stub server for graceful degradation
+            stub_server = self.create_stub_server(prefix)
+            self.main_app.mount(prefix, stub_server)
+    
+    def create_stub_server(self, prefix: str) -> FastMCP:
+        """Create stub server for failed mounts."""
+        stub = FastMCP(name=f"{prefix}-stub")
+        
+        @stub.tool()
+        async def service_unavailable() -> str:
+            return f"Service {prefix} is currently unavailable"
+        
+        return stub
+```
+
+## Testing Composition
+
+### **Component Testing**
+```python
+# ✅ DO: Test individual components
+import pytest
+from fastmcp.client import Client
+
+@pytest.mark.asyncio
+async def test_weather_service():
+    """Test weather service in isolation."""
+    weather_app = create_weather_service()
+    
+    async with Client(weather_app) as client:
+        tools = await client.list_tools()
+        assert "get_weather" in [tool.name for tool in tools]
+        
+        result = await client.call_tool("get_weather", {"location": "NYC"})
+        assert "Weather for NYC" in result[0].text
+
+@pytest.mark.asyncio
+async def test_composed_application():
+    """Test composed application."""
+    main_app = create_composed_app()
+    
+    async with Client(main_app) as client:
+        tools = await client.list_tools()
+        
+        # Verify prefixed tools exist
+        tool_names = [tool.name for tool in tools]
+        assert "weather_get_weather" in tool_names
+        assert "news_get_headlines" in tool_names
+```
+
+### **Integration Testing**
+```python
+# ✅ DO: Test service integration
+@pytest.mark.asyncio
+async def test_service_integration():
+    """Test integration between mounted services."""
+    main_app = FastMCP(name="integration-test")
+    
+    # Mount services
+    main_app.mount("weather", create_weather_service())
+    main_app.mount("news", create_news_service())
+    
+    async with Client(main_app) as client:
+        # Test cross-service functionality
+        weather_result = await client.call_tool(
+            "weather_get_weather", 
+            {"location": "NYC"}
+        )
+        
+        news_result = await client.call_tool(
+            "news_get_local_news", 
+            {"location": "NYC"}
+        )
+        
+        # Verify both services work together
+        assert weather_result[0].text
+        assert news_result[0].text
+```
+
+## Common Anti-Patterns
+
+### **❌ DON'T: Circular Dependencies**
+```python
+# ❌ DON'T: Create circular mounting relationships
+app_a = FastMCP(name="service-a")
+app_b = FastMCP(name="service-b")
+
+# This creates circular dependency
+app_a.mount("b", app_b)
+app_b.mount("a", app_a)  # ❌ Circular!
+```
+
+### **❌ DON'T: Deep Nesting**
+```python
+# ❌ DON'T: Create overly deep nesting
+main_app.mount("level1", 
+    FastMCP().mount("level2", 
+        FastMCP().mount("level3", 
+            FastMCP().mount("level4", service))))  # Too deep!
+```
+
+### **❌ DON'T: Unclear Naming**
+```python
+# ❌ DON'T: Use unclear or conflicting prefixes
+main_app.mount("svc", weather_service)    # Unclear
+main_app.mount("api", news_service)       # Generic
+main_app.mount("s1", user_service)        # Cryptic
+```
+
+## Best Practices Summary
+
+1. **Clear Separation**: Each server should have a single, well-defined responsibility
+2. **Consistent Naming**: Use descriptive prefixes that clearly indicate service purpose
+3. **Error Handling**: Implement graceful degradation for failed services
+4. **Configuration**: Make composition configurable via environment variables
+5. **Testing**: Test both individual components and composed systems
+6. **Documentation**: Document service dependencies and composition structure
+7. **Monitoring**: Add health checks and monitoring for composed services
+8. **Security**: Implement proper authentication and authorization for proxied services
+
+## References
+
+- [Server Composition Documentation](mdc:fastmcp_py/docs/servers/composition.mdx)
+- [Proxy Server Documentation](mdc:fastmcp_py/docs/servers/proxy.mdx)
+- [OpenAPI Integration Documentation](mdc:fastmcp_py/docs/servers/openapi.mdx)
+- [FastAPI Integration Documentation](mdc:fastmcp_py/docs/patterns/fastapi.mdx)
+- [Mount Example](mdc:fastmcp_py/examples/mount_example.py)

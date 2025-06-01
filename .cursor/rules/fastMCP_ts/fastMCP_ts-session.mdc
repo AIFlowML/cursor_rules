@@ -1,0 +1,1040 @@
+---
+description: FastMCP TypeScript session management
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript session management, authentication systems, and secure client-server interactions. You focus on building secure, scalable session handling with proper lifecycle management.
+
+## Session Management Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Client        │    │   Authentication │    │   Session       │
+│   Connection    │───▶│   Function       │───▶│   Creation      │
+│                 │    │                  │    │                 │
+│ - Transport     │    │ - Validation     │    │ - Context Setup │
+│ - Credentials   │    │ - User Lookup    │    │ - State Init    │
+│ - Headers       │    │ - Permissions    │    │ - Logging       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Session       │    │   Request        │    │   Session       │
+│   Context       │    │   Processing     │    │   Cleanup       │
+│   Tools/Resources│    │   Authorization  │    │   State Persist │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Session Lifecycle Patterns
+
+### Basic Session Setup
+
+```typescript
+import { FastMCP, FastMCPSession } from "fastmcp";
+import { z } from "zod";
+
+// ✅ DO: Define session data structure
+interface UserSession {
+  userId: string;
+  username: string;
+  permissions: string[];
+  preferences: Record<string, any>;
+  loginTime: Date;
+  lastActivity: Date;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+// ✅ DO: Create server with session management
+const server = new FastMCP({
+  name: "session-example",
+  version: "1.0.0",
+  description: "Example with session management",
+  
+  // Authentication function
+  auth: async (connectionId: string, request: any): Promise<UserSession | null> => {
+    const { headers, method, params } = request;
+    
+    try {
+      // Extract authentication credentials
+      const authHeader = headers?.authorization;
+      const sessionToken = headers?.['x-session-token'];
+      const apiKey = headers?.['x-api-key'];
+      
+      let user: UserSession | null = null;
+      
+      if (authHeader?.startsWith('Bearer ')) {
+        // JWT token authentication
+        const token = authHeader.substring(7);
+        user = await authenticateJWT(token);
+        
+      } else if (sessionToken) {
+        // Session token authentication
+        user = await authenticateSessionToken(sessionToken);
+        
+      } else if (apiKey) {
+        // API key authentication
+        user = await authenticateApiKey(apiKey);
+        
+      } else if (method === 'guest') {
+        // Guest access with limited permissions
+        user = {
+          userId: `guest-${connectionId}`,
+          username: 'Guest User',
+          permissions: ['read'],
+          preferences: {},
+          loginTime: new Date(),
+          lastActivity: new Date()
+        };
+      }
+      
+      // Enhance session with connection metadata
+      if (user) {
+        user.ipAddress = headers?.['x-forwarded-for'] || headers?.['x-real-ip'];
+        user.userAgent = headers?.['user-agent'];
+        user.lastActivity = new Date();
+        
+        // Log successful authentication
+        server.log.info('User authenticated', {
+          userId: user.userId,
+          connectionId,
+          method: authHeader ? 'bearer' : sessionToken ? 'session' : apiKey ? 'apikey' : 'guest'
+        });
+      }
+      
+      return user;
+      
+    } catch (error) {
+      server.log.error('Authentication failed', {
+        connectionId,
+        error: error.message,
+        headers: Object.keys(headers || {})
+      });
+      
+      return null;
+    }
+  }
+});
+
+// ✅ DO: Helper authentication functions
+async function authenticateJWT(token: string): Promise<UserSession | null> {
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    
+    // Validate token claims
+    if (decoded.exp < Date.now() / 1000) {
+      throw new Error('Token expired');
+    }
+    
+    // Fetch user data
+    const user = await getUserById(decoded.sub);
+    if (!user || !user.active) {
+      throw new Error('User not found or inactive');
+    }
+    
+    return {
+      userId: user.id,
+      username: user.username,
+      permissions: user.permissions || [],
+      preferences: user.preferences || {},
+      loginTime: new Date(decoded.iat * 1000),
+      lastActivity: new Date()
+    };
+    
+  } catch (error) {
+    throw new Error(`JWT authentication failed: ${error.message}`);
+  }
+}
+
+async function authenticateSessionToken(token: string): Promise<UserSession | null> {
+  try {
+    // Look up session in database/cache
+    const session = await getSessionByToken(token);
+    if (!session || session.expiresAt < new Date()) {
+      throw new Error('Session expired or invalid');
+    }
+    
+    // Update last activity
+    await updateSessionActivity(token);
+    
+    return {
+      userId: session.userId,
+      username: session.username,
+      permissions: session.permissions || [],
+      preferences: session.preferences || {},
+      loginTime: session.createdAt,
+      lastActivity: new Date()
+    };
+    
+  } catch (error) {
+    throw new Error(`Session authentication failed: ${error.message}`);
+  }
+}
+
+async function authenticateApiKey(apiKey: string): Promise<UserSession | null> {
+  try {
+    const keyData = await getApiKeyData(apiKey);
+    if (!keyData || !keyData.active) {
+      throw new Error('Invalid or inactive API key');
+    }
+    
+    // Check rate limits
+    const rateLimitOk = await checkApiKeyRateLimit(apiKey);
+    if (!rateLimitOk) {
+      throw new Error('API key rate limit exceeded');
+    }
+    
+    return {
+      userId: keyData.userId,
+      username: keyData.name || `API-${keyData.id}`,
+      permissions: keyData.permissions || [],
+      preferences: {},
+      loginTime: new Date(),
+      lastActivity: new Date()
+    };
+    
+  } catch (error) {
+    throw new Error(`API key authentication failed: ${error.message}`);
+  }
+}
+```
+
+### Session-Aware Tools
+
+```typescript
+// ✅ DO: Tools that use session context
+server.addTool({
+  name: "get-user-profile",
+  description: "Get current user's profile information",
+  annotations: {
+    readOnlyHint: true,
+    title: "User Profile"
+  },
+  
+  execute: async (args, context) => {
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    log.info("Retrieving user profile", { userId: session.userId });
+    
+    // Fetch additional user data
+    const userDetails = await getUserDetails(session.userId);
+    
+    return {
+      content: [
+        { type: "text", text: "## 👤 User Profile\n\n" },
+        {
+          type: "text",
+          text: `**User ID:** ${session.userId}\n` +
+                `**Username:** ${session.username}\n` +
+                `**Permissions:** ${session.permissions.join(', ')}\n` +
+                `**Login Time:** ${session.loginTime.toISOString()}\n` +
+                `**Last Activity:** ${session.lastActivity.toISOString()}\n\n`
+        },
+        {
+          type: "text",
+          text: `**Additional Details:**\n` +
+                `- Email: ${userDetails.email}\n` +
+                `- Role: ${userDetails.role}\n` +
+                `- Created: ${userDetails.createdAt}\n`
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Permission-based tool access
+server.addTool({
+  name: "admin-operations",
+  description: "Administrative operations (admin only)",
+  parameters: z.object({
+    operation: z.enum(["list-users", "reset-password", "delete-user", "system-stats"]),
+    target: z.string().optional()
+  }),
+  
+  annotations: {
+    destructiveHint: true,
+    title: "Admin Operations"
+  },
+  
+  execute: async (args, context) => {
+    const { operation, target } = args;
+    const { session, log } = context;
+    
+    // Check authentication
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    // Check permissions
+    if (!session.permissions.includes('admin')) {
+      log.warn("Unauthorized admin access attempt", {
+        userId: session.userId,
+        operation,
+        permissions: session.permissions
+      });
+      throw new UserError("Admin privileges required");
+    }
+    
+    log.info("Admin operation requested", {
+      userId: session.userId,
+      operation,
+      target
+    });
+    
+    switch (operation) {
+      case "list-users":
+        const users = await listUsers();
+        return {
+          content: [
+            { type: "text", text: "## 👥 User List\n\n" },
+            {
+              type: "text",
+              text: users.map(user => 
+                `- **${user.username}** (${user.id}) - ${user.role} - Last seen: ${user.lastSeen}`
+              ).join('\n')
+            }
+          ]
+        };
+        
+      case "reset-password":
+        if (!target) {
+          throw new UserError("Target user ID required for password reset");
+        }
+        
+        await resetUserPassword(target);
+        log.info("Password reset completed", { 
+          adminUserId: session.userId,
+          targetUserId: target 
+        });
+        
+        return `Password reset for user ${target} completed`;
+        
+      case "delete-user":
+        if (!target) {
+          throw new UserError("Target user ID required for deletion");
+        }
+        
+        if (target === session.userId) {
+          throw new UserError("Cannot delete your own account");
+        }
+        
+        await deleteUser(target);
+        log.warn("User deleted", {
+          adminUserId: session.userId,
+          deletedUserId: target
+        });
+        
+        return `User ${target} has been deleted`;
+        
+      case "system-stats":
+        const stats = await getSystemStats();
+        return {
+          content: [
+            { type: "text", text: "## 📊 System Statistics\n\n" },
+            {
+              type: "text",
+              text: `**Active Users:** ${stats.activeUsers}\n` +
+                    `**Total Sessions:** ${stats.totalSessions}\n` +
+                    `**Server Uptime:** ${stats.uptime}\n` +
+                    `**Memory Usage:** ${stats.memoryUsage}\n` +
+                    `**API Calls Today:** ${stats.apiCallsToday}\n`
+            }
+          ]
+        };
+        
+      default:
+        throw new UserError(`Unknown operation: ${operation}`);
+    }
+  }
+});
+
+// ✅ DO: User preference management
+server.addTool({
+  name: "manage-preferences",
+  description: "Manage user preferences and settings",
+  parameters: z.object({
+    action: z.enum(["get", "set", "delete"]),
+    key: z.string().optional(),
+    value: z.any().optional()
+  }),
+  
+  execute: async (args, context) => {
+    const { action, key, value } = args;
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    switch (action) {
+      case "get":
+        if (key) {
+          const prefValue = session.preferences[key];
+          return `Preference '${key}': ${JSON.stringify(prefValue)}`;
+        } else {
+          return {
+            content: [
+              { type: "text", text: "## ⚙️ User Preferences\n\n" },
+              {
+                type: "text",
+                text: "```json\n" + JSON.stringify(session.preferences, null, 2) + "\n```"
+              }
+            ]
+          };
+        }
+        
+      case "set":
+        if (!key) {
+          throw new UserError("Key required for setting preference");
+        }
+        
+        // Update preference in session and persist
+        session.preferences[key] = value;
+        await updateUserPreferences(session.userId, session.preferences);
+        
+        log.info("User preference updated", {
+          userId: session.userId,
+          key,
+          value: typeof value
+        });
+        
+        return `Preference '${key}' updated`;
+        
+      case "delete":
+        if (!key) {
+          throw new UserError("Key required for deleting preference");
+        }
+        
+        delete session.preferences[key];
+        await updateUserPreferences(session.userId, session.preferences);
+        
+        log.info("User preference deleted", {
+          userId: session.userId,
+          key
+        });
+        
+        return `Preference '${key}' deleted`;
+        
+      default:
+        throw new UserError(`Unknown action: ${action}`);
+    }
+  }
+});
+```
+
+### Session State Management
+
+```typescript
+// ✅ DO: Session state tracking
+interface SessionState {
+  activeOperations: Map<string, { 
+    toolName: string; 
+    startTime: Date; 
+    parameters: any 
+  }>;
+  cache: Map<string, { 
+    data: any; 
+    expiresAt: Date 
+  }>;
+  metrics: {
+    toolCallCount: number;
+    totalExecutionTime: number;
+    lastToolCall: Date | null;
+    errorCount: number;
+  };
+}
+
+// Session state management helper
+class SessionStateManager {
+  private states = new Map<string, SessionState>();
+  
+  getState(sessionId: string): SessionState {
+    if (!this.states.has(sessionId)) {
+      this.states.set(sessionId, {
+        activeOperations: new Map(),
+        cache: new Map(),
+        metrics: {
+          toolCallCount: 0,
+          totalExecutionTime: 0,
+          lastToolCall: null,
+          errorCount: 0
+        }
+      });
+    }
+    return this.states.get(sessionId)!;
+  }
+  
+  startOperation(sessionId: string, operationId: string, toolName: string, parameters: any) {
+    const state = this.getState(sessionId);
+    state.activeOperations.set(operationId, {
+      toolName,
+      startTime: new Date(),
+      parameters
+    });
+  }
+  
+  endOperation(sessionId: string, operationId: string, success: boolean) {
+    const state = this.getState(sessionId);
+    const operation = state.activeOperations.get(operationId);
+    
+    if (operation) {
+      const duration = Date.now() - operation.startTime.getTime();
+      state.metrics.totalExecutionTime += duration;
+      state.metrics.toolCallCount++;
+      state.metrics.lastToolCall = new Date();
+      
+      if (!success) {
+        state.metrics.errorCount++;
+      }
+      
+      state.activeOperations.delete(operationId);
+    }
+  }
+  
+  setCacheValue(sessionId: string, key: string, data: any, ttlMs: number = 300000) {
+    const state = this.getState(sessionId);
+    state.cache.set(key, {
+      data,
+      expiresAt: new Date(Date.now() + ttlMs)
+    });
+  }
+  
+  getCacheValue(sessionId: string, key: string): any | null {
+    const state = this.getState(sessionId);
+    const cached = state.cache.get(key);
+    
+    if (!cached || cached.expiresAt < new Date()) {
+      state.cache.delete(key);
+      return null;
+    }
+    
+    return cached.data;
+  }
+  
+  getMetrics(sessionId: string) {
+    return this.getState(sessionId).metrics;
+  }
+  
+  cleanup(sessionId: string) {
+    this.states.delete(sessionId);
+  }
+}
+
+const sessionManager = new SessionStateManager();
+
+// ✅ DO: Session-aware tool with state management
+server.addTool({
+  name: "session-analytics",
+  description: "Get analytics for current session",
+  annotations: {
+    readOnlyHint: true,
+    title: "Session Analytics"
+  },
+  
+  execute: async (args, context) => {
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    const sessionId = session.userId; // Use userId as session identifier
+    const metrics = sessionManager.getMetrics(sessionId);
+    const state = sessionManager.getState(sessionId);
+    
+    log.info("Session analytics requested", { userId: session.userId });
+    
+    return {
+      content: [
+        { type: "text", text: "## 📈 Session Analytics\n\n" },
+        {
+          type: "text",
+          text: `**Tool Calls:** ${metrics.toolCallCount}\n` +
+                `**Total Execution Time:** ${metrics.totalExecutionTime}ms\n` +
+                `**Last Tool Call:** ${metrics.lastToolCall?.toISOString() || 'None'}\n` +
+                `**Error Count:** ${metrics.errorCount}\n` +
+                `**Active Operations:** ${state.activeOperations.size}\n` +
+                `**Cache Entries:** ${state.cache.size}\n\n`
+        },
+        {
+          type: "text",
+          text: "### Active Operations\n" +
+                Array.from(state.activeOperations.entries()).map(([id, op]) =>
+                  `- **${op.toolName}** (${id}) - Running for ${Date.now() - op.startTime.getTime()}ms`
+                ).join('\n') || "*No active operations*"
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Tool with session caching
+server.addTool({
+  name: "cached-data-fetch",
+  description: "Fetch data with session-level caching",
+  parameters: z.object({
+    dataType: z.enum(["reports", "analytics", "metrics", "logs"]),
+    useCache: z.boolean().default(true),
+    refreshCache: z.boolean().default(false)
+  }),
+  
+  execute: async (args, context) => {
+    const { dataType, useCache, refreshCache } = args;
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    const sessionId = session.userId;
+    const cacheKey = `data-${dataType}`;
+    
+    // Check cache first
+    if (useCache && !refreshCache) {
+      const cachedData = sessionManager.getCacheValue(sessionId, cacheKey);
+      if (cachedData) {
+        log.info("Returning cached data", { userId: session.userId, dataType });
+        
+        return {
+          content: [
+            { type: "text", text: `## 📊 ${dataType} (Cached)\n\n` },
+            { type: "text", text: "```json\n" + JSON.stringify(cachedData, null, 2) + "\n```" }
+          ]
+        };
+      }
+    }
+    
+    log.info("Fetching fresh data", { userId: session.userId, dataType });
+    
+    // Fetch fresh data
+    const data = await fetchDataByType(dataType, session.userId);
+    
+    // Cache the result
+    if (useCache) {
+      sessionManager.setCacheValue(sessionId, cacheKey, data, 600000); // 10 minutes
+    }
+    
+    return {
+      content: [
+        { type: "text", text: `## 📊 ${dataType} (Fresh)\n\n` },
+        { type: "text", text: "```json\n" + JSON.stringify(data, null, 2) + "\n```" }
+      ]
+    };
+  }
+});
+```
+
+### Multi-User and Collaboration Features
+
+```typescript
+// ✅ DO: Multi-user collaboration tools
+interface CollaborationRoom {
+  id: string;
+  name: string;
+  participants: Set<string>;
+  messages: Array<{
+    userId: string;
+    username: string;
+    message: string;
+    timestamp: Date;
+  }>;
+  sharedState: Record<string, any>;
+}
+
+class CollaborationManager {
+  private rooms = new Map<string, CollaborationRoom>();
+  
+  createRoom(roomId: string, name: string, creatorId: string): CollaborationRoom {
+    const room: CollaborationRoom = {
+      id: roomId,
+      name,
+      participants: new Set([creatorId]),
+      messages: [],
+      sharedState: {}
+    };
+    
+    this.rooms.set(roomId, room);
+    return room;
+  }
+  
+  joinRoom(roomId: string, userId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.participants.add(userId);
+      return true;
+    }
+    return false;
+  }
+  
+  leaveRoom(roomId: string, userId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.participants.delete(userId);
+      if (room.participants.size === 0) {
+        this.rooms.delete(roomId);
+      }
+      return true;
+    }
+    return false;
+  }
+  
+  addMessage(roomId: string, userId: string, username: string, message: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (room && room.participants.has(userId)) {
+      room.messages.push({
+        userId,
+        username,
+        message,
+        timestamp: new Date()
+      });
+      return true;
+    }
+    return false;
+  }
+  
+  getRoom(roomId: string): CollaborationRoom | undefined {
+    return this.rooms.get(roomId);
+  }
+  
+  updateSharedState(roomId: string, key: string, value: any, userId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (room && room.participants.has(userId)) {
+      room.sharedState[key] = value;
+      return true;
+    }
+    return false;
+  }
+}
+
+const collaborationManager = new CollaborationManager();
+
+// ✅ DO: Collaboration room management tool
+server.addTool({
+  name: "collaboration",
+  description: "Manage collaboration rooms and participate in multi-user sessions",
+  parameters: z.object({
+    action: z.enum(["create", "join", "leave", "message", "state", "list"]),
+    roomId: z.string().optional(),
+    roomName: z.string().optional(),
+    message: z.string().optional(),
+    stateKey: z.string().optional(),
+    stateValue: z.any().optional()
+  }),
+  
+  execute: async (args, context) => {
+    const { action, roomId, roomName, message, stateKey, stateValue } = args;
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    const userId = session.userId;
+    const username = session.username;
+    
+    switch (action) {
+      case "create":
+        if (!roomId || !roomName) {
+          throw new UserError("Room ID and name required");
+        }
+        
+        const room = collaborationManager.createRoom(roomId, roomName, userId);
+        
+        log.info("Collaboration room created", {
+          userId,
+          roomId,
+          roomName
+        });
+        
+        return `Collaboration room '${roomName}' (${roomId}) created`;
+        
+      case "join":
+        if (!roomId) {
+          throw new UserError("Room ID required");
+        }
+        
+        const joined = collaborationManager.joinRoom(roomId, userId);
+        if (!joined) {
+          throw new UserError(`Room ${roomId} not found`);
+        }
+        
+        log.info("User joined collaboration room", { userId, roomId });
+        
+        return `Joined collaboration room ${roomId}`;
+        
+      case "leave":
+        if (!roomId) {
+          throw new UserError("Room ID required");
+        }
+        
+        const left = collaborationManager.leaveRoom(roomId, userId);
+        if (!left) {
+          throw new UserError(`Room ${roomId} not found`);
+        }
+        
+        log.info("User left collaboration room", { userId, roomId });
+        
+        return `Left collaboration room ${roomId}`;
+        
+      case "message":
+        if (!roomId || !message) {
+          throw new UserError("Room ID and message required");
+        }
+        
+        const messageSent = collaborationManager.addMessage(roomId, userId, username, message);
+        if (!messageSent) {
+          throw new UserError(`Cannot send message to room ${roomId}`);
+        }
+        
+        return `Message sent to room ${roomId}`;
+        
+      case "state":
+        if (!roomId) {
+          throw new UserError("Room ID required");
+        }
+        
+        const roomData = collaborationManager.getRoom(roomId);
+        if (!roomData || !roomData.participants.has(userId)) {
+          throw new UserError(`Room ${roomId} not found or access denied`);
+        }
+        
+        if (stateKey && stateValue !== undefined) {
+          // Update shared state
+          collaborationManager.updateSharedState(roomId, stateKey, stateValue, userId);
+          return `Shared state '${stateKey}' updated in room ${roomId}`;
+        } else {
+          // Get current state
+          return {
+            content: [
+              { type: "text", text: `## 🏠 Room ${roomId} State\n\n` },
+              {
+                type: "text",
+                text: `**Participants:** ${Array.from(roomData.participants).join(', ')}\n\n` +
+                      `**Recent Messages:**\n` +
+                      roomData.messages.slice(-5).map(msg =>
+                        `- **${msg.username}** (${msg.timestamp.toLocaleTimeString()}): ${msg.message}`
+                      ).join('\n') + '\n\n' +
+                      `**Shared State:**\n` +
+                      "```json\n" + JSON.stringify(roomData.sharedState, null, 2) + "\n```"
+              }
+            ]
+          };
+        }
+        
+      case "list":
+        const userRooms = Array.from(collaborationManager['rooms'].values())
+          .filter(room => room.participants.has(userId));
+        
+        return {
+          content: [
+            { type: "text", text: "## 🏠 Your Collaboration Rooms\n\n" },
+            {
+              type: "text",
+              text: userRooms.length > 0
+                ? userRooms.map(room =>
+                    `- **${room.name}** (${room.id}) - ${room.participants.size} participants`
+                  ).join('\n')
+                : "*No active rooms*"
+            }
+          ]
+        };
+        
+      default:
+        throw new UserError(`Unknown action: ${action}`);
+    }
+  }
+});
+```
+
+## Security Patterns
+
+### Rate Limiting and Abuse Prevention
+
+```typescript
+// ✅ DO: Implement rate limiting per session
+interface RateLimitState {
+  requests: number;
+  resetTime: Date;
+  blocked: boolean;
+}
+
+class RateLimiter {
+  private limits = new Map<string, RateLimitState>();
+  private maxRequests = 100; // per hour
+  private windowMs = 60 * 60 * 1000; // 1 hour
+  
+  checkLimit(sessionId: string): boolean {
+    const now = new Date();
+    const state = this.limits.get(sessionId);
+    
+    if (!state || now > state.resetTime) {
+      // Reset or create new limit state
+      this.limits.set(sessionId, {
+        requests: 1,
+        resetTime: new Date(now.getTime() + this.windowMs),
+        blocked: false
+      });
+      return true;
+    }
+    
+    if (state.blocked) {
+      return false;
+    }
+    
+    state.requests++;
+    
+    if (state.requests > this.maxRequests) {
+      state.blocked = true;
+      return false;
+    }
+    
+    return true;
+  }
+  
+  getRemainingRequests(sessionId: string): number {
+    const state = this.limits.get(sessionId);
+    if (!state) return this.maxRequests;
+    
+    return Math.max(0, this.maxRequests - state.requests);
+  }
+}
+
+const rateLimiter = new RateLimiter();
+
+// ✅ DO: Rate-limited tool
+server.addTool({
+  name: "rate-limited-operation",
+  description: "Operation with rate limiting",
+  parameters: z.object({
+    operation: z.string()
+  }),
+  
+  execute: async (args, context) => {
+    const { operation } = args;
+    const { session, log } = context;
+    
+    if (!session) {
+      throw new UserError("Authentication required");
+    }
+    
+    // Check rate limit
+    const allowed = rateLimiter.checkLimit(session.userId);
+    if (!allowed) {
+      const remaining = rateLimiter.getRemainingRequests(session.userId);
+      
+      log.warn("Rate limit exceeded", {
+        userId: session.userId,
+        remaining,
+        operation
+      });
+      
+      throw new UserError(
+        `Rate limit exceeded. Remaining requests: ${remaining}. Please try again later.`
+      );
+    }
+    
+    const remaining = rateLimiter.getRemainingRequests(session.userId);
+    
+    log.info("Rate-limited operation executed", {
+      userId: session.userId,
+      operation,
+      remaining
+    });
+    
+    // Perform the operation
+    const result = await performOperation(operation);
+    
+    return {
+      content: [
+        { type: "text", text: `✅ Operation completed: ${operation}\n\n` },
+        { type: "text", text: `**Remaining requests:** ${remaining}\n` },
+        { type: "text", text: `**Result:** ${JSON.stringify(result, null, 2)}` }
+      ]
+    };
+  }
+});
+```
+
+## Common Anti-Patterns
+
+```typescript
+// ❌ DON'T: Store sensitive data in session
+interface BadSession {
+  password: string;        // Never store passwords
+  apiKeys: string[];      // Don't store sensitive keys
+  creditCard: string;     // Never store payment info
+}
+
+// ❌ DON'T: Skip authentication checks
+server.addTool({
+  name: "bad-admin-tool",
+  execute: async (args, context) => {
+    // No session check - anyone can call this!
+    return await deleteAllUsers();
+  }
+});
+
+// ❌ DON'T: Use weak session identification
+const weakAuth = async (connectionId: string) => {
+  return {
+    userId: connectionId,  // Connection ID is not secure
+    permissions: ['admin'] // Granting admin by default
+  };
+};
+
+// ❌ DON'T: Ignore session cleanup
+// Sessions will accumulate in memory without cleanup
+
+// ❌ DON'T: Mix authentication methods without validation
+const confusedAuth = async (connectionId: string, request: any) => {
+  const token = request.headers?.authorization || request.params?.token;
+  return { userId: token }; // No validation at all
+};
+```
+
+## Testing Patterns
+
+```typescript
+// ✅ DO: Test session management and authentication
+describe("Session Management", () => {
+  it("should authenticate valid JWT tokens", async () => {
+    const validToken = generateTestJWT({ sub: "user123", permissions: ["read"] });
+    const session = await authenticateJWT(validToken);
+    
+    expect(session).toBeTruthy();
+    expect(session?.userId).toBe("user123");
+    expect(session?.permissions).toContain("read");
+  });
+  
+  it("should reject expired tokens", async () => {
+    const expiredToken = generateTestJWT({ sub: "user123", exp: Date.now() / 1000 - 3600 });
+    
+    await expect(authenticateJWT(expiredToken)).rejects.toThrow("Token expired");
+  });
+  
+  it("should enforce permission-based access", async () => {
+    const userSession = { userId: "user123", permissions: ["read"] };
+    
+    await expect(executeAdminTool({}, { session: userSession }))
+      .rejects.toThrow("Admin privileges required");
+  });
+  
+  it("should implement rate limiting", async () => {
+    const sessionId = "test-session";
+    
+    // Should allow initial requests
+    expect(rateLimiter.checkLimit(sessionId)).toBe(true);
+    
+    // Should block after limit exceeded
+    for (let i = 0; i < 101; i++) {
+      rateLimiter.checkLimit(sessionId);
+    }
+    
+    expect(rateLimiter.checkLimit(sessionId)).toBe(false);
+  });
+});
+```

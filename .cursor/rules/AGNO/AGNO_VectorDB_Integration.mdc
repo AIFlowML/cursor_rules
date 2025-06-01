@@ -1,0 +1,315 @@
+---
+description: This rule is essential to manage the vectorDB in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO VectorDB Integration
+
+Vector databases are a core component of AGNO's knowledge management system, enabling agents to store and query vectorized text content. AGNO supports 20+ vector database solutions with a unified interface, providing flexibility in implementation.
+
+## Supported Vector Databases
+
+AGNO offers built-in support for a wide range of vector databases:
+
+| Database | Type | Import Path |
+|----------|------|-------------|
+| LanceDB | Embedded | `agno.vectordb.lancedb` |
+| ChromaDB | Embedded/Client-Server | `agno.vectordb.chromadb` |
+| PGVector | PostgreSQL Extension | `agno.vectordb.pgvector` |
+| Pinecone | Cloud | `agno.vectordb.pinecone` |
+| Qdrant | Self-hosted/Cloud | `agno.vectordb.qdrant` |
+| Milvus | Self-hosted/Cloud | `agno.vectordb.milvus` |
+| Weaviate | Self-hosted/Cloud | `agno.vectordb.weaviate` |
+| Faiss | In-memory | `agno.vectordb.faiss` |
+| Redis | Self-hosted/Cloud | `agno.vectordb.redis` |
+| MongoDB Atlas | Cloud | `agno.vectordb.mongodb` |
+| Supabase | Cloud/Self-hosted | `agno.vectordb.supabase` |
+
+## Basic VectorDB Setup
+
+All vector databases in AGNO require an embedder to generate vector representations:
+
+```python
+from agno.embedder.openai import OpenAIEmbedder
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Create an embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+    api_key=os.environ.get("OPENAI_API_KEY"),
+)
+
+# Create a vector database
+vector_db = LanceDb(
+    uri="data/vectordb",  # Local storage path
+    table_name="documents",  # Table name in the database
+    search_type=SearchType.hybrid,  # hybrid, semantic, or keyword
+    embedder=embedder,  # Required: vector embedder
+)
+```
+
+## Vector Database Types
+
+### Embedded Vector Databases
+
+Ideal for development and small-scale deployments:
+
+```python
+# LanceDB (lightweight embedded vector DB)
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+lancedb = LanceDb(
+    uri="data/lancedb",
+    table_name="documents",
+    search_type=SearchType.hybrid,
+    embedder=your_embedder,
+)
+
+# ChromaDB (embedded mode)
+from agno.vectordb.chromadb import ChromaDb
+
+chromadb = ChromaDb(
+    path="data/chromadb",
+    collection_name="documents",
+    embedder=your_embedder,
+)
+```
+
+### Self-hosted Vector Databases
+
+For scalable deployments with existing infrastructure:
+
+```python
+# PostgreSQL with pgvector extension
+from agno.vectordb.pgvector import PgVector
+
+pgvector = PgVector(
+    connection_string="postgresql://user:password@localhost:5432/db",
+    table_name="document_embeddings",
+    embedder=your_embedder,
+)
+
+# Qdrant (self-hosted)
+from agno.vectordb.qdrant import Qdrant
+
+qdrant = Qdrant(
+    url="http://localhost:6333",
+    collection_name="documents",
+    embedder=your_embedder,
+)
+```
+
+### Cloud Vector Databases
+
+For fully managed solutions without infrastructure overhead:
+
+```python
+# Pinecone
+from agno.vectordb.pinecone import Pinecone
+
+pinecone = Pinecone(
+    api_key=os.environ.get("PINECONE_API_KEY"),
+    environment="us-west-1",
+    index_name="documents",
+    embedder=your_embedder,
+)
+
+# MongoDB Atlas Vector Search
+from agno.vectordb.mongodb import MongoDb
+
+mongodb = MongoDb(
+    connection_string=os.environ.get("MONGODB_URI"),
+    database_name="knowledge_base",
+    collection_name="documents",
+    index_name="vector_index",
+    embedder=your_embedder,
+)
+```
+
+## Search Types and Strategies
+
+AGNO supports different search strategies to optimize retrieval:
+
+```python
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Semantic search (pure vector similarity)
+semantic_db = LanceDb(
+    uri="data/semantic_db",
+    table_name="documents",
+    search_type=SearchType.semantic,  # Vector-based search
+    embedder=your_embedder,
+)
+
+# Keyword search (BM25 algorithm)
+keyword_db = LanceDb(
+    uri="data/keyword_db",
+    table_name="documents",
+    search_type=SearchType.keyword,  # Text-based search
+    embedder=your_embedder,
+)
+
+# Hybrid search (combines semantic and keyword)
+hybrid_db = LanceDb(
+    uri="data/hybrid_db",
+    table_name="documents",
+    search_type=SearchType.hybrid,  # Combined approach
+    embedder=your_embedder,
+)
+```
+
+## Adding Reranking
+
+To improve search quality, add a reranker to your vector database:
+
+```python
+from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.reranker.cohere import CohereReranker
+
+# Create a reranker
+reranker = CohereReranker(
+    id="rerank-english-v2.0",
+    api_key=os.environ.get("COHERE_API_KEY"),
+    top_n=5,  # Number of results after reranking
+)
+
+# Create vector DB with reranker
+vector_db = LanceDb(
+    uri="data/vectordb",
+    table_name="documents",
+    search_type=SearchType.hybrid,
+    embedder=your_embedder,
+    reranker=reranker,  # Add reranker for improved results
+)
+```
+
+## Search Parameters Configuration
+
+Fine-tune search behavior through search parameters:
+
+```python
+from agno.agent import Agent
+
+agent = Agent(
+    model=your_model,
+    knowledge=your_knowledge,
+    # Configure knowledge search parameters
+    knowledge_search_params={
+        "k": 10,  # Number of results to retrieve
+        "score_threshold": 0.75,  # Minimum similarity score to include
+        "search_string": None,  # Override the default search string
+        "rerank": True,  # Apply reranking if a reranker is configured
+        "search_type": "hybrid",  # Override the default search type
+    },
+)
+```
+
+## Integrating with Knowledge Sources
+
+Vector databases are typically used with knowledge sources:
+
+```python
+from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.file import FileKnowledge
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Create vector database
+vector_db = LanceDb(
+    uri="data/lancedb",
+    table_name="company_docs",
+    search_type=SearchType.hybrid,
+    embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536),
+)
+
+# Connect knowledge source to vector database
+knowledge = FileKnowledge(
+    files=["data/handbook.pdf", "data/policies.pdf"],
+    vector_db=vector_db,
+)
+
+# Create agent with knowledge
+agent = Agent(
+    model=your_model,
+    knowledge=knowledge,
+)
+```
+
+## Best Practices
+
+1. **Database Selection**:
+   - Use embedded databases (LanceDB, ChromaDB) for development and small deployments
+   - Use self-hosted options (PGVector, Qdrant) for medium-scale applications
+   - Use cloud solutions (Pinecone, MongoDB Atlas) for large-scale or serverless deployments
+
+2. **Search Strategy**:
+   - Use hybrid search as the default for best results in most cases
+   - Add a reranker to improve result quality for critical applications
+   - Tune `k` (number of results) based on your specific use case
+
+3. **Performance Optimization**:
+   - Choose the right chunk size for your documents (typically 500-1000 tokens)
+   - Use appropriate dimensions for your embeddings (e.g., 1536 for OpenAI embeddings)
+   - Implement metadata filtering when applicable
+
+4. **Production Readiness**:
+   - Implement proper backup strategies for your vector database
+   - Monitor search performance and adjust parameters as needed
+   - Consider using cloud solutions for automatic scaling and maintenance
+
+## Example: Advanced Vector Database Setup
+
+```python
+from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.directory import DirectoryKnowledge
+from agno.models.anthropic import Claude
+from agno.reranker.cohere import CohereReranker
+from agno.tools.reasoning import ReasoningTools
+from agno.vectordb.pgvector import PgVector
+
+# Create embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+)
+
+# Create reranker
+reranker = CohereReranker(
+    id="rerank-english-v2.0",
+    top_n=5,
+)
+
+# Create vector database with reranking
+vector_db = PgVector(
+    connection_string=os.environ.get("POSTGRES_URI"),
+    table_name="document_embeddings",
+    embedder=embedder,
+    reranker=reranker,
+)
+
+# Create knowledge source
+knowledge = DirectoryKnowledge(
+    directory="data/documentation",
+    file_extensions=[".md", ".txt", ".pdf"],
+    vector_db=vector_db,
+    chunk_size=800,  # Token size for each chunk
+    chunk_overlap=100,  # Overlap between chunks
+)
+
+# Create agent with knowledge and reasoning
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    knowledge=knowledge,
+    tools=[ReasoningTools(add_instructions=True)],
+    knowledge_search_params={
+        "k": 7,  # Number of results to retrieve
+        "score_threshold": 0.7,  # Minimum similarity score
+    },
+    instructions=[
+        "Search the knowledge base for relevant information",
+        "Cite sources when providing information from the knowledge base",
+    ],
+)
+```

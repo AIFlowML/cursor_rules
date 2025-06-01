@@ -1,0 +1,138 @@
+---
+description: This rule is essential to handle multimodal agents in AGNO.
+globs: 
+alwaysApply: false
+---
+# AGNO Multimodal Agents
+
+## Core Principles
+- AGNO agents natively support text, image, audio, and video inputs
+- AGNO agents can generate text, image, audio, and video outputs
+- Configure the appropriate model with multimodal capabilities
+- Use the proper media classes for handling different input/output types
+
+## Multimodal Input Implementation
+
+### Image Input
+```python
+from agno.agent import Agent
+from agno.media import Image
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),  # Model with vision capabilities
+    markdown=True,
+)
+
+# From URL
+agent.run(
+    "Describe this image in detail",
+    images=[Image(url="https://example.com/image.jpg")]
+)
+
+# From file path
+agent.run(
+    "What's in this image?",
+    images=[Image(filepath="path/to/image.jpg")]
+)
+
+# From binary content
+agent.run(
+    "Analyze this image",
+    images=[Image(content=image_bytes)]
+)
+```
+
+### Audio Input
+```python
+from agno.agent import Agent
+from agno.media import Audio
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
+    markdown=True,
+)
+
+agent.run(
+    "Transcribe this audio",
+    audio=[Audio(content=audio_bytes, format="wav")]
+)
+```
+
+### Video Input
+```python
+from agno.agent import Agent
+from agno.media import Video
+from agno.models.google import Gemini
+
+agent = Agent(
+    model=Gemini(id="gemini-2.0-flash-exp"),  # Model with video capabilities
+    markdown=True,
+)
+
+agent.run(
+    "Describe this video",
+    videos=[Video(filepath="path/to/video.mp4")]
+)
+```
+
+## Multimodal Output Implementation
+
+### Image Generation
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.dalle import DalleTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DalleTools()],
+    instructions="Generate images when requested",
+    markdown=True,
+)
+
+response = agent.run("Create an image of a sunset over mountains")
+images = agent.get_images()
+```
+
+### Audio Generation
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.utils.audio import write_audio_to_file
+
+agent = Agent(
+    model=OpenAIChat(
+        id="gpt-4o-audio-preview",
+        modalities=["text", "audio"],
+        audio={"voice": "alloy", "format": "wav"},
+    ),
+    markdown=True,
+)
+
+response = agent.run("Tell me a brief story")
+
+if response.response_audio is not None:
+    write_audio_to_file(
+        audio=response.response_audio.content, 
+        filename="output.wav"
+    )
+```
+
+## Best Practices
+- Specify required modalities explicitly in model configuration
+- Provide clear instructions for multimodal tasks
+- Handle media file operations properly with appropriate error checking
+- Consider file size limitations when processing media
+- Implement proper caching for efficiency
+- Test with various media formats and quality levels
+- Use media utilities provided by AGNO for consistent handling
+
+## Media Class Usage
+
+| Media Class | Input Methods | Formats |
+|-------------|---------------|---------|
+| `Image` | url, filepath, content | jpg, png, webp, gif |
+| `Audio` | url, filepath, content | wav, mp3, ogg, m4a |
+| `Video` | url, filepath, content | mp4, mov, avi (model-dependent) |

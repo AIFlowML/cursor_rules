@@ -1,0 +1,1096 @@
+---
+description: FastMCP Python v2.0 performance optimization
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP Python v2.0 performance optimization, best practices, production deployment patterns, and scalable application design. You focus on creating high-performance, maintainable, and production-ready MCP servers with proper async patterns, caching strategies, and monitoring.
+
+## FastMCP Performance Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Performance  │    │   Optimization   │    │   Monitoring    │
+│   Analysis      │───▶│   Implementation │───▶│   & Validation  │
+│                 │    │                  │    │                 │
+│ - Profiling     │    │ - Async patterns │    │ - Metrics       │
+│ - Bottlenecks   │    │ - Caching        │    │ - Dashboards    │
+│ - Benchmarks    │    │ - Connection     │    │ - Alerts        │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Resource      │    │   Scaling        │    │   Production    │
+│   Management    │    │   Strategies     │    │   Optimization  │
+│   & Cleanup     │    │   & Load Balancing │    │   & Security    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+fastmcp_performance_project/
+├── src/
+│   ├── my_mcp_server/
+│   │   ├── __init__.py          # Package initialization
+│   │   ├── server.py            # Optimized server implementation
+│   │   ├── middleware.py        # Performance middleware
+│   │   └── models.py            # Optimized data models
+│   ├── performance/
+│   │   ├── __init__.py          # Performance exports
+│   │   ├── cache.py             # Caching strategies
+│   │   ├── connection_pool.py   # Connection pooling
+│   │   ├── async_patterns.py    # Async optimization patterns
+│   │   ├── memory_management.py # Memory optimization
+│   │   └── profiling.py         # Performance profiling tools
+│   ├── monitoring/
+│   │   ├── __init__.py          # Monitoring exports
+│   │   ├── metrics.py           # Performance metrics
+│   │   ├── health_checks.py     # Health monitoring
+│   │   ├── telemetry.py         # Distributed tracing
+│   │   └── dashboards.py        # Metric visualization
+│   ├── security/
+│   │   ├── __init__.py          # Security exports
+│   │   ├── authentication.py    # Auth optimization
+│   │   ├── rate_limiting.py     # Rate limiting
+│   │   └── validation.py        # Input validation
+│   └── utils/
+│       ├── __init__.py          # Utility exports
+│       ├── decorators.py        # Performance decorators
+│       ├── helpers.py           # Utility functions
+│       └── constants.py         # Configuration constants
+├── benchmarks/
+│   ├── __init__.py              # Benchmark package
+│   ├── tool_benchmarks.py       # Tool performance tests
+│   ├── resource_benchmarks.py   # Resource performance tests
+│   ├── load_testing.py          # Load testing scenarios
+│   └── memory_profiling.py      # Memory usage analysis
+├── config/
+│   ├── production.yaml          # Production configuration
+│   ├── development.yaml         # Development configuration
+│   └── performance.yaml         # Performance tuning config
+├── docker/
+│   ├── Dockerfile.prod          # Production Docker image
+│   ├── docker-compose.yml       # Multi-service setup
+│   └── nginx.conf               # Load balancer config
+└── scripts/
+    ├── deploy.sh                # Deployment script
+    ├── benchmark.sh             # Benchmarking script
+    └── monitor.sh               # Monitoring setup
+```
+
+## Core Implementation Patterns
+
+### Async Optimization and Concurrency
+
+```python
+# ✅ DO: Implement efficient async patterns
+import asyncio
+import aiohttp
+from fastmcp import FastMCP
+from typing import Dict, List, Any, Optional
+import time
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from functools import lru_cache
+import weakref
+
+class AsyncOptimizedServer:
+    """High-performance async MCP server implementation."""
+    
+    def __init__(self, max_workers: int = 10):
+        self.server = FastMCP("HighPerformanceServer")
+        self.http_session: Optional[aiohttp.ClientSession] = None
+        self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+        self.process_pool = ProcessPoolExecutor(max_workers=max_workers)
+        self._connection_pool = {}
+        self._active_tasks = weakref.WeakSet()
+        
+    async def __aenter__(self):
+        # Initialize shared resources
+        self.http_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(
+                limit=100,  # Total connection pool size
+                limit_per_host=30,  # Per-host connection limit
+                ttl_dns_cache=300,  # DNS cache TTL
+                use_dns_cache=True,
+                keepalive_timeout=30,
+                enable_cleanup_closed=True
+            ),
+            timeout=aiohttp.ClientTimeout(total=30)
+        )
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Cleanup resources
+        if self.http_session:
+            await self.http_session.close()
+        
+        # Cancel active tasks
+        for task in list(self._active_tasks):
+            if not task.done():
+                task.cancel()
+        
+        # Shutdown executors
+        self.thread_pool.shutdown(wait=True)
+        self.process_pool.shutdown(wait=True)
+
+# Efficient batch processing
+@server.tool()
+async def process_batch_data(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Process multiple items concurrently with optimal batching."""
+    
+    # Determine optimal batch size based on item count and system resources
+    batch_size = min(len(items), 50)  # Avoid overwhelming the system
+    
+    async def process_single_item(item: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a single item with error handling."""
+        try:
+            # Simulate processing
+            await asyncio.sleep(0.01)  # Simulated I/O
+            return {"processed": True, "item": item, "timestamp": time.time()}
+        except Exception as e:
+            return {"processed": False, "item": item, "error": str(e)}
+    
+    # Process items in concurrent batches
+    results = []
+    for i in range(0, len(items), batch_size):
+        batch = items[i:i + batch_size]
+        
+        # Create tasks for concurrent processing
+        tasks = [process_single_item(item) for item in batch]
+        
+        # Process batch concurrently
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any exceptions
+        for result in batch_results:
+            if isinstance(result, Exception):
+                results.append({"processed": False, "error": str(result)})
+            else:
+                results.append(result)
+    
+    return results
+
+# Efficient database operations with connection pooling
+import aiopg
+from aiopg.pool import Pool
+
+class DatabaseManager:
+    """Optimized database connection management."""
+    
+    def __init__(self, dsn: str, min_size: int = 5, max_size: int = 20):
+        self.dsn = dsn
+        self.min_size = min_size
+        self.max_size = max_size
+        self.pool: Optional[Pool] = None
+    
+    async def initialize(self):
+        """Initialize connection pool."""
+        self.pool = await aiopg.create_pool(
+            self.dsn,
+            minsize=self.min_size,
+            maxsize=self.max_size,
+            command_timeout=30,
+            server_settings={
+                'application_name': 'fastmcp_server',
+                'statement_timeout': '30s'
+            }
+        )
+    
+    async def execute_query(self, query: str, params: tuple = None) -> List[Dict]:
+        """Execute query with connection pooling."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = await cursor.fetchall()
+                return [dict(zip(columns, row)) for row in rows]
+    
+    async def close(self):
+        """Close connection pool."""
+        if self.pool:
+            self.pool.close()
+            await self.pool.wait_closed()
+
+# CPU-intensive operations with process pool
+@server.tool()
+async def cpu_intensive_computation(data: List[int], operation: str) -> Dict[str, Any]:
+    """Handle CPU-intensive operations efficiently."""
+    
+    def compute_heavy_operation(chunk: List[int], op: str) -> List[int]:
+        """CPU-intensive operation that runs in separate process."""
+        if op == "fibonacci":
+            return [fib(n) for n in chunk]
+        elif op == "prime_factors":
+            return [prime_factors(n) for n in chunk]
+        else:
+            return chunk
+    
+    # Split data into chunks for parallel processing
+    chunk_size = max(1, len(data) // 4)  # Use 4 processes
+    chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+    
+    # Use process pool for CPU-intensive work
+    loop = asyncio.get_event_loop()
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        tasks = [
+            loop.run_in_executor(executor, compute_heavy_operation, chunk, operation)
+            for chunk in chunks
+        ]
+        
+        results = await asyncio.gather(*tasks)
+    
+    # Flatten results
+    flattened_results = [item for sublist in results for item in sublist]
+    
+    return {
+        "operation": operation,
+        "input_count": len(data),
+        "results": flattened_results,
+        "processing_time": time.time()
+    }
+
+def fib(n: int) -> int:
+    """Fibonacci calculation (CPU intensive)."""
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def prime_factors(n: int) -> List[int]:
+    """Prime factorization (CPU intensive)."""
+    factors = []
+    d = 2
+    while d * d <= n:
+        while n % d == 0:
+            factors.append(d)
+            n //= d
+        d += 1
+    if n > 1:
+        factors.append(n)
+    return factors
+
+# ❌ DON'T: Block the event loop with synchronous operations
+@server.tool()
+def blocking_operation(data: List[Dict]) -> List[Dict]:
+    """Poor async implementation - blocks event loop."""
+    results = []
+    for item in data:
+        # Synchronous operation that blocks the event loop
+        time.sleep(0.1)  # This blocks everything!
+        results.append(process_item(item))
+    return results
+
+def process_item(item: Dict) -> Dict:
+    # More blocking operations
+    time.sleep(0.05)  # Blocks event loop
+    return {"processed": item}
+```
+
+### Caching Strategies and Memory Optimization
+
+```python
+# ✅ DO: Implement comprehensive caching strategies
+import asyncio
+from typing import Any, Dict, Optional, Union
+from functools import wraps, lru_cache
+import weakref
+import time
+import json
+from dataclasses import dataclass
+from enum import Enum
+import redis.asyncio as redis
+
+class CacheStrategy(Enum):
+    """Cache strategy types."""
+    LRU = "lru"
+    TTL = "ttl"
+    REDIS = "redis"
+    MEMORY = "memory"
+
+@dataclass
+class CacheConfig:
+    """Cache configuration."""
+    strategy: CacheStrategy
+    max_size: int = 1000
+    ttl_seconds: int = 300
+    redis_url: Optional[str] = None
+
+class AsyncCache:
+    """High-performance async cache implementation."""
+    
+    def __init__(self, config: CacheConfig):
+        self.config = config
+        self._memory_cache: Dict[str, Any] = {}
+        self._cache_times: Dict[str, float] = {}
+        self._redis_client: Optional[redis.Redis] = None
+        
+    async def initialize(self):
+        """Initialize cache backend."""
+        if self.config.strategy == CacheStrategy.REDIS:
+            if not self.config.redis_url:
+                raise ValueError("Redis URL required for Redis cache strategy")
+            
+            self._redis_client = redis.from_url(
+                self.config.redis_url,
+                decode_responses=True,
+                max_connections=20,
+                socket_keepalive=True,
+                socket_keepalive_options={},
+                health_check_interval=30
+            )
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        if self.config.strategy == CacheStrategy.REDIS:
+            if self._redis_client:
+                cached_value = await self._redis_client.get(key)
+                if cached_value:
+                    return json.loads(cached_value)
+            return None
+        
+        elif self.config.strategy == CacheStrategy.TTL:
+            if key in self._memory_cache:
+                cache_time = self._cache_times.get(key, 0)
+                if time.time() - cache_time < self.config.ttl_seconds:
+                    return self._memory_cache[key]
+                else:
+                    # Expired, remove from cache
+                    del self._memory_cache[key]
+                    del self._cache_times[key]
+            return None
+        
+        else:  # LRU or MEMORY
+            return self._memory_cache.get(key)
+    
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Set value in cache."""
+        if self.config.strategy == CacheStrategy.REDIS:
+            if self._redis_client:
+                ttl = ttl or self.config.ttl_seconds
+                await self._redis_client.setex(
+                    key, 
+                    ttl, 
+                    json.dumps(value, default=str)
+                )
+        
+        elif self.config.strategy == CacheStrategy.TTL:
+            self._memory_cache[key] = value
+            self._cache_times[key] = time.time()
+            
+            # Cleanup expired entries periodically
+            if len(self._memory_cache) > self.config.max_size * 1.2:
+                await self._cleanup_expired()
+        
+        else:  # LRU or MEMORY
+            self._memory_cache[key] = value
+            
+            # Simple LRU cleanup
+            if len(self._memory_cache) > self.config.max_size:
+                # Remove oldest 20% of entries
+                items_to_remove = len(self._memory_cache) - self.config.max_size + 100
+                keys_to_remove = list(self._memory_cache.keys())[:items_to_remove]
+                for k in keys_to_remove:
+                    del self._memory_cache[k]
+    
+    async def _cleanup_expired(self):
+        """Clean up expired cache entries."""
+        current_time = time.time()
+        expired_keys = [
+            key for key, cache_time in self._cache_times.items()
+            if current_time - cache_time >= self.config.ttl_seconds
+        ]
+        
+        for key in expired_keys:
+            self._memory_cache.pop(key, None)
+            self._cache_times.pop(key, None)
+    
+    async def close(self):
+        """Close cache connections."""
+        if self._redis_client:
+            await self._redis_client.close()
+
+# Cache decorator for tools and resources
+def cached(
+    cache_key_template: str = "{function_name}:{args_hash}",
+    ttl: int = 300,
+    strategy: CacheStrategy = CacheStrategy.MEMORY
+):
+    """Decorator for caching function results."""
+    
+    def decorator(func):
+        cache = AsyncCache(CacheConfig(strategy=strategy, ttl_seconds=ttl))
+        
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            # Generate cache key
+            args_str = json.dumps([str(arg) for arg in args], sort_keys=True)
+            kwargs_str = json.dumps(kwargs, sort_keys=True, default=str)
+            args_hash = hash(args_str + kwargs_str)
+            
+            cache_key = cache_key_template.format(
+                function_name=func.__name__,
+                args_hash=args_hash,
+                args=args_str,
+                kwargs=kwargs_str
+            )
+            
+            # Try to get from cache
+            cached_result = await cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            
+            # Execute function and cache result
+            if asyncio.iscoroutinefunction(func):
+                result = await func(*args, **kwargs)
+            else:
+                result = func(*args, **kwargs)
+            
+            await cache.set(cache_key, result, ttl)
+            return result
+        
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            # For sync functions, use simple LRU cache
+            return func(*args, **kwargs)
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            # Use built-in LRU cache for sync functions
+            return lru_cache(maxsize=128)(func)
+    
+    return decorator
+
+# Memory-efficient data structures
+import weakref
+from collections import defaultdict
+from typing import DefaultDict
+
+class MemoryEfficientResourceManager:
+    """Memory-efficient resource management."""
+    
+    def __init__(self):
+        # Use weak references to allow garbage collection
+        self._resources: DefaultDict[str, weakref.WeakValueDictionary] = defaultdict(
+            weakref.WeakValueDictionary
+        )
+        self._resource_stats = defaultdict(int)
+    
+    def register_resource(self, resource_type: str, resource_id: str, resource: Any):
+        """Register resource with automatic cleanup."""
+        self._resources[resource_type][resource_id] = resource
+        self._resource_stats[resource_type] += 1
+    
+    def get_resource(self, resource_type: str, resource_id: str) -> Optional[Any]:
+        """Get resource if still available."""
+        return self._resources[resource_type].get(resource_id)
+    
+    def cleanup_unused_resources(self):
+        """Force cleanup of unused resources."""
+        import gc
+        gc.collect()  # Force garbage collection
+        
+        # Update stats after cleanup
+        for resource_type in self._resources:
+            self._resource_stats[resource_type] = len(self._resources[resource_type])
+
+# Example cached tools
+@server.tool()
+@cached(cache_key_template="expensive_computation:{args_hash}", ttl=600)
+async def expensive_computation(input_data: str, complexity: int) -> Dict[str, Any]:
+    """Expensive computation with caching."""
+    # Simulate expensive operation
+    await asyncio.sleep(complexity * 0.1)
+    
+    result = {
+        "input": input_data,
+        "complexity": complexity,
+        "result": hash(input_data) * complexity,
+        "computed_at": time.time()
+    }
+    
+    return result
+
+@server.resource(uri="data://cached-users")
+@cached(ttl=300)
+async def get_cached_users() -> List[Dict[str, Any]]:
+    """Cached user data resource."""
+    # Simulate database query
+    await asyncio.sleep(0.5)
+    
+    return [
+        {"id": 1, "name": "Alice", "active": True},
+        {"id": 2, "name": "Bob", "active": True},
+        {"id": 3, "name": "Charlie", "active": False}
+    ]
+
+# ❌ DON'T: No caching for expensive operations
+@server.tool()
+async def uncached_expensive_operation(data: str) -> str:
+    """No caching - recalculates every time."""
+    await asyncio.sleep(2)  # Expensive operation
+    return f"processed_{data}"  # Always recalculates
+```
+
+### Performance Monitoring and Metrics
+
+```python
+# ✅ DO: Implement comprehensive performance monitoring
+import time
+import psutil
+import asyncio
+from typing import Dict, Any, List
+from dataclasses import dataclass, asdict
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+import functools
+
+# Performance metrics collection
+REQUEST_COUNT = Counter('mcp_requests_total', 'Total MCP requests', ['method', 'status'])
+REQUEST_DURATION = Histogram('mcp_request_duration_seconds', 'Request duration')
+ACTIVE_CONNECTIONS = Gauge('mcp_active_connections', 'Active MCP connections')
+MEMORY_USAGE = Gauge('mcp_memory_usage_bytes', 'Memory usage in bytes')
+CPU_USAGE = Gauge('mcp_cpu_usage_percent', 'CPU usage percentage')
+
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics data structure."""
+    timestamp: float
+    request_count: int
+    average_response_time: float
+    memory_usage_mb: float
+    cpu_usage_percent: float
+    active_connections: int
+    cache_hit_rate: float
+    error_rate: float
+
+class PerformanceMonitor:
+    """Real-time performance monitoring."""
+    
+    def __init__(self, collection_interval: float = 60.0):
+        self.collection_interval = collection_interval
+        self.metrics_history: List[PerformanceMetrics] = []
+        self.request_times: List[float] = []
+        self.error_count = 0
+        self.request_count = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self._monitoring_task: Optional[asyncio.Task] = None
+    
+    async def start_monitoring(self):
+        """Start performance monitoring."""
+        # Start Prometheus metrics server
+        start_http_server(8000)
+        
+        # Start metrics collection task
+        self._monitoring_task = asyncio.create_task(self._collect_metrics_loop())
+    
+    async def stop_monitoring(self):
+        """Stop performance monitoring."""
+        if self._monitoring_task:
+            self._monitoring_task.cancel()
+            try:
+                await self._monitoring_task
+            except asyncio.CancelledError:
+                pass
+    
+    async def _collect_metrics_loop(self):
+        """Continuously collect performance metrics."""
+        while True:
+            try:
+                await self._collect_metrics()
+                await asyncio.sleep(self.collection_interval)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Error collecting metrics: {e}")
+                await asyncio.sleep(5)  # Brief pause on error
+    
+    async def _collect_metrics(self):
+        """Collect current performance metrics."""
+        # System metrics
+        memory_info = psutil.virtual_memory()
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Application metrics
+        avg_response_time = (
+            sum(self.request_times) / len(self.request_times) 
+            if self.request_times else 0
+        )
+        
+        cache_hit_rate = (
+            self.cache_hits / (self.cache_hits + self.cache_misses)
+            if (self.cache_hits + self.cache_misses) > 0 else 0
+        )
+        
+        error_rate = (
+            self.error_count / self.request_count
+            if self.request_count > 0 else 0
+        )
+        
+        # Create metrics snapshot
+        metrics = PerformanceMetrics(
+            timestamp=time.time(),
+            request_count=self.request_count,
+            average_response_time=avg_response_time,
+            memory_usage_mb=memory_info.used / (1024 * 1024),
+            cpu_usage_percent=cpu_percent,
+            active_connections=0,  # This would be tracked separately
+            cache_hit_rate=cache_hit_rate,
+            error_rate=error_rate
+        )
+        
+        # Update Prometheus metrics
+        MEMORY_USAGE.set(memory_info.used)
+        CPU_USAGE.set(cpu_percent)
+        
+        # Store in history (keep last 100 entries)
+        self.metrics_history.append(metrics)
+        if len(self.metrics_history) > 100:
+            self.metrics_history.pop(0)
+        
+        # Clear short-term counters
+        self.request_times = self.request_times[-50:]  # Keep last 50 request times
+    
+    def record_request(self, duration: float, success: bool = True):
+        """Record a request for performance tracking."""
+        self.request_times.append(duration)
+        self.request_count += 1
+        
+        if not success:
+            self.error_count += 1
+        
+        # Update Prometheus metrics
+        REQUEST_DURATION.observe(duration)
+        REQUEST_COUNT.labels(
+            method='tool_call', 
+            status='success' if success else 'error'
+        ).inc()
+    
+    def record_cache_event(self, hit: bool):
+        """Record cache hit or miss."""
+        if hit:
+            self.cache_hits += 1
+        else:
+            self.cache_misses += 1
+    
+    def get_current_metrics(self) -> Dict[str, Any]:
+        """Get current performance metrics."""
+        if self.metrics_history:
+            return asdict(self.metrics_history[-1])
+        return {}
+    
+    def get_metrics_summary(self, last_n: int = 10) -> Dict[str, Any]:
+        """Get summary of recent metrics."""
+        if not self.metrics_history:
+            return {}
+        
+        recent_metrics = self.metrics_history[-last_n:]
+        
+        return {
+            "avg_response_time": sum(m.average_response_time for m in recent_metrics) / len(recent_metrics),
+            "avg_memory_usage": sum(m.memory_usage_mb for m in recent_metrics) / len(recent_metrics),
+            "avg_cpu_usage": sum(m.cpu_usage_percent for m in recent_metrics) / len(recent_metrics),
+            "avg_cache_hit_rate": sum(m.cache_hit_rate for m in recent_metrics) / len(recent_metrics),
+            "avg_error_rate": sum(m.error_rate for m in recent_metrics) / len(recent_metrics),
+            "total_requests": self.request_count,
+            "total_errors": self.error_count,
+        }
+
+# Performance monitoring decorator
+def monitor_performance(monitor: PerformanceMonitor):
+    """Decorator to monitor function performance."""
+    
+    def decorator(func):
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            start_time = time.time()
+            success = True
+            
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    result = await func(*args, **kwargs)
+                else:
+                    result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                success = False
+                raise
+            finally:
+                duration = time.time() - start_time
+                monitor.record_request(duration, success)
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            start_time = time.time()
+            success = True
+            
+            try:
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                success = False
+                raise
+            finally:
+                duration = time.time() - start_time
+                monitor.record_request(duration, success)
+        
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
+    return decorator
+
+# Performance profiling tools
+import cProfile
+import pstats
+from io import StringIO
+
+class PerformanceProfiler:
+    """Code profiling for performance analysis."""
+    
+    def __init__(self):
+        self.profiler = cProfile.Profile()
+        self.profiling_enabled = False
+    
+    def start_profiling(self):
+        """Start code profiling."""
+        self.profiler.enable()
+        self.profiling_enabled = True
+    
+    def stop_profiling(self) -> str:
+        """Stop profiling and return results."""
+        if self.profiling_enabled:
+            self.profiler.disable()
+            self.profiling_enabled = False
+            
+            # Get profiling results
+            s = StringIO()
+            ps = pstats.Stats(self.profiler, stream=s)
+            ps.sort_stats('cumulative')
+            ps.print_stats(20)  # Top 20 functions
+            
+            return s.getvalue()
+        return "Profiling not active"
+    
+    def profile_function(self, func, *args, **kwargs):
+        """Profile a specific function call."""
+        self.profiler.enable()
+        try:
+            result = func(*args, **kwargs)
+            return result
+        finally:
+            self.profiler.disable()
+
+# Initialize global performance monitor
+performance_monitor = PerformanceMonitor()
+
+# Example usage with monitoring
+@server.tool()
+@monitor_performance(performance_monitor)
+async def monitored_tool(data: str) -> Dict[str, Any]:
+    """Tool with performance monitoring."""
+    # Simulate some work
+    await asyncio.sleep(0.1)
+    
+    return {
+        "processed": data,
+        "timestamp": time.time(),
+        "status": "success"
+    }
+
+@server.resource(uri="metrics://performance")
+async def get_performance_metrics() -> Dict[str, Any]:
+    """Get current performance metrics."""
+    return {
+        "current": performance_monitor.get_current_metrics(),
+        "summary": performance_monitor.get_metrics_summary(),
+        "system_info": {
+            "python_version": str(sys.version_info),
+            "platform": platform.platform(),
+            "cpu_count": psutil.cpu_count(),
+            "memory_total": psutil.virtual_memory().total
+        }
+    }
+
+# ❌ DON'T: No performance monitoring
+@server.tool()
+async def unmonitored_tool(data: str) -> str:
+    """No performance tracking."""
+    await asyncio.sleep(0.1)  # No monitoring of this delay
+    return f"processed {data}"  # No metrics collected
+```
+
+### Production Optimization and Security
+
+```python
+# ✅ DO: Implement production-ready optimizations
+import os
+from typing import Dict, Any, Optional, Set
+import secrets
+import hashlib
+import hmac
+from datetime import datetime, timedelta
+import jwt
+from fastapi import HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+# Environment-specific configuration
+class ProductionConfig:
+    """Production environment configuration."""
+    
+    def __init__(self):
+        self.environment = os.getenv("ENVIRONMENT", "development")
+        self.debug = self.environment != "production"
+        self.max_request_size = int(os.getenv("MAX_REQUEST_SIZE", "10485760"))  # 10MB
+        self.rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "100"))
+        self.cache_enabled = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+        self.monitoring_enabled = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
+        self.security_headers_enabled = True
+        
+        # Security settings
+        self.jwt_secret = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
+        self.jwt_algorithm = "HS256"
+        self.jwt_expiration_hours = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+        
+        # Performance settings
+        self.connection_pool_size = int(os.getenv("CONNECTION_POOL_SIZE", "20"))
+        self.max_concurrent_requests = int(os.getenv("MAX_CONCURRENT_REQUESTS", "100"))
+        self.request_timeout_seconds = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
+
+# Rate limiting implementation
+from collections import defaultdict
+import asyncio
+
+class RateLimiter:
+    """Token bucket rate limiter."""
+    
+    def __init__(self, max_requests: int = 100, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.request_counts: Dict[str, List[float]] = defaultdict(list)
+        self._lock = asyncio.Lock()
+    
+    async def is_allowed(self, identifier: str) -> bool:
+        """Check if request is allowed under rate limit."""
+        async with self._lock:
+            current_time = time.time()
+            window_start = current_time - self.window_seconds
+            
+            # Clean old requests
+            self.request_counts[identifier] = [
+                req_time for req_time in self.request_counts[identifier]
+                if req_time > window_start
+            ]
+            
+            # Check if under limit
+            if len(self.request_counts[identifier]) < self.max_requests:
+                self.request_counts[identifier].append(current_time)
+                return True
+            
+            return False
+    
+    async def get_remaining_requests(self, identifier: str) -> int:
+        """Get remaining requests in current window."""
+        async with self._lock:
+            current_time = time.time()
+            window_start = current_time - self.window_seconds
+            
+            # Clean old requests
+            self.request_counts[identifier] = [
+                req_time for req_time in self.request_counts[identifier]
+                if req_time > window_start
+            ]
+            
+            return self.max_requests - len(self.request_counts[identifier])
+
+# Authentication and authorization
+class SecurityManager:
+    """Security management for production deployment."""
+    
+    def __init__(self, config: ProductionConfig):
+        self.config = config
+        self.rate_limiter = RateLimiter(config.rate_limit_per_minute)
+        self.valid_api_keys: Set[str] = set()
+        self.security_headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "X-XSS-Protection": "1; mode=block",
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+            "Content-Security-Policy": "default-src 'self'",
+        }
+    
+    def generate_api_key(self, identifier: str) -> str:
+        """Generate secure API key."""
+        timestamp = str(int(time.time()))
+        data = f"{identifier}:{timestamp}:{secrets.token_urlsafe(32)}"
+        api_key = hashlib.sha256(data.encode()).hexdigest()
+        self.valid_api_keys.add(api_key)
+        return api_key
+    
+    def create_jwt_token(self, user_id: str, permissions: List[str] = None) -> str:
+        """Create JWT token for authentication."""
+        payload = {
+            "user_id": user_id,
+            "permissions": permissions or [],
+            "iat": datetime.utcnow(),
+            "exp": datetime.utcnow() + timedelta(hours=self.config.jwt_expiration_hours)
+        }
+        
+        return jwt.encode(payload, self.config.jwt_secret, algorithm=self.config.jwt_algorithm)
+    
+    def verify_jwt_token(self, token: str) -> Dict[str, Any]:
+        """Verify and decode JWT token."""
+        try:
+            payload = jwt.decode(
+                token, 
+                self.config.jwt_secret, 
+                algorithms=[self.config.jwt_algorithm]
+            )
+            return payload
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired"
+            )
+        except jwt.InvalidTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+    
+    async def validate_request(self, request_data: Dict[str, Any]) -> bool:
+        """Validate incoming request."""
+        # Size check
+        request_size = len(str(request_data))
+        if request_size > self.config.max_request_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Request too large: {request_size} bytes"
+            )
+        
+        # Input sanitization
+        if self._contains_suspicious_content(request_data):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request contains suspicious content"
+            )
+        
+        return True
+    
+    def _contains_suspicious_content(self, data: Any) -> bool:
+        """Check for suspicious content patterns."""
+        suspicious_patterns = [
+            "<script", "javascript:", "vbscript:", "onload=", "onerror=",
+            "eval(", "expression(", "url(", "import(", "document.cookie"
+        ]
+        
+        data_str = str(data).lower()
+        return any(pattern in data_str for pattern in suspicious_patterns)
+
+# Production-optimized server setup
+async def create_production_server() -> FastMCP:
+    """Create production-optimized MCP server."""
+    config = ProductionConfig()
+    security = SecurityManager(config)
+    
+    # Initialize server with optimizations
+    server = FastMCP(
+        name="ProductionMCPServer",
+        version="1.0.0",
+        description="Production-ready MCP server with security and performance optimizations"
+    )
+    
+    # Add security middleware
+    @server.middleware
+    async def security_middleware(request, call_next):
+        """Security middleware for all requests."""
+        # Rate limiting
+        client_ip = request.client.host if hasattr(request, 'client') else "unknown"
+        if not await security.rate_limiter.is_allowed(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded"
+            )
+        
+        # Process request
+        response = await call_next(request)
+        
+        # Add security headers
+        for header, value in security.security_headers.items():
+            response.headers[header] = value
+        
+        return response
+    
+    # Health check endpoint
+    @server.tool()
+    async def health_check() -> Dict[str, Any]:
+        """Health check for load balancers."""
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "version": "1.0.0",
+            "environment": config.environment,
+            "metrics": performance_monitor.get_current_metrics()
+        }
+    
+    return server
+
+# ❌ DON'T: No security or optimization for production
+def create_basic_server():
+    """Basic server without production considerations."""
+    server = FastMCP("BasicServer")  # No security, no rate limiting
+    
+    @server.tool()
+    def process_data(data: Any) -> Any:
+        # No input validation
+        # No size limits
+        # No rate limiting
+        # No authentication
+        return eval(str(data))  # Security vulnerability!
+    
+    return server
+```
+
+## Best Practices Summary
+
+### Performance Optimization
+- Use async patterns for I/O-bound operations
+- Implement connection pooling for database and HTTP connections
+- Use process pools for CPU-intensive tasks
+- Implement intelligent caching strategies with TTL and LRU policies
+- Monitor memory usage and implement proper cleanup
+
+### Production Readiness
+- Implement comprehensive error handling and logging
+- Add rate limiting and request size validation
+- Use authentication and authorization for security
+- Implement health checks for load balancers
+- Add security headers and input sanitization
+
+### Monitoring and Observability
+- Collect performance metrics (response time, throughput, errors)
+- Implement distributed tracing for request flows
+- Set up alerting for critical performance thresholds
+- Use profiling tools to identify bottlenecks
+- Monitor system resources (CPU, memory, disk, network)
+
+### Scalability Patterns
+- Design for horizontal scaling with stateless servers
+- Use message queues for async processing
+- Implement circuit breakers for external service calls
+- Use load balancing for distributing requests
+- Cache frequently accessed data at multiple levels
+
+### Security Best Practices
+- Validate and sanitize all inputs
+- Use secure authentication mechanisms (JWT, OAuth2)
+- Implement proper authorization checks
+- Use HTTPS for all communications
+- Regular security audits and dependency updates
+
+## References
+- [FastMCP Performance Guide](mdc:fastmcp_py/docs/deployment/performance.mdx)
+- [Async Python Best Practices](mdc:https:/docs.python.org/3/library/asyncio-dev.html)
+- [Production Deployment](mdc:fastmcp_py/docs/deployment/production.mdx)
+- [Redis Caching](mdc:https:/redis.io/docs/manual/patterns)
+- [Prometheus Monitoring](mdc:https:/prometheus.io/docs)

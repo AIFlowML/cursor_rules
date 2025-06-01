@@ -1,0 +1,138 @@
+---
+description: AGNO offers three types of memory capabilities
+globs: 
+alwaysApply: false
+---
+# AGNO Memory & Storage Guidelines
+
+AGNO offers three types of memory capabilities to enhance agent functionality:
+
+1. **Session Storage**: Save chat history and session state to database (persisted across runs)
+2. **User Memories**: Store user preferences and details for personalization
+3. **Session Summaries**: Create condensed representations of chat history
+
+## Session Storage Implementation
+
+Session storage persists chat history and state in a database, allowing multi-turn conversations.
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    # Store chat history and state in SQLite
+    storage=SqliteStorage(table_name="agent_sessions", db_file="data/agent.db"),
+    # Add chat history to messages (important for continuity)
+    add_history_to_messages=True,
+    # Number of historical runs to include
+    num_history_runs=3,
+    # Fix session ID to continue same session across executions
+    session_id="user_specific_session_id",
+)
+
+# Run agent - history will be retrieved automatically
+agent.print_response("What did we discuss earlier?")
+```
+
+## User Memories Implementation
+
+Store specific facts about users that persist across conversations.
+
+```python
+from agno.agent import Agent
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.models.openai import OpenAIChat
+
+# Initialize memory storage
+memory_db = SqliteMemoryDb(table_name="user_memories", db_file="data/memory.db")
+memory = Memory(
+    model=OpenAIChat(id="gpt-4o"),  # Model for memory operations
+    db=memory_db
+)
+
+# Initialize agent with memory
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    memory=memory,
+    # Enable agent to manage memories
+    enable_agentic_memory=True,
+    # Or automatically create memories after each response
+    enable_user_memories=True,
+)
+
+# Always include user_id when running agents with memory
+agent.print_response(
+    "My name is John and I prefer dark mode interfaces.",
+    user_id="john@example.com",
+    stream=True
+)
+
+# Access user memories programmatically
+user_memories = memory.get_user_memories(user_id="john@example.com")
+```
+
+## Memory Best Practices
+
+1. **Session Storage**:
+   - Use `add_history_to_messages=True` to include chat history
+   - Set appropriate `num_history_runs` (3-5 is typical)
+   - Enable `read_chat_history=True` for longer history access
+
+2. **User Memories**:
+   - Always include `user_id` parameter in agent runs
+   - Use `enable_agentic_memory=True` for agent-controlled memory management
+   - Consider proper database backup for production systems
+
+3. **Storage Selection**:
+   - SQLite for development and small deployments
+   - PostgreSQL for production environments
+   - MongoDB for document-oriented storage
+
+4. **Memory Management**:
+   - Use `memory.clear()` to reset user memories
+   - Implement regular memory summarization for long-term users
+   - Validate and sanitize memory content before storage
+
+## Complete Memory Example
+
+```python
+from agno.agent import Agent
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+# User ID for persistence
+user_id = "unique_user_id"
+db_file = "data/agent.db"
+
+# Memory for user details
+memory = Memory(
+    model=OpenAIChat(id="gpt-4o"),
+    db=SqliteMemoryDb(table_name="user_memories", db_file=db_file),
+)
+
+# Storage for chat history
+storage = SqliteStorage(table_name="agent_sessions", db_file=db_file)
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    memory=memory,
+    enable_agentic_memory=True,
+    storage=storage,
+    add_history_to_messages=True,
+    num_history_runs=3,
+    read_chat_history=True,
+    markdown=True,
+)
+
+# Memory will persist across runs with same user_id
+agent.print_response(
+    "Remember that I like hiking in mountains.",
+    user_id=user_id,
+    stream=True
+)
+```

@@ -1,0 +1,258 @@
+---
+description: Agent teams implementations
+globs: 
+alwaysApply: false
+---
+# AGNO Teams Implementation Guidelines
+
+Teams in AGNO enable multiple agents to work together to solve complex problems, each with its own expertise. AGNO supports three team modes: Route, Collaborate, and Coordinate.
+
+## Team Modes Overview
+
+1. **Route Mode**: Team leader directs user queries to the most appropriate team member
+2. **Collaborate Mode**: Team members work together to generate a unified response
+3. **Coordinate Mode**: Team leader orchestrates a conversation among team members
+
+## Basic Team Implementation
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+# Create specialized agents
+research_agent = Agent(
+    name="Research Specialist",
+    role="You research and gather information from databases and online sources",
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    instructions=["Focus on finding factual information", "Always cite sources"],
+)
+
+writing_agent = Agent(
+    name="Content Writer",
+    role="You write engaging, well-structured content based on research",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=["Write in a clear, engaging style", "Format content appropriately"],
+)
+
+# Create a team with the agents
+team = Team(
+    name="Content Creation Team",
+    mode="collaborate",  # Choose mode: "route", "collaborate", or "coordinate"
+    model=OpenAIChat(id="gpt-4o"),  # Team leader model
+    members=[research_agent, writing_agent],
+    markdown=True,
+    instructions=[
+        "Work together to create well-researched, engaging content",
+        "Ensure all information is accurate and properly cited",
+    ],
+)
+
+# Run the team
+team.print_response("Write a blog post about renewable energy trends", stream=True)
+```
+
+## Route Mode Implementation
+
+In Route mode, the team leader forwards the query to the most appropriate team member:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+english_agent = Agent(
+    name="English Agent",
+    role="You can only answer in English",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=["You must only respond in English"],
+)
+
+spanish_agent = Agent(
+    name="Spanish Agent",
+    role="You can only answer in Spanish",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=["You must only respond in Spanish"],
+)
+
+french_agent = Agent(
+    name="French Agent",
+    role="You can only answer in French",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=["You must only respond in French"],
+)
+
+language_team = Team(
+    name="Multilingual Team",
+    mode="route",  # Route mode directs to the appropriate member
+    model=OpenAIChat(id="gpt-4o"),
+    members=[english_agent, spanish_agent, french_agent],
+    markdown=True,
+    instructions=[
+        "You are a language router that directs questions to the appropriate language agent",
+        "Analyze the language of the user's query and route to the matching agent",
+        "For unsupported languages, respond in English explaining the limitation",
+    ],
+    show_members_responses=True,  # Show which member responded
+)
+
+# The team leader will detect language and route to the appropriate agent
+language_team.print_response("¿Cómo estás hoy?", stream=True)  # Will route to Spanish agent
+```
+
+## Collaborate Mode Implementation
+
+In Collaborate mode, all team members contribute to a unified response:
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.team import Team
+
+researcher = Agent(
+    name="Researcher",
+    role="You collect and analyze data",
+    model=Claude(id="claude-3-5-sonnet-latest"),
+)
+
+writer = Agent(
+    name="Writer",
+    role="You write engaging content based on research",
+    model=Claude(id="claude-3-5-sonnet-latest"),
+)
+
+editor = Agent(
+    name="Editor",
+    role="You edit and improve content for clarity and style",
+    model=Claude(id="claude-3-5-sonnet-latest"),
+)
+
+content_team = Team(
+    name="Content Team",
+    mode="collaborate",  # All members contribute to the response
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    members=[researcher, writer, editor],
+    markdown=True,
+    instructions=[
+        "Create content through collaboration",
+        "Researcher gathers information, Writer crafts initial draft, Editor polishes",
+        "Produce a single cohesive response that incorporates all contributions",
+    ],
+)
+
+content_team.print_response("Create an article about quantum computing", stream=True)
+```
+
+## Coordinate Mode Implementation
+
+In Coordinate mode, the team leader facilitates a conversation among members:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+critic = Agent(
+    name="Critic",
+    role="You critically evaluate proposals and identify potential issues",
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+optimist = Agent(
+    name="Optimist",
+    role="You highlight the positive aspects and opportunities in proposals",
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+pragmatist = Agent(
+    name="Pragmatist",
+    role="You focus on practical implementation and feasibility",
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+decision_team = Team(
+    name="Decision Team",
+    mode="coordinate",  # Team leader orchestrates a conversation
+    model=OpenAIChat(id="gpt-4o"),  # Team leader model
+    members=[critic, optimist, pragmatist],
+    markdown=True,
+    instructions=[
+        "Facilitate a balanced discussion on the proposed topic",
+        "Ensure each perspective is heard in a logical order",
+        "Synthesize insights into a final recommendation",
+        "Critic should go first, followed by Optimist, then Pragmatist",
+    ],
+    stream_team_conversation=True,  # Show the conversation as it happens
+)
+
+decision_team.print_response("Evaluate a proposal to switch our company to a four-day workweek", stream=True)
+```
+
+## Team Best Practices
+
+1. **Agent Selection and Design**:
+   - Create specialized agents with clear, complementary roles
+   - Configure each agent with appropriate model and tools
+   - Provide role-specific instructions to each agent
+
+2. **Team Mode Selection**:
+   - Use **Route** for clear delegation to specialists
+   - Use **Collaborate** for synthesizing multiple perspectives
+   - Use **Coordinate** for complex discussions requiring debate
+
+3. **Team Leader Configuration**:
+   - Use a high-capability model for the team leader
+   - Provide clear orchestration instructions to the leader
+   - Consider the leader's responsibility in each mode
+
+4. **Performance Optimization**:
+   - Cache results from expensive operations
+   - Use `stream=True` for better user experience
+   - Consider model size vs. capability tradeoffs
+
+## Structured Output with Teams
+
+Teams can maintain structured output from member agents:
+
+```python
+from pydantic import BaseModel
+from typing import List
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+
+class StockAnalysis(BaseModel):
+    symbol: str
+    company_name: str
+    analysis: str
+
+class CompanyAnalysis(BaseModel):
+    company_name: str
+    analysis: str
+
+stock_searcher = Agent(
+    name="Stock Searcher",
+    model=OpenAIChat("gpt-4o"),
+    response_model=StockAnalysis,  # Structured output model
+    tools=[YFinanceTools(stock_price=True)],
+)
+
+company_info_agent = Agent(
+    name="Company Info Searcher",
+    model=OpenAIChat("gpt-4o"),
+    response_model=CompanyAnalysis,  # Different structured output model
+    tools=[YFinanceTools(company_info=True)],
+)
+
+team = Team(
+    name="Financial Analysis Team",
+    mode="route",
+    model=OpenAIChat("gpt-4o"),
+    members=[stock_searcher, company_info_agent],
+)
+
+# Will route to appropriate agent and return structured output
+response = team.run("What is the current stock price of NVDA?")
+# response.content will be a StockAnalysis instance
+```

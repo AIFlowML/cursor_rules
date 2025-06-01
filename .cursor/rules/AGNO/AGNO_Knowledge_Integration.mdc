@@ -1,0 +1,207 @@
+---
+description: Knowledge integration in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Knowledge Integration
+
+This document provides a comprehensive reference for working with AGNO's knowledge integration components, including embedders, vector databases, storage solutions, and knowledge base types.
+
+## Knowledge Base Types
+
+AGNO provides several knowledge base types for different content formats:
+
+### TextKnowledgeBase
+For working with plain text content.
+
+```python
+from agno.knowledge.text import TextKnowledgeBase
+
+text_kb = TextKnowledgeBase(
+    text="Your content here",  # The text content
+    id="unique_kb_id"         # Optional unique identifier
+)
+
+# The knowledge base has documents property that can be used with vector databases
+documents = text_kb.documents
+```
+
+### JSONKnowledgeBase
+For working with structured JSON data.
+
+```python
+from agno.knowledge.json import JSONKnowledgeBase
+
+json_kb = JSONKnowledgeBase(
+    data={"key": "value", "nested": {"items": [1, 2, 3]}},  # JSON data structure
+    id="unique_kb_id"                                       # Optional unique identifier
+)
+
+# Accessing documents
+documents = json_kb.documents
+```
+
+### PDFKnowledgeBase
+For working with PDF document content.
+
+```python
+from agno.knowledge.pdf import PDFKnowledgeBase
+
+pdf_kb = PDFKnowledgeBase(
+    pdf_path="/path/to/document.pdf",  # Path to the PDF file
+    id="unique_kb_id"                  # Optional unique identifier
+)
+
+# PDF documents are parsed into text chunks
+documents = pdf_kb.documents
+```
+
+## Embedder Models
+
+AGNO supports various embedding models for transforming text into vector representations.
+
+### FastEmbedEmbedder
+High-performance embedding model using the FastEmbed library.
+
+```python
+from agno.embedder.fastembed import FastEmbedEmbedder
+
+embedder = FastEmbedEmbedder(
+    dimensions=384,                # Output dimensions (default: 384)
+    id="BAAI/bge-small-en-v1.5"    # Model identifier
+)
+
+# Generate embeddings for text
+vector = embedder.embed("Your text here")
+```
+
+## Vector Databases
+
+AGNO supports multiple vector databases for storing and retrieving knowledge embeddings.
+
+### LanceDB
+In-memory and on-disk vector database with fast similarity search.
+
+```python
+from agno.vectordb.lancedb.lance_db import LanceDb
+from agno.embedder.fastembed import FastEmbedEmbedder
+
+embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
+
+# Initialize LanceDB
+lance_db = LanceDb(
+    uri="/path/to/db",        # Database location (file path)
+    table_name="knowledge",   # Table name for storing vectors
+    embedder=embedder         # Embedder for vectorizing text
+)
+
+# Add documents
+await lance_db.add([
+    {"id": "1", "content": "Document text here"},
+    {"id": "2", "content": "Another document"}
+])
+
+# Search similar documents
+results = await lance_db.search(query="search query", limit=5)
+```
+
+### PgVector
+PostgreSQL-based vector database using the pgvector extension.
+
+```python
+from agno.vectordb.pgvector.pgvector import PgVector
+from agno.embedder.fastembed import FastEmbedEmbedder
+
+embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
+
+# Connect to PostgreSQL with pgvector extension
+pg_vector = PgVector(
+    table_name="vectors",                                   # Table name
+    db_url="postgresql://user:pass@localhost/dbname",       # Database connection URL
+    embedder=embedder                                       # Embedder for vectorizing text
+)
+
+# Add documents
+document_id = await pg_vector.add({"content": "Document text here"})
+
+# Search similar documents
+results = await pg_vector.search(query="search query", limit=5)
+```
+
+## Session Storage
+
+AGNO provides storage solutions for persisting agent sessions and data.
+
+### PostgresStorage
+PostgreSQL-based storage for agent session data.
+
+```python
+from agno.storage.postgres import PostgresStorage
+
+# Initialize storage
+storage = PostgresStorage(
+    table_name="agent_sessions",                           # Table name
+    db_url="postgresql://user:pass@localhost/dbname"       # Database connection URL
+)
+
+# Store session data
+await storage.save_session(
+    session_id="user123", 
+    data={"history": ["message1", "message2"]}
+)
+
+# Retrieve session data
+session_data = await storage.get_session(session_id="user123")
+```
+
+## Integration Patterns
+
+### Common Integration Pattern
+
+```python
+import asyncio
+from agno.knowledge.text import TextKnowledgeBase
+from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.vectordb.lancedb.lance_db import LanceDb
+from agno.embedder.fastembed import FastEmbedEmbedder
+
+async def main():
+    # Setup embedder
+    embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
+    
+    # Setup vector database
+    db = LanceDb(
+        uri="/tmp/knowledge_db",
+        table_name="knowledge",
+        embedder=embedder
+    )
+    
+    # Load knowledge
+    pdf_kb = PDFKnowledgeBase(pdf_path="document.pdf", id="doc1")
+    text_kb = TextKnowledgeBase(text="Important information...", id="info1")
+    
+    # Store in database
+    await db.add(pdf_kb.documents)
+    await db.add(text_kb.documents)
+    
+    # Query
+    results = await db.search("How do I use this feature?", limit=3)
+    print(results)
+
+asyncio.run(main())
+```
+
+## Best Practices
+
+1. **Chunking Strategy**: Break down large documents into chunks for more precise knowledge retrieval
+2. **Metadata**: Add metadata to your knowledge documents to provide context and filtering options
+3. **Concurrent Operations**: Use `asyncio.gather` to load multiple knowledge sources concurrently
+4. **Error Handling**: Always implement proper error handling for database operations
+5. **Knowledge Base Management**: Track your knowledge bases by ID for easier management and updates
+
+## Troubleshooting
+
+- **SQLAlchemy Errors**: Ensure database URLs are properly formatted (e.g., `postgresql://user:pass@host:port/dbname`)
+- **Memory Issues**: When loading large documents, consider increasing chunk size or using streaming approaches
+- **Missing Tables**: Vector databases often require explicit table creation before use
+- **Embedding Dimensions**: Ensure consistent embedding dimensions across your application

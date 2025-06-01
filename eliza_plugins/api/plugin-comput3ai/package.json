@@ -1,0 +1,69 @@
+{
+  "name": "@elizaos/plugin-comput3ai",
+  "description": "Plugin for Comput3AI GPU Services API",
+  "version": "1.0.0-beta.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "github:comput3ai/plugin-comput3ai"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@elizaos/core": "1.0.0-beta.21",
+    "axios": "^1.8.4",
+    "dotenv": "^16.4.7",
+    "zod": "3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "prettier": "3.5.3",
+    "tsup": "8.4.0"
+  },
+  "scripts": {
+    "start": "npx @elizaos/cli start",
+    "dev": "npx @elizaos/cli dev",
+    "build": "tsup",
+    "lint": "prettier --write ./src",
+    "test": "npx @elizaos/cli test",
+    "publish": "npx @elizaos/cli plugin publish",
+    "format": "prettier --write ./src",
+    "format:check": "prettier --check ./src"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "resolutions": {
+    "zod": "3.24.2"
+  },
+  "platform": "universal",
+  "agentConfig": {
+    "pluginType": "elizaos:plugin:1.0.0",
+    "pluginParameters": {
+      "COMPUT3AI_API_KEY": {
+        "type": "string",
+        "description": "Comput3AI API key"
+      },
+      "COMPUT3AI_WALLET_ADDRESS": {
+        "type": "string",
+        "description": "Comput3AI wallet address"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+} 

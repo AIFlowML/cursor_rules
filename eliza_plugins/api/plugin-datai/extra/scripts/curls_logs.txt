@@ -1,0 +1,292 @@
+Starting cURL tests... Log will be saved to packages/plugin-datai/scripts/curls_logs.txt
+
+===== Testing: GET_ALL_USER_DEFI_POSITIONS =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userDeFiPositions/all/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"chain":"eth","name":"1inch2","commonName":"1inch","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/1inch2.png","site":"https://app.1inch.io","portfolio":[{"total":{"supplyUSD":130.05880563374802,"debtUSD":0.0,"txFeeUSD":0.0,"navUSD":130.05880563374802,"active":true},"detailed":{"supply":[{"id":"","tokenAddress":"0x5a98fcbea516cf06857215779fd812ca3bef1b32","tokenDecimals":18,"tokenName":"Lido DAO Token","tokenSymbol":"LDO","usdRate":9.915448020234923E-19,"balance":650973556261459100Status: PASSED
+
+===== End Test: GET_ALL_USER_DEFI_POSITIONS =====
+
+
+===== Testing: GET_USER_DEFI_POSITIONS_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userDeFiPositions/0x09CF915e195aF33FA7B932C253352Ae9FBdB0106?chain=arb" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"chain":"arb","name":"arb_aave3","commonName":"Aave V3","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/arb_aave3.png","site":"https://app.aave.com","portfolio":[{"total":{"supplyUSD":0.27039341974808645,"debtUSD":0.0,"txFeeUSD":0.0,"navUSD":0.27039341974808645,"active":true},"detailed":{"supply":[{"id":"","tokenAddress":"0x82af49447d8a07e3bd95bd0d56f35241523fbab1","tokenDecimals":18,"tokenName":"Wrapped Ether","tokenSymbol":"WETH","usdRate":2.60499E-15,"balance":103798256326545,"bStatus: PASSED
+
+===== End Test: GET_USER_DEFI_POSITIONS_BY_CHAIN =====
+
+
+===== Testing: GET_USER_DEFI_POSITIONS_BY_MULTIPLE_CHAINS =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userDeFiPositionsByChains/0xbdfa4f4492dd7b7cf211209c4791af8d52bf5c50?chains=avax,arb" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"chain":"arb","name":"arb_3xcalibur","commonName":"3xcalibur","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/arb_3xcalibur.png","site":"https://app.3xcalibur.com/","portfolio":[{"total":{"supplyUSD":49.57337439580708,"debtUSD":0.0,"txFeeUSD":0.0,"navUSD":49.57337439580708,"active":true},"detailed":{"supply":[{"id":"","tokenAddress":"0x82af49447d8a07e3bd95bd0d56f35241523fbab1","tokenDecimals":18,"tokenName":"Wrapped Ether","tokenSymbol":"WETH","usdRate":2.6048E-15,"balance":1158172Status: PASSED
+
+===== End Test: GET_USER_DEFI_POSITIONS_BY_MULTIPLE_CHAINS =====
+
+
+===== Testing: GET_USER_DEFI_POSITIONS_BY_PROTOCOL =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userDeFiPositions/protocol/0xbdfa4f4492dd7b7cf211209c4791af8d52bf5c50?chain=avax&protocol=avax_gmx" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"chain":"avax","name":"avax_gmx","commonName":"GMX","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/avax_gmx.png","site":"https://gmx.io","portfolio":[{"total":{"supplyUSD":0.0,"debtUSD":0.0,"txFeeUSD":0.0,"navUSD":0.0,"active":true},"detailed":{"supply":[{"id":"","tokenAddress":"0xff1489227bbaac61a9209a08929e4c2a526ddd17","tokenDecimals":18,"tokenName":"Escrowed GMX","tokenSymbol":"esGMX","usdRate":0E-19,"balance":616561647434666400000,"balanceUSD":0.0,"logo":"https://valk-merlin.Status: PASSED
+
+===== End Test: GET_USER_DEFI_POSITIONS_BY_PROTOCOL =====
+
+
+===== Testing: GET_USER_DEFI_PROTOCOL_BALANCES_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/protocol/0x09CF915e195aF33FA7B932C253352Ae9FBdB0106?chain=eth" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"chain":"eth","name":"badger","commonName":"Badger DAO","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/badger.png","site":"https://app.badger.com","balance":{"navUSD":406.61716096914813,"assetUSD":406.61716096914813,"debtUSD":0.0}},{"chain":"eth","name":"compound","commonName":"Compound","logo":"https://valk-merlin.s3.amazonaws.com/protocol-icons/compound.png","site":"https://app.compound.finance","balance":{"navUSD":208.7894662512158,"assetUSD":208.7894662512158,"debtUSD":0.0}},{Status: PASSED
+
+===== End Test: GET_USER_DEFI_PROTOCOL_BALANCES_BY_CHAIN =====
+
+
+===== Testing: GET_USER_OVERALL_BALANCE_ALL_CHAINS =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/all/0x09CF915e195aF33FA7B932C253352Ae9FBdB0106" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"totalValueUsd":2590445.157720663,"byChain":[{"id":"mobm","name":"Moonbeam","logoUrl":"https://valk-merlin.s3.amazonaws.com/chain-icons/mobm.png","wrappedTokenId":"0xacc15dc74880c9944775448304b263d191c6077f","valueUsd":1.5502889049174937,"fiatValues":{"USD":1.5502889049174937,"AUD":2.4201560094666994,"AED":5.693436003309495,"EUR":1.3850281076532889,"CAD":2.165598571279247,"INR":132.628611075706,"GBP":1.165972285388447}},{"id":"cro","name":"Cronos","logoUrl":"https://valk-merlin.s3.amazonaws.comStatus: PASSED
+
+===== End Test: GET_USER_OVERALL_BALANCE_ALL_CHAINS =====
+
+
+===== Testing: GET_USER_OVERALL_BALANCE_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/chain/0x21dd5c13925407e5bcec3f27ab11a355a9dafbe3?chain=avax" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"valueUsd":81.03780843747393,"valueEUR":72.3991780580392,"valueAUD":126.50812275174054,"valueCAD":113.20171460630733,"valueAED":297.611351486623,"valueINR":6932.857445853488,"valueGBP":60.94853572582414}Status: PASSED
+
+===== End Test: GET_USER_OVERALL_BALANCE_BY_CHAIN =====
+
+
+===== Testing: GET_WALLET_BALANCES_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/0x3764D79db51726E900a1380055F469eB6e2a7fD3?chain=matic" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"nativeBalance":0,"nativeBalanceDecimal":0E-18,"tokenBalances":[{"tokenAddress":"0x07f371ff2118ed03f67768f35b1f0b1c8e643238","tokenName":"MATICswap","tokenSymbol":"swap for 14500 $POL(mat-swap.vercel.app","tokenDecimals":18,"balance":14500000000000000000000,"logoUrl":"https://valk-merlin.s3.amazonaws.com/token-icons-small/matic/0x07f371ff2118ed03f67768f35b1f0b1c8e643238.png"},{"tokenAddress":"0x1c30faf5d5e141bb8848209e1a85b0b07d9bf486","tokenName":"$ USDCpool.site","tokenSymbol":"Claim USDC/WETStatus: PASSED
+
+===== End Test: GET_WALLET_BALANCES_BY_CHAIN =====
+
+
+===== Testing: GET_NATIVE_TOKEN_BALANCE_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/native/0x3764D79db51726E900a1380055F469eB6e2a7fD3?chain=eth" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"balance":2547658121950559629,"balanceDecimal":2.547658121950559629}Status: PASSED
+
+===== End Test: GET_NATIVE_TOKEN_BALANCE_BY_CHAIN =====
+
+
+===== Testing: GET_TOKEN_BALANCES_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/token/0x3764D79db51726E900a1380055F469eB6e2a7fD3?chain=base" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"token_address":"0x07d15798a67253d76cea61f0ea6f57aedc59dffb","name":"Based Coin","symbol":"BASED","logo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/base/0x07d15798a67253d76cea61f0ea6f57aedc59dffb.png","thumbnail":null,"decimals":18,"balance":9222000000000000000000,"price":1.944302450074882E-5,"usdPrice":null,"priceChange24h":null,"bundleWallet":null,"prices":{"USD":1.944302450074882E-5,"AUD":3.0352505548118982E-5,"AED":7.140450747900005E-5,"EUR":1.7370398088968997E-5,"CAD":2.71599Status: PASSED
+
+===== End Test: GET_TOKEN_BALANCES_BY_CHAIN =====
+
+
+===== Testing: GET_USER_TOKEN_BALANCES_BY_MULTIPLE_CHAINS_ACTION =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/chains/token/0x3764D79db51726E900a1380055F469eB6e2a7fD3?chains=base,eth" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"base":[{"token_address":"0x07d15798a67253d76cea61f0ea6f57aedc59dffb","name":"Based Coin","symbol":"BASED","logo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/base/0x07d15798a67253d76cea61f0ea6f57aedc59dffb.png","thumbnail":null,"decimals":18,"balance":9222000000000000000000,"price":1.944302450074882E-5,"usdPrice":null,"priceChange24h":null,"bundleWallet":null,"prices":{"USD":1.944302450074882E-5,"AED":7.140450747900005E-5,"AUD":3.0352505548118982E-5,"CAD":2.715996092509603E-5,"EUR":Status: PASSED
+
+===== End Test: GET_USER_TOKEN_BALANCES_BY_MULTIPLE_CHAINS_ACTION =====
+
+
+===== Testing: GET_USER_NFTS_LIST =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/nft/all/0x3764D79db51726E900a1380055F469eB6e2a7fD3" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"tokenAddress":"0xa2833f56af255d01902cc196d8a54cac988dc8dc","tokenName":"Uniswap Ape Position Reward","tokenSymbol":null,"chain":"base","tokenId":"7","contractType":"ERC1155","ownerOf":"0x3764D79db51726E900a1380055F469eB6e2a7fD3","blockNumberMinted":null,"detailUrl":"https://opensea.io/assets/base/0xa2833f56af255d01902cc196d8a54cac988dc8dc/7"},{"tokenAddress":"0xfa521e35d31777073f75fa25a61c1fa787990a06","tokenName":"UNI Foundation","tokenSymbol":null,"chain":"matic","tokenId":"6","contractTypeStatus: PASSED
+
+===== End Test: GET_USER_NFTS_LIST =====
+
+
+===== Testing: GET_USER_NFTS_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/balances/nft/chain/0x3764D79db51726E900a1380055F469eB6e2a7fD3?chain=matic" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"tokenAddress":"0xfa521e35d31777073f75fa25a61c1fa787990a06","tokenName":"UNI Foundation","tokenSymbol":null,"chain":"matic","tokenId":"6","contractType":"ERC1155","ownerOf":"0x3764D79db51726E900a1380055F469eB6e2a7fD3","blockNumberMinted":null,"detailUrl":"https://opensea.io/assets/matic/0xfa521e35d31777073f75fa25a61c1fa787990a06/6"},{"tokenAddress":"0x1c3501b158d1d54115840b112e2d2e1e0b090f99","tokenName":"THC - Public Invite","tokenSymbol":null,"chain":"matic","tokenId":"1","contractType":"ERCStatus: PASSED
+
+===== End Test: GET_USER_NFTS_BY_CHAIN =====
+
+
+===== Testing: GET_USER_TRANSACTIONS =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/history/all/extended/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045?limit=5" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0xff683ec76b4233e0875084283e4539239f667e360a88fef8fcef4038bfa4214b","active":null,"balances":[{"balance":100000,"balanceString":"100000","balanceUSD":2.6061500000000004E-10,"tokenAddress":"0x0000000000000000000000000000000000000000","tokenSymbol":"ETH","tokenName":"ETH","tokenDecimals":18,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/eth.png","standard":"Native","nftDetails":null,"from":"0x1a29c121ad345a97dd5f8307626c4ebb8f9110f2","to":"0xd8da6bf26964af9d7eed9e0Status: PASSED
+
+===== End Test: GET_USER_TRANSACTIONS =====
+
+
+===== Testing: GET_USER_TX_HISTORY_ALL_CHAINS_SHORT =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userTx/history/all/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045?limit=10" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0xff683ec76b4233e0875084283e4539239f667e360a88fef8fcef4038bfa4214b","active":null,"balances":[{"balance":100000,"balanceString":"100000","balanceUSD":2.6071E-10,"tokenAddress":"eth","tokenSymbol":"ETH","tokenName":"ETH","tokenDecimals":18,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/eth.png","standard":null,"nftDetails":null,"from":"0x1a29c121ad345a97dd5f8307626c4ebb8f9110f2","to":"0xd8da6bf26964af9d7eed9e03e53415d37aa96045"}],"slippageUSD":null,"block":0,"chaiStatus: PASSED
+
+===== End Test: GET_USER_TX_HISTORY_ALL_CHAINS_SHORT =====
+
+
+===== Testing: GET_USER_TRANSACTIONS_BY_CHAIN =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/history/chain/extended/0x8e9741f27b21d6b3d5791b5566a880ecf5a1f21e?chain=eth&limit=10" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0x80b798a1eb04dafb55e5ac624bd504673d23569a33ac356e8e555bdfb4e3c652","active":null,"balances":[{"balance":1,"balanceString":"1","balanceUSD":0.0,"tokenAddress":"0xe4c3ca26365fe9535e0754b5855fbb960a4880b5","tokenSymbol":"claim rewards on stethaward.org","tokenName":"stethaward.org","tokenDecimals":0,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/0xe4c3ca26365fe9535e0754b5855fbb960a4880b5.png","standard":"ERC1155","nftDetails":{"floorPrice":null,"action":"TRANSFER",Status: PASSED
+
+===== End Test: GET_USER_TRANSACTIONS_BY_CHAIN =====
+
+
+===== Testing: GET_USER_TX_HISTORY_BY_CHAIN_RAW_LABEL =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/history/chain/rawlabel/0x8e9741f27b21d6b3d5791b5566a880ecf5a1f21e?chain=eth&limit=10" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0x80b798a1eb04dafb55e5ac624bd504673d23569a33ac356e8e555bdfb4e3c652","active":null,"balances":[{"balance":1,"balanceString":"1","balanceUSD":0.0,"tokenAddress":"0xe4c3ca26365fe9535e0754b5855fbb960a4880b5","tokenSymbol":"claim rewards on stethaward.org","tokenName":"stethaward.org","tokenDecimals":0,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/0xe4c3ca26365fe9535e0754b5855fbb960a4880b5.png","standard":"ERC1155","nftDetails":{"floorPrice":null,"action":"TRANSFER",Status: PASSED
+
+===== End Test: GET_USER_TX_HISTORY_BY_CHAIN_RAW_LABEL =====
+
+
+===== Testing: GET_SOLANA_USER_TX_HISTORY_EXTENDED =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/history/all/extended/rTXw3t2M9CowfNy23AVtvnnGvve2VbHtH9AcRRzrXyJ?chain=solana&limit=5" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"qZDoM5FaK6Dkows2vsBwkxz5dnH7idK2eHncX2xZAvSvuxnJyD4eqCcvdpQgK8VCFbbu952W5oTp7ARdeXFAue7","active":null,"balances":[],"slippageUSD":null,"block":310254946,"chain":"solana","from":"2ASgMPrDV5hy3zsyWva7EcmjP9EYhX7thJ6Jpc9eLXwK","hash":"qZDoM5FaK6Dkows2vsBwkxz5dnH7idK2eHncX2xZAvSvuxnJyD4eqCcvdpQgK8VCFbbu952W5oTp7ARdeXFAue7","order":0,"pnlUsd":null,"positionYield":null,"protocol":"","to":"BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY","timeStamp":1735351483,"txFee":6320,"txFeeUsd":0.0010964726Status: PASSED
+
+===== End Test: GET_SOLANA_USER_TX_HISTORY_EXTENDED =====
+
+
+===== Testing: GET_SOLANA_USER_TX_HISTORY_SHORT =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/history/all/HM7A27keP6GtwQ2nRCgstb2UhveG5SDTvM7aHJadRb2g?chain=solana&limit=5" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"4FrW8iAy211cNn1mtGDD7KE5VwAbuR5CqYKTuL9oEwN36VquE5nViscvEcJRgdjftBq8K8qZjrr7Kqdb29PADQYG","active":null,"balances":[{"balance":1,"balanceString":"1","balanceUSD":0.0,"tokenAddress":"EuAqFGkMH8V9ZTEgpxdKwzREowaPzfi3KcDKQzmzmThV","tokenSymbol":"JMPNFT11","tokenName":"JUMPCRYNFT","tokenDecimals":0,"tokenLogo":null,"standard":"SPL-Token-NFT","nftDetails":null,"from":"BANKPVz9gWzPb4iwwUhGB6YuZE5dYmRxgz9KGPeuZqkv","to":"HM7A27keP6GtwQ2nRCgstb2UhveG5SDTvM7aHJadRb2g"}],"slippageUSD":null,"block"Status: PASSED
+
+===== End Test: GET_SOLANA_USER_TX_HISTORY_SHORT =====
+
+
+===== Testing: GET_USER_TX_BY_PERIOD_ALL_CHAINS_EXTENDED =====
+Command: curl --location "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/period/all/extended/0x9a25d79ab755718e0b12bd3c927a010a543c2b31?startTime=1703999553&endTime=1698729153" --header "Authorization: OmlhD7WJMBRQVWHrEOXmruDBNj4DhbQH" | cat
+Curl command exit code: 0
+HTTP Status Code: 524
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+Status: FAILED
+
+===== End Test: GET_USER_TX_BY_PERIOD_ALL_CHAINS_EXTENDED =====
+
+
+===== Testing: GET_USER_TX_BY_PERIOD_AND_CHAIN_EXTENDED =====
+Command: curl --location "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/period/chain/extended/0xbdfa4f4492dd7b7cf211209c4791af8d52bf5c50?startTime=1716346533&endTime=1705895733&chain=xdai" --header "Authorization: OmlhD7WJMBRQVWHrEOXmruDBNj4DhbQH" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0x138ce903002ac24a560fea5d9994aeb116bccf8efd0d1608fa1396b334f1c0e4","active":null,"balances":[{"balance":1,"balanceString":"1","balanceUSD":0.0,"tokenAddress":"3383270206c1fd25c5df2bdfc1447558","tokenSymbol":"Reward at memedrop.top","tokenName":"#0","tokenDecimals":0,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/xdai/3383270206c1fd25c5df2bdfc1447558.png","standard":"ERC1155","nftDetails":{"floorPrice":0.0,"action":"TRANSFER","content":"https://valk-merlin.s3.amazonaStatus: PASSED
+
+===== End Test: GET_USER_TX_BY_PERIOD_AND_CHAIN_EXTENDED =====
+
+
+===== Testing: GET_USER_TX_BY_PERIOD_AND_CHAIN_RAW_LABEL_20 =====
+Command: curl --location "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/period/chain/rawlabel/20/0xbdfa4f4492dd7b7cf211209c4791af8d52bf5c50?chain=eth&startTime=1716346533&endTime=1705895733" --header "Authorization: OmlhD7WJMBRQVWHrEOXmruDBNj4DhbQH" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"id":"0xaabee46d5fa2b392df374cf30b0222c6c09597ddc4c6ef8a71229f8e60fdbd44","active":null,"balances":[{"balance":-31919226302251572925,"balanceString":"-31919226302251572925","balanceUSD":-0.0,"tokenAddress":"0xea51d7853eefb32b6ee06b1c12e6dcca88be0ffe","tokenSymbol":"variableDebtEthWETH","tokenName":"Aave Ethereum Variable Debt WETH","tokenDecimals":18,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/0xea51d7853eefb32b6ee06b1c12e6dcca88be0ffe.png","standard":"ERC20","nftDeStatus: PASSED
+
+===== End Test: GET_USER_TX_BY_PERIOD_AND_CHAIN_RAW_LABEL_20 =====
+
+
+===== Testing: GET_TRANSACTION_BY_HASH =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/byHash/eth/0xd4cd05342193d605764dcef1648b4f69fb90b2e4c7e315b7956fa0848cd727bf/0x218e312fF5181290A46e3f87A73A8aD40C05A944" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"id":"0xd4cd05342193d605764dcef1648b4f69fb90b2e4c7e315b7956fa0848cd727bf","active":null,"balances":[{"balance":8000000000000000000,"balanceString":"8000000000000000000","balanceUSD":0.0,"tokenAddress":"0x0000000000a39bb272e79075ade125fd351887ac","tokenSymbol":"Blur Pool","tokenName":"Blur Pool","tokenDecimals":18,"tokenLogo":"https://valk-merlin.s3.amazonaws.com/token-icons-small/eth/0x0000000000a39bb272e79075ade125fd351887ac.png","standard":"ERC20","nftDetails":null,"from":"0x8bc110db7029197c3Status: PASSED
+
+===== End Test: GET_TRANSACTION_BY_HASH =====
+
+
+===== Testing: GET_TRANSACTION_TRANSFERS_BY_HASH =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTxTransfers/byHash/eth/0xd4cd05342193d605764dcef1648b4f69fb90b2e4c7e315b7956fa0848cd727bf/0x218e312fF5181290A46e3f87A73A8aD40C05A944" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[{"balance":1,"balanceString":"1","balanceUSD":0.0,"tokenAddress":"0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d","tokenSymbol":"BAYC","tokenName":"BoredApeYachtClub","tokenDecimals":18,"tokenLogo":null,"standard":"ERC721","nftDetails":null,"from":"0x218e312ff5181290a46e3f87a73a8ad40c05a944","to":"0x29469395eaf6f95920e59f858042f0e28d98a20b"},{"balance":8000000000000000000,"balanceString":"8000000000000000000","balanceUSD":0.0,"tokenAddress":"0x0000000000a39bb272e79075ade125fd351887ac","tokenSymbol"Status: PASSED
+
+===== End Test: GET_TRANSACTION_TRANSFERS_BY_HASH =====
+
+
+===== Testing: GET_TRANSACTIONS_FOR_DEFI_POSITION =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/userTx/position/?position=compound__lending:compound-0xc00e94cb662c3520282e6f5717214004a7f26888:0x3764d79db51726E900a1380055F469eB6e2a7fD3:0" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+[]Status: PASSED
+
+===== End Test: GET_TRANSACTIONS_FOR_DEFI_POSITION =====
+
+
+===== Testing: GET_USER_TRANSACTION_OVERVIEW =====
+Command: curl -X GET -H "Authorization: dbNb54fQUGCuy2xO3RXPRw7bH9nbDSkS" "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/overview/0x4f2083f5fbede34c2714affb3105539775f7fe64" | cat
+Curl command exit code: 0
+HTTP Status Code: 200
+
+Response Body (first 500 chars) from packages/plugin-datai/scripts/curl_temp_output.tmp:
+{"wallet":"0x4f2083f5fbede34c2714affb3105539775f7fe64","nbOfChains":14,"nbOfTransactions":1,"creationTimestamp":1674227603,"overview":[{"chainId":"klay","creationTimestamp":1679080370,"nbOfTransactions":null},{"chainId":"zora","creationTimestamp":1689408281,"nbOfTransactions":null},{"chainId":"eth","creationTimestamp":1674227603,"nbOfTransactions":1},{"chainId":"op","creationTimestamp":1713999871,"nbOfTransactions":0},{"chainId":"blast","creationTimestamp":1727949635,"nbOfTransactions":0},{"chaiStatus: PASSED
+
+===== End Test: GET_USER_TRANSACTION_OVERVIEW =====
+
+
+===== SUMMARY OF FAILED REQUESTS =====
+Action: GET_USER_TX_BY_PERIOD_ALL_CHAINS_EXTENDED | HTTP Status: 524 | Curl Exit Code: 0 | Command: curl --location "https://api-v1.mymerlin.io/api/merlin/public/v2/userTx/period/all/extended/0x9a25d79ab755718e0b12bd3c927a010a543c2b31?startTime=1703999553&endTime=1698729153" --header "Authorization: OmlhD7WJMBRQVWHrEOXmruDBNj4DhbQH" | cat
+
+Total failed requests: 1

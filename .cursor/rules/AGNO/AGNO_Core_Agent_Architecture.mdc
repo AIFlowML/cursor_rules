@@ -1,0 +1,95 @@
+---
+description: AGENT core architecture in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Agent Architecture Guidelines
+
+AGNO provides a lightweight framework for building agents with memory, knowledge, tools, and reasoning capabilities. Use this guide for creating well-structured agents.
+
+## Basic Agent Structure
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude  # Or any other model provider
+
+agent = Agent(
+    name="MyAgent",  # Optional but recommended for multi-agent systems
+    model=Claude(id="claude-3-7-sonnet-latest"),  # Required: The LLM powering the agent
+    instructions=[  # Optional: Control agent behavior with specific instructions
+        "Use tables to display data",
+        "Respond concisely and accurately"
+    ],
+    markdown=True,  # Optional: Enable markdown formatting in responses
+)
+
+# Run an agent
+response = agent.run("Your query here")
+# Or stream the response
+agent.print_response("Your query here", stream=True)
+```
+
+## Agent Configuration Best Practices
+
+1. **Model Selection**:
+   - Choose the most appropriate model for your task based on capabilities and cost
+   - AGNO supports 23+ model providers including OpenAI, Anthropic, Google, etc.
+   - Always specify model version explicitly for reproducibility
+
+2. **Instructions**:
+   - Keep instructions concise and specific
+   - Focus on output format and behavioral constraints
+   - Limit to 3-5 key directives for best results
+
+3. **Response Format**:
+   - Use `markdown=True` for formatted outputs
+   - Set `structured_outputs=True` for JSON outputs
+   - Define Pydantic models with `response_model=YourModel` for typed responses
+
+4. **Performance Optimization**:
+   - Agents instantiate in microseconds and use minimal memory
+   - Stream responses when possible for better UX: `stream=True`
+   - Use appropriate context window for your model
+
+## Agent with Tools
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.reasoning import ReasoningTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),  # Adds reasoning capabilities
+        YFinanceTools(stock_price=True, company_info=True),  # Add tool functionality
+    ],
+    instructions=[
+        "Use tables to display financial data",
+        "Include sources in your response"
+    ],
+    markdown=True,
+)
+```
+
+## Debug and Tracing
+
+```python
+# Enable debug mode to see system prompts, user messages, and tool calls
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    debug_mode=True,  # Show debug information
+)
+
+# Alternative: Set environment variable
+# export AGNO_DEBUG=true
+
+# View reasoning steps
+agent.print_response(
+    "Your query",
+    stream=True,
+    show_full_reasoning=True,  # Show reasoning process
+    stream_intermediate_steps=True,  # Stream each step
+)
+```

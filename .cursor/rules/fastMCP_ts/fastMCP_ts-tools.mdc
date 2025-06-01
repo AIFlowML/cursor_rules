@@ -1,0 +1,708 @@
+---
+description: FastMCP TypeScript tool implementation
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript tool implementation, Standard Schema validation, and MCP Protocol compliance. You focus on building type-safe, validated, and performant tools with proper error handling.
+
+## Tool Implementation Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Tool Schema   │    │   Tool Execute   │    │   Tool Return   │
+│   Definition    │───▶│   Function       │───▶│   Content       │
+│                 │    │                  │    │                 │
+│ - Zod/ArkType   │    │ - Validation     │    │ - String/Object │
+│ - Valibot       │    │ - Business Logic │    │ - Error Handling│
+│ - Parameters    │    │ - Progress Track │    │ - Streaming     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Annotations   │    │   Context Usage  │    │   Content Types │
+│   Configuration │    │   Log & Progress │    │   Text/Image    │
+│   Timeout Setup │    │   Session Access │    │   Audio/Resource│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Tool Structure Patterns
+
+### Basic Tool Implementation
+
+```typescript
+import { z } from "zod";
+import { type } from "arktype";
+import * as v from "valibot";
+import { FastMCP, UserError } from "fastmcp";
+
+// ✅ DO: Define parameters with comprehensive validation
+const CalculateParamsZod = z.object({
+  operation: z.enum(["add", "subtract", "multiply", "divide"]),
+  a: z.number().describe("First number"),
+  b: z.number().describe("Second number"),
+  precision: z.number().int().min(0).max(10).default(2).describe("Decimal precision")
+});
+
+// ✅ DO: Use proper tool annotations
+server.addTool({
+  name: "calculate",
+  description: "Perform mathematical calculations with specified precision",
+  parameters: CalculateParamsZod,
+  
+  // Tool behavior annotations
+  annotations: {
+    title: "Mathematical Calculator",
+    readOnlyHint: true,           // Doesn't modify environment
+    openWorldHint: false,         // No external dependencies
+    idempotentHint: true,         // Same inputs = same outputs
+    destructiveHint: false        // Non-destructive operation
+  },
+  
+  // Execution timeout
+  timeoutMs: 5000,
+  
+  execute: async (args, context) => {
+    const { operation, a, b, precision } = args;
+    const { log, reportProgress, session } = context;
+    
+    // Input validation beyond schema
+    if (operation === "divide" && b === 0) {
+      throw new UserError("Cannot divide by zero");
+    }
+    
+    log.info("Starting calculation", { operation, a, b });
+    
+    let result: number;
+    switch (operation) {
+      case "add":
+        result = a + b;
+        break;
+      case "subtract":
+        result = a - b;
+        break;
+      case "multiply":
+        result = a * b;
+        break;
+      case "divide":
+        result = a / b;
+        break;
+    }
+    
+    const formattedResult = Number(result.toFixed(precision));
+    
+    log.info("Calculation completed", { result: formattedResult });
+    
+    return `Result: ${formattedResult}`;
+  }
+});
+
+// ❌ DON'T: Minimal tool without proper setup
+server.addTool({
+  name: "bad-calc",
+  execute: async (args) => {
+    return String(args.a + args.b);  // No validation, error handling
+  }
+});
+```
+
+### Standard Schema Validation Patterns
+
+```typescript
+// ✅ DO: Zod Schema Implementation
+const ZodFileParams = z.object({
+  path: z.string().min(1).regex(/^[^<>:"|?*]+$/, "Invalid file path"),
+  encoding: z.enum(["utf8", "base64", "binary"]).default("utf8"),
+  maxSize: z.number().positive().max(10_000_000).default(1_000_000)
+});
+
+// ✅ DO: ArkType Schema Implementation  
+const ArkTypeParams = type({
+  email: "email",
+  age: "number>0",
+  "status?": "'active'|'inactive'",
+  metadata: {
+    "created": "Date",
+    "tags": "string[]"
+  }
+});
+
+// ✅ DO: Valibot Schema Implementation
+const ValibotParams = v.object({
+  url: v.pipe(v.string(), v.url("Must be valid URL")),
+  method: v.picklist(["GET", "POST", "PUT", "DELETE"]),
+  headers: v.optional(v.record(v.string(), v.string())),
+  timeout: v.pipe(
+    v.number(), 
+    v.integer(), 
+    v.minValue(1000), 
+    v.maxValue(30000)
+  )
+});
+
+// ✅ DO: Schema selection based on complexity
+const getSchemaForTool = (toolType: string) => {
+  switch (toolType) {
+    case "simple":
+      return z.object({ input: z.string() });
+    case "complex":
+      return ArkTypeParams;
+    case "validation-heavy":
+      return ValibotParams;
+    default:
+      return ZodFileParams;
+  }
+};
+```
+
+### Content Return Patterns
+
+```typescript
+// ✅ DO: Comprehensive content return handling
+server.addTool({
+  name: "file-processor",
+  description: "Process files and return various content types",
+  parameters: z.object({
+    filePath: z.string(),
+    outputFormat: z.enum(["text", "image", "audio", "json"])
+  }),
+  
+  execute: async (args, context) => {
+    const { filePath, outputFormat } = args;
+    const { log } = context;
+    
+    try {
+      switch (outputFormat) {
+        case "text":
+          // Return simple string
+          return await readFileAsText(filePath);
+          
+        case "image":
+          // Return image content
+          return await imageContent({ path: filePath });
+          
+        case "audio":
+          // Return audio content
+          return await audioContent({ path: filePath });
+          
+        case "json":
+          // Return structured content
+          return {
+            content: [
+              { type: "text", text: "Processing results:" },
+              { 
+                type: "text", 
+                text: JSON.stringify(await processFile(filePath), null, 2) 
+              }
+            ]
+          };
+      }
+      
+    } catch (error) {
+      log.error("File processing failed", { filePath, error: error.message });
+      throw new UserError(`Failed to process file: ${error.message}`);
+    }
+  }
+});
+
+// ✅ DO: Mixed content return with embedded resources
+server.addTool({
+  name: "report-generator",
+  description: "Generate comprehensive reports with multiple content types",
+  parameters: z.object({
+    reportType: z.enum(["summary", "detailed", "visual"]),
+    includeCharts: z.boolean().default(false)
+  }),
+  
+  execute: async (args, context) => {
+    const { reportType, includeCharts } = args;
+    
+    const content = [
+      { type: "text" as const, text: `# ${reportType} Report\n\n` }
+    ];
+    
+    // Add text content
+    content.push({
+      type: "text" as const,
+      text: await generateReportText(reportType)
+    });
+    
+    // Add embedded resource
+    if (includeCharts) {
+      content.push({
+        type: "resource" as const,
+        resource: await server.embedded(`charts://report/${reportType}`)
+      });
+    }
+    
+    // Add generated image
+    if (reportType === "visual") {
+      content.push(await imageContent({
+        buffer: await generateChart(reportType)
+      }));
+    }
+    
+    return { content };
+  }
+});
+```
+
+### Streaming and Progress Patterns
+
+```typescript
+// ✅ DO: Implement streaming for long-running operations
+server.addTool({
+  name: "data-processor",
+  description: "Process large datasets with streaming output",
+  parameters: z.object({
+    datasetId: z.string(),
+    batchSize: z.number().min(1).max(1000).default(100),
+    includeProgress: z.boolean().default(true)
+  }),
+  
+  annotations: {
+    streamingHint: true,    // Enable streaming
+    readOnlyHint: false,    // Modifies data
+    title: "Dataset Processor"
+  },
+  
+  timeoutMs: 300000,  // 5 minutes for large operations
+  
+  execute: async (args, context) => {
+    const { datasetId, batchSize, includeProgress } = args;
+    const { streamContent, reportProgress, log } = context;
+    
+    const dataset = await loadDataset(datasetId);
+    const totalItems = dataset.length;
+    let processedItems = 0;
+    
+    // Stream initial status
+    await streamContent({
+      type: "text",
+      text: `🚀 Starting processing of ${totalItems} items...\n\n`
+    });
+    
+    // Process in batches
+    for (let i = 0; i < totalItems; i += batchSize) {
+      const batch = dataset.slice(i, i + batchSize);
+      
+      // Process current batch
+      const results = await processBatch(batch);
+      
+      // Update progress
+      processedItems += batch.length;
+      
+      if (includeProgress) {
+        await reportProgress({
+          progress: processedItems,
+          total: totalItems
+        });
+      }
+      
+      // Stream batch results
+      await streamContent({
+        type: "text",
+        text: `✅ Batch ${Math.floor(i / batchSize) + 1}: ${results.summary}\n`
+      });
+      
+      // Add delay to prevent overwhelming
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    // Final streaming message
+    await streamContent({
+      type: "text",
+      text: `\n🎉 Processing complete! Processed ${processedItems} items.`
+    });
+    
+    log.info("Data processing completed", { 
+      totalItems, 
+      processedItems, 
+      datasetId 
+    });
+    
+    // Return void since all content was streamed
+    return;
+  }
+});
+
+// ✅ DO: Hybrid streaming with final result
+server.addTool({
+  name: "code-analyzer",
+  description: "Analyze code with streaming progress and final summary",
+  parameters: z.object({
+    repositoryPath: z.string(),
+    analysisDepth: z.enum(["basic", "standard", "deep"]).default("standard")
+  }),
+  
+  annotations: {
+    streamingHint: true,
+    readOnlyHint: true,
+    title: "Code Quality Analyzer"
+  },
+  
+  execute: async (args, context) => {
+    const { repositoryPath, analysisDepth } = args;
+    const { streamContent, reportProgress } = context;
+    
+    const files = await discoverSourceFiles(repositoryPath);
+    let analyzedFiles = 0;
+    const issues: Issue[] = [];
+    
+    // Stream analysis progress
+    for (const file of files) {
+      await streamContent({
+        type: "text",
+        text: `🔍 Analyzing: ${file.path}\n`
+      });
+      
+      const fileIssues = await analyzeFile(file, analysisDepth);
+      issues.push(...fileIssues);
+      analyzedFiles++;
+      
+      await reportProgress({
+        progress: analyzedFiles,
+        total: files.length
+      });
+    }
+    
+    // Return final comprehensive result
+    return {
+      content: [
+        { type: "text", text: "\n## 📊 Analysis Summary\n\n" },
+        { 
+          type: "text", 
+          text: `- Files analyzed: ${analyzedFiles}\n` +
+                `- Issues found: ${issues.length}\n` +
+                `- Critical issues: ${issues.filter(i => i.severity === 'critical').length}\n`
+        },
+        {
+          type: "text",
+          text: "\n## 🔧 Recommendations\n\n" + 
+                generateRecommendations(issues)
+        }
+      ]
+    };
+  }
+});
+```
+
+### Error Handling Patterns
+
+```typescript
+// ✅ DO: Comprehensive error handling with context
+server.addTool({
+  name: "external-api-client",
+  description: "Make external API calls with proper error handling",
+  parameters: z.object({
+    endpoint: z.string().url(),
+    method: z.enum(["GET", "POST", "PUT", "DELETE"]).default("GET"),
+    payload: z.record(z.unknown()).optional(),
+    retryAttempts: z.number().min(0).max(5).default(3)
+  }),
+  
+  timeoutMs: 30000,
+  
+  execute: async (args, context) => {
+    const { endpoint, method, payload, retryAttempts } = args;
+    const { log } = context;
+    
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= retryAttempts + 1; attempt++) {
+      try {
+        log.info(`API call attempt ${attempt}`, { endpoint, method });
+        
+        const response = await fetch(endpoint, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'FastMCP-Client/1.0'
+          },
+          body: payload ? JSON.stringify(payload) : undefined,
+          signal: AbortSignal.timeout(25000)  // Timeout before tool timeout
+        });
+        
+        if (!response.ok) {
+          // Handle HTTP errors
+          const errorText = await response.text();
+          
+          if (response.status >= 400 && response.status < 500) {
+            // Client errors - don't retry
+            throw new UserError(
+              `API request failed (${response.status}): ${errorText}`
+            );
+          } else {
+            // Server errors - might be retryable
+            throw new Error(
+              `Server error (${response.status}): ${errorText}`
+            );
+          }
+        }
+        
+        const result = await response.json();
+        
+        log.info("API call successful", { 
+          endpoint, 
+          status: response.status,
+          attempt 
+        });
+        
+        return {
+          content: [
+            { type: "text", text: "✅ API call successful\n\n" },
+            { 
+              type: "text", 
+              text: `**Endpoint:** ${endpoint}\n` +
+                    `**Method:** ${method}\n` +
+                    `**Status:** ${response.status}\n\n` +
+                    `**Response:**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``
+            }
+          ]
+        };
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        log.warn(`API call attempt ${attempt} failed`, { 
+          endpoint, 
+          error: lastError.message,
+          attempt 
+        });
+        
+        // Don't retry UserErrors
+        if (error instanceof UserError) {
+          throw error;
+        }
+        
+        // Don't retry on last attempt
+        if (attempt === retryAttempts + 1) {
+          break;
+        }
+        
+        // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    // All attempts failed
+    throw new UserError(
+      `API call failed after ${retryAttempts + 1} attempts. ` +
+      `Last error: ${lastError?.message || 'Unknown error'}`
+    );
+  }
+});
+
+// ✅ DO: Validation error handling with user feedback
+server.addTool({
+  name: "form-validator",
+  description: "Validate form data with detailed error reporting",
+  parameters: z.object({
+    formData: z.record(z.unknown()),
+    validationRules: z.record(z.string())
+  }),
+  
+  execute: async (args, context) => {
+    const { formData, validationRules } = args;
+    const { log } = context;
+    
+    try {
+      const validationSchema = buildValidationSchema(validationRules);
+      const result = validationSchema.parse(formData);
+      
+      return {
+        content: [
+          { type: "text", text: "✅ Validation successful\n\n" },
+          { 
+            type: "text", 
+            text: `**Validated fields:** ${Object.keys(result).length}\n` +
+                  `**Data:**\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``
+          }
+        ]
+      };
+      
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        // Format validation errors for user
+        const errorMessages = error.errors.map(err => {
+          const field = err.path.join('.');
+          return `- **${field}**: ${err.message}`;
+        }).join('\n');
+        
+        log.info("Form validation failed", { 
+          errorCount: error.errors.length,
+          fields: error.errors.map(e => e.path.join('.'))
+        });
+        
+        throw new UserError(
+          `Form validation failed:\n\n${errorMessages}`
+        );
+      }
+      
+      log.error("Validation error", { error: error.message });
+      throw new UserError(`Validation failed: ${error.message}`);
+    }
+  }
+});
+```
+
+### Tool Without Parameters
+
+```typescript
+// ✅ DO: Tool without parameters - Option 1 (omit parameters)
+server.addTool({
+  name: "get-server-status",
+  description: "Get current server status and health information",
+  annotations: {
+    readOnlyHint: true,
+    openWorldHint: false,
+    title: "Server Status Check"
+  },
+  
+  // No parameters property
+  execute: async (args, context) => {
+    const { log } = context;
+    
+    log.info("Checking server status");
+    
+    const status = {
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      version: process.version,
+      platform: process.platform
+    };
+    
+    return {
+      content: [
+        { type: "text", text: "## 🖥️ Server Status\n\n" },
+        {
+          type: "text",
+          text: `**Uptime:** ${Math.floor(status.uptime / 3600)}h ${Math.floor((status.uptime % 3600) / 60)}m\n` +
+                `**Memory Usage:** ${Math.round(status.memory.rss / 1024 / 1024)}MB\n` +
+                `**Node Version:** ${status.version}\n` +
+                `**Platform:** ${status.platform}\n` +
+                `**Timestamp:** ${status.timestamp}`
+        }
+      ]
+    };
+  }
+});
+
+// ✅ DO: Tool without parameters - Option 2 (explicit empty schema)
+server.addTool({
+  name: "generate-uuid",
+  description: "Generate a new UUID v4",
+  parameters: z.object({}),  // Explicit empty object
+  annotations: {
+    readOnlyHint: true,
+    openWorldHint: false,
+    idempotentHint: false,  // Different result each time
+    title: "UUID Generator"
+  },
+  
+  execute: async () => {
+    const uuid = crypto.randomUUID();
+    return `Generated UUID: ${uuid}`;
+  }
+});
+```
+
+## Common Anti-Patterns
+
+```typescript
+// ❌ DON'T: Ignore parameter validation
+server.addTool({
+  name: "bad-tool",
+  execute: async (args) => {
+    return args.someProperty.toUpperCase();  // No validation, will crash
+  }
+});
+
+// ❌ DON'T: Use generic error handling
+server.addTool({
+  name: "bad-error-handling",
+  execute: async (args) => {
+    try {
+      return await someOperation(args);
+    } catch (error) {
+      return "Error occurred";  // No context, poor UX
+    }
+  }
+});
+
+// ❌ DON'T: Skip annotations
+server.addTool({
+  name: "unclear-tool",
+  execute: async (args) => {
+    await modifyDatabase(args);  // Destructive but no annotations
+    return "Done";
+  }
+});
+
+// ❌ DON'T: Ignore timeouts for long operations
+server.addTool({
+  name: "long-operation",
+  execute: async (args) => {
+    return await processLargeDataset(args);  // Could run forever
+  }
+});
+
+// ❌ DON'T: Mix streaming and return content incorrectly
+server.addTool({
+  name: "bad-streaming",
+  annotations: { streamingHint: true },
+  execute: async (args, { streamContent }) => {
+    await streamContent({ type: "text", text: "Starting..." });
+    return "Also returning this";  // Confusing mixed approach
+  }
+});
+```
+
+## Performance Optimization
+
+- Use appropriate timeouts for different operation types
+- Implement proper retry logic with exponential backoff
+- Stream large outputs instead of returning all at once
+- Use progress reporting for operations > 5 seconds
+- Validate inputs early to fail fast
+- Cache expensive computations when possible
+- Use AbortSignal for cancellable operations
+
+## Testing Patterns
+
+```typescript
+// ✅ DO: Test tool implementations thoroughly
+describe("Calculator Tool", () => {
+  it("should perform basic arithmetic", async () => {
+    const result = await executeCalculatorTool({
+      operation: "add",
+      a: 5,
+      b: 3,
+      precision: 2
+    });
+    
+    expect(result).toBe("Result: 8");
+  });
+  
+  it("should handle division by zero", async () => {
+    await expect(executeCalculatorTool({
+      operation: "divide",
+      a: 5,
+      b: 0,
+      precision: 2
+    })).rejects.toThrow(UserError);
+  });
+  
+  it("should respect precision parameter", async () => {
+    const result = await executeCalculatorTool({
+      operation: "divide",
+      a: 1,
+      b: 3,
+      precision: 4
+    });
+    
+    expect(result).toBe("Result: 0.3333");
+  });
+});
+```

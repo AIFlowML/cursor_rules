@@ -1,0 +1,95 @@
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE and editor specific files
+.vscode/
+.idea/
+*.swp
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts and compiled files
+build/
+dist/
+out/
+target/
+*.o
+*.obj
+*.class
+*.jar
+*.war
+*.ear
+*.pyc
+*.pyo
+*.dll
+*.exe
+*.so
+
+# Dependency directories
+node_modules/
+vendor/
+bower_components/
+jspm_packages/
+venv/
+env/
+.venv/
+.env/
+
+# Log files
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swo
+*.swn
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Coverage reports
+coverage/
+.nyc_output/
+lcov.info
+
+# Python specific
+__pycache__/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+.Python
+celerybeat-schedule
+instance/
+
+# Node specific
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Other common ignores
+.cache
+.sass-cache/
+*.sqlite3
+*.db
+# End Generation Here
+docs/
+eliza_plugins/
+eliza/

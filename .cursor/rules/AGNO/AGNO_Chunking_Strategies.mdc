@@ -1,0 +1,362 @@
+---
+description: Document chunking is a critical part of knowledge management in AGNO
+globs: 
+alwaysApply: false
+---
+# AGNO Chunking Strategies
+
+Document chunking is a critical part of knowledge management in AGNO, breaking down large documents into smaller, semantically meaningful pieces for efficient storage and retrieval. This rule provides guidelines for implementing effective chunking strategies.
+
+## Chunking Basics
+
+Chunking in AGNO follows these general principles:
+
+1. Documents are split into smaller segments called "chunks"
+2. Each chunk should contain coherent, semantically related content
+3. Chunks are individually embedded and stored in vector databases
+4. Agents search and retrieve relevant chunks based on query similarity
+5. Controlled chunk size balances context retention and relevance
+
+## Default Chunking Configuration
+
+Most knowledge sources in AGNO accept chunking parameters:
+
+```python
+from agno.knowledge.file import FileKnowledge
+
+knowledge = FileKnowledge(
+    files=["data/document.pdf"],
+    vector_db=your_vector_db,
+    # Chunking parameters
+    chunk_size=500,  # Target size of each chunk in tokens
+    chunk_overlap=50,  # Overlap between consecutive chunks in tokens
+)
+```
+
+## Chunking Methods
+
+AGNO supports different chunking methods:
+
+### Token-based Chunking
+
+Splits text based on token count (default method):
+
+```python
+from agno.chunking.token_text_chunker import TokenTextChunker
+
+chunker = TokenTextChunker(
+    chunk_size=500,  # Target chunk size in tokens
+    chunk_overlap=50,  # Overlap between chunks in tokens
+)
+```
+
+### Character-based Chunking
+
+Splits text based on character count:
+
+```python
+from agno.chunking.character_text_chunker import CharacterTextChunker
+
+chunker = CharacterTextChunker(
+    chunk_size=2000,  # Target chunk size in characters
+    chunk_overlap=200,  # Overlap between chunks in characters
+)
+```
+
+### Sentence-based Chunking
+
+Splits text at sentence boundaries:
+
+```python
+from agno.chunking.sentence_text_chunker import SentenceTextChunker
+
+chunker = SentenceTextChunker(
+    chunk_size=500,  # Target chunk size in tokens
+    chunk_overlap=50,  # Overlap between chunks in tokens
+)
+```
+
+### Paragraph-based Chunking
+
+Splits text at paragraph boundaries:
+
+```python
+from agno.chunking.paragraph_text_chunker import ParagraphTextChunker
+
+chunker = ParagraphTextChunker(
+    chunk_size=500,  # Target chunk size in tokens
+    chunk_overlap=50,  # Overlap between chunks in tokens
+)
+```
+
+### Document-Specific Chunking
+
+Specialized chunkers for specific document types:
+
+```python
+# Markdown-aware chunking
+from agno.chunking.markdown_text_chunker import MarkdownTextChunker
+
+md_chunker = MarkdownTextChunker(
+    chunk_size=500,
+    chunk_overlap=50,
+    # Honors header hierarchy in Markdown documents
+    split_on_headings=True,
+)
+
+# Code-aware chunking
+from agno.chunking.code_text_chunker import CodeTextChunker
+
+code_chunker = CodeTextChunker(
+    chunk_size=500,
+    chunk_overlap=50,
+    # Respects function and class boundaries
+    respect_code_structure=True,
+)
+```
+
+## Custom Chunker with Knowledge Source
+
+You can provide a custom chunker to knowledge sources:
+
+```python
+from agno.chunking.sentence_text_chunker import SentenceTextChunker
+from agno.knowledge.file import FileKnowledge
+
+# Create a custom chunker
+chunker = SentenceTextChunker(
+    chunk_size=800,
+    chunk_overlap=100,
+)
+
+# Use the chunker with a knowledge source
+knowledge = FileKnowledge(
+    files=["data/document.pdf"],
+    vector_db=your_vector_db,
+    chunker=chunker,  # Use custom chunker
+)
+```
+
+## Chunking Best Practices
+
+### Chunk Size Considerations
+
+Choosing the right chunk size depends on your use case:
+
+```python
+# Small chunks (200-300 tokens)
+# Best for: Precise information retrieval, FAQ-type content
+small_chunk_knowledge = FileKnowledge(
+    files=["data/faqs.pdf"],
+    vector_db=your_vector_db,
+    chunk_size=250,
+    chunk_overlap=25,
+)
+
+# Medium chunks (500-800 tokens)
+# Best for: General purpose, balanced context/precision
+medium_chunk_knowledge = FileKnowledge(
+    files=["data/documentation.pdf"],
+    vector_db=your_vector_db,
+    chunk_size=600,
+    chunk_overlap=50,
+)
+
+# Large chunks (1000+ tokens)
+# Best for: Complex topics requiring extensive context
+large_chunk_knowledge = FileKnowledge(
+    files=["data/research_paper.pdf"],
+    vector_db=your_vector_db,
+    chunk_size=1200,
+    chunk_overlap=100,
+)
+```
+
+### Document Structure Considerations
+
+Choose chunking method based on document structure:
+
+- **Well-structured documents** (articles, documentation): Paragraph or header-based chunking
+- **Narrative text** (books, essays): Sentence-based chunking
+- **Technical content** (code, specifications): Code-aware or specialized chunking
+- **Mixed content**: Default token-based chunking
+
+## Metadata and Chunk Enrichment
+
+Add metadata to chunks for improved retrieval:
+
+```python
+from agno.knowledge.file import FileKnowledge
+
+knowledge = FileKnowledge(
+    files=["data/document.pdf"],
+    vector_db=your_vector_db,
+    chunk_size=500,
+    chunk_overlap=50,
+    # Add metadata to chunks
+    metadata={
+        "source": "company_handbook",
+        "department": "HR",
+        "version": "2.3",
+        "date": "2024-06-01",
+    },
+)
+```
+
+## Advanced Chunking Strategies
+
+### Hierarchical Chunking
+
+For complex documents, implement hierarchical chunking:
+
+```python
+from agno.chunking.hierarchical_text_chunker import HierarchicalTextChunker
+from agno.knowledge.file import FileKnowledge
+
+# Create hierarchical chunker
+chunker = HierarchicalTextChunker(
+    parent_chunk_size=1500,  # Larger parent chunks
+    child_chunk_size=300,    # Smaller child chunks
+    parent_chunk_overlap=150,
+    child_chunk_overlap=30,
+)
+
+# Use with knowledge source
+knowledge = FileKnowledge(
+    files=["data/complex_document.pdf"],
+    vector_db=your_vector_db,
+    chunker=chunker,
+)
+```
+
+### Dynamic Chunking
+
+Adjust chunk size based on content complexity:
+
+```python
+from agno.chunking.dynamic_text_chunker import DynamicTextChunker
+from agno.knowledge.file import FileKnowledge
+
+# Create dynamic chunker
+chunker = DynamicTextChunker(
+    min_chunk_size=300,  # Minimum chunk size
+    max_chunk_size=800,  # Maximum chunk size
+    # Dynamically adjusts based on content complexity
+    adjust_by_complexity=True,
+)
+
+# Use with knowledge source
+knowledge = FileKnowledge(
+    files=["data/mixed_content.pdf"],
+    vector_db=your_vector_db,
+    chunker=chunker,
+)
+```
+
+## Multi-Document Strategy
+
+For diverse document collections, tailor chunking by document type:
+
+```python
+from agno.chunking.token_text_chunker import TokenTextChunker
+from agno.chunking.markdown_text_chunker import MarkdownTextChunker
+from agno.chunking.code_text_chunker import CodeTextChunker
+from agno.knowledge.file import FileKnowledge
+
+# Strategy for documentation (Markdown files)
+md_knowledge = FileKnowledge(
+    files=["data/docs/*.md"],
+    vector_db=your_vector_db,
+    chunker=MarkdownTextChunker(
+        chunk_size=600,
+        chunk_overlap=60,
+        split_on_headings=True,
+    ),
+)
+
+# Strategy for code files
+code_knowledge = FileKnowledge(
+    files=["data/src/*.py"],
+    vector_db=your_vector_db,
+    chunker=CodeTextChunker(
+        chunk_size=400,
+        chunk_overlap=40,
+        respect_code_structure=True,
+    ),
+)
+
+# Strategy for general text files
+text_knowledge = FileKnowledge(
+    files=["data/text/*.txt"],
+    vector_db=your_vector_db,
+    chunker=TokenTextChunker(
+        chunk_size=500,
+        chunk_overlap=50,
+    ),
+)
+```
+
+## Complete RAG Pipeline with Chunking
+
+```python
+from agno.agent import Agent
+from agno.chunking.paragraph_text_chunker import ParagraphTextChunker
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.directory import DirectoryKnowledge
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.vectordb.lancedb import LanceDb, SearchType
+
+# Create embedder
+embedder = OpenAIEmbedder(
+    id="text-embedding-3-small",
+    dimensions=1536,
+)
+
+# Create vector database
+vector_db = LanceDb(
+    uri="data/lancedb",
+    table_name="documentation",
+    search_type=SearchType.hybrid,
+    embedder=embedder,
+)
+
+# Create custom chunker for technical documentation
+chunker = ParagraphTextChunker(
+    chunk_size=700,  # Larger chunks for technical content
+    chunk_overlap=70,  # 10% overlap
+)
+
+# Create knowledge source with custom chunker
+knowledge = DirectoryKnowledge(
+    directory="data/technical_docs",
+    file_extensions=[".md", ".txt", ".pdf"],
+    vector_db=vector_db,
+    chunker=chunker,  # Use custom chunker
+    metadata={
+        "domain": "technical",
+        "audience": "developers",
+    },
+)
+
+# Create agent with knowledge
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    knowledge=knowledge,
+    tools=[ReasoningTools(add_instructions=True)],
+    instructions=[
+        "When searching knowledge, focus on technical accuracy",
+        "Provide context when citing from the knowledge base",
+        "Use code examples when applicable",
+    ],
+)
+
+# Load knowledge
+knowledge.load()
+
+# Run the agent
+agent.print_response(
+    "How do I implement hierarchical chunking for complex documents?",
+    stream=True,
+)
+```

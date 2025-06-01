@@ -1,0 +1,164 @@
+---
+description: Agno tools integrations.
+globs: 
+alwaysApply: false
+---
+# AGNO Tools Integration Guidelines
+
+Tools in AGNO allow agents to interact with external systems and APIs, giving them the ability to take actions in the real world. AGNO includes extensive built-in tools and supports custom tool creation.
+
+## Adding Tools to Agents
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import ReasoningTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        # Add reasoning capabilities
+        ReasoningTools(add_instructions=True),
+        # Financial data tools
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+        ),
+        # Web search tools
+        DuckDuckGoTools(),
+    ],
+    instructions=[
+        "Use tables to display financial data",
+        "Include sources in your response",
+    ],
+    markdown=True,
+)
+```
+
+## Built-in Tool Categories
+
+AGNO provides several tool categories for common agent tasks:
+
+1. **Reasoning Tools**:
+   - `ReasoningTools`: Enhanced reasoning and analysis capabilities
+   - Essential for complex problem-solving and multi-step tasks
+
+2. **Search & Web Tools**:
+   - `DuckDuckGoTools`: Web search capabilities
+   - `GoogleSearchTools`: Google search integration
+   - `Newspaper4kTools`: Article extraction and processing
+   - `WebsiteTools`: Web page analysis and content extraction
+
+3. **Database Tools**:
+   - `PostgresTools`: PostgreSQL database operations
+   - `SqliteTools`: SQLite database access
+   - `MongoDbTools`: MongoDB integration
+
+4. **Finance Tools**:
+   - `YFinanceTools`: Stock market data and analysis
+   - `AlphaVantageTools`: Financial market data
+
+5. **Local System Tools**:
+   - `PythonTools`: Python code execution
+   - `FileTools`: File system operations
+   - `BashTools`: Shell command execution
+
+## Custom Tools Implementation
+
+Create custom tools by extending the `BaseTool` class:
+
+```python
+from typing import Optional, List
+from agno.tools.base_tool import BaseTool
+from pydantic import BaseModel, Field
+
+# Define input schema for the tool
+class WeatherLookupInput(BaseModel):
+    location: str = Field(..., description="City name or zip code")
+    units: Optional[str] = Field("metric", description="'metric' or 'imperial'")
+
+# Define the tool class
+class WeatherTools(BaseTool):
+    name: str = "weather"
+    description: str = "Get current weather and forecast for a location"
+    
+    def __init__(self, api_key: str = None, **kwargs):
+        super().__init__(**kwargs)
+        self.api_key = api_key or os.environ.get("WEATHER_API_KEY")
+    
+    # Register a function for the tool
+    def get_weather(self, location: str, units: str = "metric") -> dict:
+        """Get the current weather for a location"""
+        # Implementation logic using a weather API
+        # ...
+        return weather_data
+    
+    # Register another function for forecasts
+    def get_forecast(self, location: str, days: int = 5, units: str = "metric") -> List[dict]:
+        """Get a multi-day forecast for a location"""
+        # Implementation logic for forecast
+        # ...
+        return forecast_data
+```
+
+## Tool Integration Best Practices
+
+1. **Tool Selection**:
+   - Only include tools relevant to the agent's task
+   - Avoid overloading agents with too many tools
+   - Use `ReasoningTools` for complex multi-step processes
+
+2. **Tool Configuration**:
+   - Initialize tools with specific parameters
+   - Use environment variables for API keys
+   - Enable only the specific tool functions needed
+
+3. **Tool Composition**:
+   - Create tool combinations for specific agent roles
+   - Group related tools into logical categories
+   - Consider building custom toolkits for specialized tasks
+
+4. **Custom Tool Development**:
+   - Follow the `BaseTool` pattern for consistency
+   - Document tool functions thoroughly
+   - Implement proper error handling for external APIs
+   - Add descriptive examples for the model
+
+## Example: Research Agent with Tools
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.reasoning import ReasoningTools
+
+research_agent = Agent(
+    name="ResearchAssistant",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        # Add reasoning capabilities
+        ReasoningTools(chain_of_thought=True, add_instructions=True),
+        # Web search
+        DuckDuckGoTools(region="us-en", time="y", max_results=5),
+        # Article extraction
+        Newspaper4kTools(),
+    ],
+    instructions=[
+        "Conduct thorough research on the query",
+        "Cite all sources used in your response",
+        "Summarize findings clearly and concisely",
+        "Use reasoning to analyze and synthesize information"
+    ],
+    markdown=True,
+)
+
+research_agent.print_response(
+    "Research the latest advances in fusion energy",
+    stream=True,
+    show_full_reasoning=True
+)
+```

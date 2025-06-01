@@ -1,0 +1,230 @@
+---
+description: AGNO is model-agnostic and supports 23+ model providers
+globs: 
+alwaysApply: false
+---
+# AGNO Models Integration
+
+AGNO is model-agnostic and supports 23+ model providers, giving you the flexibility to choose the best model for your task without lock-in. This rule provides guidelines for integrating different AI models with AGNO agents.
+
+## Supported Model Providers
+
+AGNO supports a wide range of model providers:
+
+| Provider | Models | Import Path |
+|----------|--------|-------------|
+| OpenAI | GPT-4, GPT-4o, GPT-3.5-Turbo | `agno.models.openai` |
+| Anthropic | Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Sonnet, Claude 3 Haiku | `agno.models.anthropic` |
+| Google | Gemini 1.5 Pro, Gemini 1.5 Flash, Gemini 1.0 Pro | `agno.models.google.gemini` |
+| Mistral | Mistral Large, Mistral Medium, Mistral Small | `agno.models.mistral.mistral` |
+| AWS | Bedrock models (Claude, Titan, etc.) | `agno.models.aws.bedrock` |
+| Azure | OpenAI on Azure, AI Foundry models | `agno.models.azure` |
+| Cohere | Command-R, Command-R+, Embed models | `agno.models.cohere` |
+| DeepSeek | DeepSeek Chat, DeepSeek Coder | `agno.models.deepseek` |
+| HuggingFace | Inference Endpoint models | `agno.models.huggingface` |
+| Ollama | Local models via Ollama | `agno.models.ollama` |
+| LM Studio | Local models via LM Studio | `agno.models.lmstudio` |
+| Groq | Llama, Mixtral, Claude models | `agno.models.groq` |
+| LiteLLM | Cross-provider compatibility | `agno.models.litellm` |
+
+## Basic Model Integration
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
+from agno.models.google.gemini import Gemini
+
+# OpenAI model
+openai_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+# Anthropic model
+claude_agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+)
+
+# Google Gemini model
+gemini_agent = Agent(
+    model=Gemini(id="gemini-1.5-pro-latest"),
+)
+```
+
+## Model Configuration Parameters
+
+Most model classes support these common parameters:
+
+```python
+from agno.models.openai import OpenAIChat
+
+model = OpenAIChat(
+    id="gpt-4o",  # Model identifier (required)
+    api_key="your_api_key",  # API key (optional, can use env var)
+    temperature=0.7,  # Controls randomness (0.0 to 2.0)
+    max_tokens=1000,  # Maximum tokens in the response
+    top_p=0.95,  # Nucleus sampling parameter
+    top_k=40,  # Limits vocabulary to top K tokens
+    frequency_penalty=0.0,  # Penalizes repeated tokens
+    presence_penalty=0.0,  # Penalizes tokens already used
+    timeout=60,  # Request timeout in seconds
+    response_format={"type": "json_object"},  # Response format for OpenAI
+)
+```
+
+## Provider-Specific Configuration
+
+### OpenAI
+
+```python
+from agno.models.openai import OpenAIChat
+
+openai_model = OpenAIChat(
+    id="gpt-4o",  # or "gpt-3.5-turbo", "gpt-4-1106-preview", etc.
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    organization_id=os.environ.get("OPENAI_ORG_ID"),  # Optional
+    json_mode=True,  # Enable JSON mode (alternative to response_format)
+)
+```
+
+### Anthropic
+
+```python
+from agno.models.anthropic import Claude
+
+claude_model = Claude(
+    id="claude-3-7-sonnet-latest",  # or "claude-3-opus-20240229", etc.
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    max_tokens=4000,
+)
+```
+
+### Google Gemini
+
+```python
+from agno.models.google.gemini import Gemini
+
+gemini_model = Gemini(
+    id="gemini-1.5-pro-latest",  # or "gemini-1.5-flash-latest"
+    api_key=os.environ.get("GOOGLE_API_KEY"),
+    generation_config={
+        "temperature": 0.8,
+        "top_p": 0.95,
+        "top_k": 40,
+    }
+)
+```
+
+### AWS Bedrock
+
+```python
+from agno.models.aws.bedrock import Bedrock
+
+bedrock_model = Bedrock(
+    id="anthropic.claude-3-sonnet-20240229-v1:0",  # AWS model identifier
+    region="us-west-2",  # AWS region
+    # AWS credentials are fetched from environment or config
+)
+```
+
+## Local Models Integration
+
+### Ollama
+
+```python
+from agno.models.ollama import Ollama
+
+ollama_model = Ollama(
+    id="llama3",  # Model available in your Ollama installation
+    host="http://localhost:11434",  # Optional Ollama host
+    timeout=120,  # Extended timeout for local inference
+)
+```
+
+### LM Studio
+
+```python
+from agno.models.lmstudio import LMStudio
+
+lmstudio_model = LMStudio(
+    host="http://localhost:1234",  # LM Studio server address
+    timeout=120,  # Extended timeout for local inference
+)
+```
+
+## Model Fallback Strategy
+
+AGNO allows implementing fallback strategies for model availability:
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
+from agno.models.fallback import FallbackModel
+
+# Create fallback chain
+fallback_model = FallbackModel(
+    models=[
+        OpenAIChat(id="gpt-4o"),  # Primary model
+        Claude(id="claude-3-5-sonnet-latest"),  # Fallback #1
+        OpenAIChat(id="gpt-3.5-turbo"),  # Fallback #2
+    ],
+    retry_on_errors=True,
+)
+
+# Use in agent
+agent = Agent(model=fallback_model)
+```
+
+## Best Practices
+
+1. **Model Selection**:
+   - Use the most capable model for reasoning-heavy tasks (Claude 3 Opus, GPT-4)
+   - Use efficient models for simpler tasks (Claude 3 Haiku, GPT-3.5-Turbo)
+   - Test different models to find the best price/performance ratio
+
+2. **API Keys**:
+   - Use environment variables for API keys (don't hardcode)
+   - Set organization IDs when required by the provider
+
+3. **Parameter Tuning**:
+   - Start with provider defaults for most parameters
+   - Lower temperature (0.0-0.3) for factual or structured tasks
+   - Higher temperature (0.7-1.0) for creative tasks
+   - Use appropriate token limits to control response length
+
+4. **Error Handling**:
+   - Implement proper error handling for API failures
+   - Use `max_retries` and `retry_sleep` parameters for automatic retries
+   - Consider implementing FallbackModel for critical applications
+
+5. **Cost Optimization**:
+   - Use smaller context windows when possible
+   - Match model capability to task complexity
+   - Implement caching for repetitive queries
+   - Monitor token usage across different providers
+
+## Example: Cross-Provider Agent
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+
+# Complex reasoning agent using Claude
+reasoning_agent = Agent(
+    name="ReasoningAgent",
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[ReasoningTools(add_instructions=True)],
+    instructions=["Break down complex problems into clear steps"],
+)
+
+# Factual QA agent using OpenAI
+factual_agent = Agent(
+    name="FactualAgent",
+    model=OpenAIChat(id="gpt-4o"),
+    temperature=0.2,  # Lower temperature for factual responses
+    instructions=["Provide concise, factual answers"],
+)
+```

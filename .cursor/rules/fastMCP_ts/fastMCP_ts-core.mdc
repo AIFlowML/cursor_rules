@@ -1,0 +1,506 @@
+---
+description: FastMCP TypeScript Core
+globs: 
+alwaysApply: false
+---
+> You are an expert in FastMCP TypeScript, MCP Protocol, and TypeScript development. You focus on producing clear, type-safe, and performant MCP servers using the latest FastMCP patterns and best practices.
+
+## FastMCP Server Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   FastMCP       │    │  FastMCPSession  │    │   Transport     │
+│   Constructor   │───▶│   Creation       │───▶│   Connection    │
+│                 │    │                  │    │                 │
+│ - Server Config │    │ - Session Auth   │    │ - stdio/http    │
+│ - Tool Setup    │    │ - Capabilities   │    │ - Event System  │
+│ - Resource Reg  │    │ - Root Handling  │    │ - Ping Config   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Add Tools     │    │   Session Events │    │   Server Start  │
+│   Add Resources │    │   Error Handling │    │   Health Check  │
+│   Add Prompts   │    │   Progress Track │    │   CORS Support  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+src/
+├── server/
+│   ├── index.ts           # Main server entry point
+│   ├── config.ts          # Server configuration
+│   └── types.ts           # Custom type definitions
+├── tools/
+│   ├── index.ts           # Tool exports
+│   ├── [tool-name].ts     # Individual tool implementations
+│   └── types.ts           # Tool-specific types
+├── resources/
+│   ├── index.ts           # Resource exports
+│   ├── [resource-name].ts # Resource implementations
+│   └── templates/         # Resource templates
+├── prompts/
+│   ├── index.ts           # Prompt exports
+│   └── [prompt-name].ts   # Prompt implementations
+├── auth/
+│   ├── index.ts           # Authentication logic
+│   └── middleware.ts      # Auth middleware
+└── utils/
+    ├── validation.ts      # Schema validation helpers
+    ├── content.ts         # Content type helpers
+    └── errors.ts          # Custom error classes
+```
+
+## Core Server Implementation
+
+### Basic Server Setup
+
+```typescript
+import { FastMCP } from "fastmcp";
+import { z } from "zod";
+
+// ✅ DO: Always use explicit typing for server options
+interface ServerConfig {
+  name: string;
+  version: string;
+  port?: number;
+  enableAuth?: boolean;
+}
+
+const config: ServerConfig = {
+  name: "My MCP Server",
+  version: "1.0.0",
+  port: 8080,
+  enableAuth: true
+};
+
+// ✅ DO: Configure server with comprehensive options
+const server = new FastMCP({
+  name: config.name,
+  version: config.version as `${number}.${number}.${number}`,
+  instructions: `
+    This server provides [describe functionality].
+    Available tools: [list main tools]
+    Authentication: Required for all operations
+  `,
+  
+  // Configure ping behavior
+  ping: {
+    enabled: true,           // Auto-determined by transport type
+    intervalMs: 10000,       // 10 seconds (default: 5000)
+    logLevel: "debug"        // Reduce log noise
+  },
+  
+  // Configure roots support
+  roots: {
+    enabled: true            // Enable filesystem roots
+  },
+  
+  // Configure health endpoint (HTTP transport only)
+  health: {
+    enabled: true,
+    path: "/health",
+    message: "Server is healthy",
+    status: 200
+  },
+  
+  // Custom authentication (optional)
+  authenticate: async (request) => {
+    const apiKey = request.headers["x-api-key"];
+    
+    if (!apiKey || !isValidApiKey(apiKey)) {
+      throw new Response(null, {
+        status: 401,
+        statusText: "Unauthorized - Valid API key required"
+      });
+    }
+    
+    return { userId: getUserIdFromApiKey(apiKey) };
+  }
+});
+
+// ❌ DON'T: Use minimal configuration without proper setup
+const badServer = new FastMCP({
+  name: "Server",  // Too generic
+  version: "1.0.0"
+  // Missing instructions, ping config, etc.
+});
+```
+
+### Transport Configuration
+
+```typescript
+// ✅ DO: Use environment-based transport selection
+const transportType = process.env.MCP_TRANSPORT === "http" ? "httpStream" : "stdio";
+
+if (transportType === "httpStream") {
+  // HTTP Streaming transport for remote access
+  await server.start({
+    transportType: "httpStream",
+    httpStream: {
+      port: parseInt(process.env.PORT || "8080", 10)
+    }
+  });
+  
+  console.log(`🚀 MCP Server running on http://localhost:${port}/stream`);
+  console.log(`📊 Health check available at http://localhost:${port}/health`);
+  
+} else {
+  // stdio transport for local/CLI usage
+  await server.start({
+    transportType: "stdio"
+  });
+  
+  console.log("🔗 MCP Server running on stdio transport");
+}
+
+// ✅ DO: Handle different transport configurations
+const getTransportConfig = () => {
+  const args = process.argv;
+  
+  if (args.includes("--http")) {
+    return {
+      type: "httpStream" as const,
+      port: parseInt(process.env.PORT || "8080", 10)
+    };
+  }
+  
+  if (args.includes("--stdio")) {
+    return { type: "stdio" as const };
+  }
+  
+  // Default based on environment
+  return process.env.NODE_ENV === "production" 
+    ? { type: "httpStream" as const, port: 8080 }
+    : { type: "stdio" as const };
+};
+
+const transportConfig = getTransportConfig();
+await server.start(
+  transportConfig.type === "httpStream"
+    ? { transportType: "httpStream", httpStream: { port: transportConfig.port } }
+    : { transportType: "stdio" }
+);
+```
+
+### Event System Setup
+
+```typescript
+// ✅ DO: Set up comprehensive event handling
+server.on("connect", (event) => {
+  const { session } = event;
+  
+  console.log(`✅ Client connected:`, {
+    capabilities: session.clientCapabilities,
+    loggingLevel: session.loggingLevel,
+    rootsCount: session.roots.length
+  });
+  
+  // Track session metrics
+  trackSessionMetrics(session);
+  
+  // Set up session-specific event handlers
+  session.on("rootsChanged", (rootsEvent) => {
+    console.log(`📁 Roots updated: ${rootsEvent.roots.length} roots`);
+    handleRootsChange(session, rootsEvent.roots);
+  });
+  
+  session.on("error", (errorEvent) => {
+    console.error(`❌ Session error:`, errorEvent.error);
+    handleSessionError(session, errorEvent.error);
+  });
+});
+
+server.on("disconnect", (event) => {
+  const { session } = event;
+  
+  console.log(`❌ Client disconnected`);
+  cleanupSession(session);
+});
+
+// ✅ DO: Implement session lifecycle management
+const activeSessions = new Map<string, FastMCPSession>();
+
+const trackSessionMetrics = (session: FastMCPSession) => {
+  const sessionId = generateSessionId();
+  activeSessions.set(sessionId, session);
+  
+  // Cleanup on disconnect
+  session.on("error", () => {
+    activeSessions.delete(sessionId);
+  });
+};
+
+const cleanupSession = (session: FastMCPSession) => {
+  // Perform cleanup operations
+  session.close();
+  
+  // Update metrics
+  console.log(`📊 Active sessions: ${activeSessions.size}`);
+};
+```
+
+### Configuration Management
+
+```typescript
+// ✅ DO: Use structured configuration with validation
+interface ServerEnvironment {
+  NODE_ENV: "development" | "production" | "test";
+  PORT: string;
+  API_KEY: string;
+  LOG_LEVEL: "debug" | "info" | "warn" | "error";
+  ENABLE_HEALTH_CHECK: string;
+  PING_INTERVAL_MS: string;
+}
+
+const ConfigSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  PORT: z.string().regex(/^\d+$/).transform(Number).default("8080"),
+  API_KEY: z.string().min(1, "API key is required"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  ENABLE_HEALTH_CHECK: z.string().transform(val => val === "true").default("true"),
+  PING_INTERVAL_MS: z.string().regex(/^\d+$/).transform(Number).default("10000")
+});
+
+// ✅ DO: Validate environment configuration
+const parseEnvironment = (): z.infer<typeof ConfigSchema> => {
+  try {
+    return ConfigSchema.parse(process.env);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      console.error("❌ Configuration validation failed:");
+      error.errors.forEach(err => {
+        console.error(`  - ${err.path.join(".")}: ${err.message}`);
+      });
+    }
+    process.exit(1);
+  }
+};
+
+const env = parseEnvironment();
+
+// ✅ DO: Create server with validated configuration
+const createServer = (env: z.infer<typeof ConfigSchema>) => {
+  return new FastMCP({
+    name: "Production MCP Server",
+    version: "1.0.0",
+    instructions: getServerInstructions(),
+    
+    ping: {
+      enabled: env.NODE_ENV === "production",
+      intervalMs: env.PING_INTERVAL_MS,
+      logLevel: env.LOG_LEVEL
+    },
+    
+    health: {
+      enabled: env.ENABLE_HEALTH_CHECK,
+      path: "/health",
+      message: `Server healthy (${env.NODE_ENV})`,
+      status: 200
+    },
+    
+    authenticate: env.NODE_ENV === "production" 
+      ? createAuthenticationHandler(env.API_KEY)
+      : undefined
+  });
+};
+
+// ❌ DON'T: Use hardcoded configuration
+const badServer = new FastMCP({
+  name: "Server",
+  version: "1.0.0",
+  ping: { intervalMs: 5000 },  // Hardcoded values
+  health: { enabled: true }     // No environment awareness
+});
+```
+
+### Error Handling and Graceful Shutdown
+
+```typescript
+// ✅ DO: Implement comprehensive error handling
+process.on("uncaughtException", (error) => {
+  console.error("💥 Uncaught Exception:", error);
+  gracefulShutdown(1);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("💥 Unhandled Rejection at:", promise, "reason:", reason);
+  gracefulShutdown(1);
+});
+
+process.on("SIGINT", () => {
+  console.log("\n🛑 Received SIGINT, shutting down gracefully...");
+  gracefulShutdown(0);
+});
+
+process.on("SIGTERM", () => {
+  console.log("\n🛑 Received SIGTERM, shutting down gracefully...");
+  gracefulShutdown(0);
+});
+
+const gracefulShutdown = async (exitCode: number) => {
+  try {
+    console.log("🔄 Closing server connections...");
+    
+    // Close all active sessions
+    for (const session of activeSessions.values()) {
+      await session.close();
+    }
+    
+    // Stop the server
+    await server.stop();
+    
+    console.log("✅ Server shut down successfully");
+    process.exit(exitCode);
+    
+  } catch (error) {
+    console.error("❌ Error during shutdown:", error);
+    process.exit(1);
+  }
+};
+```
+
+## Server Initialization Patterns
+
+### Development vs Production Setup
+
+```typescript
+// ✅ DO: Differentiate development and production configurations
+const createDevelopmentServer = () => {
+  return new FastMCP({
+    name: "Development MCP Server",
+    version: "1.0.0",
+    
+    // Development-specific settings
+    ping: {
+      enabled: false,        // Disable for local development
+      logLevel: "debug"
+    },
+    
+    roots: {
+      enabled: true          // Enable for file system access
+    },
+    
+    // No authentication in development
+    authenticate: undefined
+  });
+};
+
+const createProductionServer = () => {
+  return new FastMCP({
+    name: "Production MCP Server", 
+    version: "1.0.0",
+    
+    // Production-specific settings
+    ping: {
+      enabled: true,
+      intervalMs: 30000,     // Longer intervals in production
+      logLevel: "warn"       // Reduce log verbosity
+    },
+    
+    health: {
+      enabled: true,
+      path: "/health",
+      status: 200
+    },
+    
+    // Required authentication in production
+    authenticate: async (request) => {
+      const token = request.headers.authorization?.replace("Bearer ", "");
+      return await validateJwtToken(token);
+    }
+  });
+};
+
+// ✅ DO: Factory pattern for server creation
+const createServer = () => {
+  return process.env.NODE_ENV === "production"
+    ? createProductionServer()
+    : createDevelopmentServer();
+};
+```
+
+### TypeScript Configuration
+
+```json
+// tsconfig.json - ✅ DO: Proper TypeScript configuration
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}
+```
+
+## Common Anti-Patterns
+
+```typescript
+// ❌ DON'T: Create server without proper configuration
+const badServer = new FastMCP({
+  name: "Server",
+  version: "1.0.0"
+});
+// Missing: instructions, error handling, event setup
+
+// ❌ DON'T: Hardcode transport selection
+server.start({ transportType: "stdio" });
+// Should use environment-based selection
+
+// ❌ DON'T: Ignore session events
+server.on("connect", () => {
+  // Do nothing - missing session setup
+});
+
+// ❌ DON'T: Mix development and production concerns
+const server = new FastMCP({
+  name: "Server",
+  version: "1.0.0",
+  authenticate: process.env.NODE_ENV === "production" ? authFn : undefined
+});
+// Should use factory pattern instead
+
+// ❌ DON'T: Skip graceful shutdown
+// Missing process event handlers and cleanup logic
+```
+
+## Performance Optimization
+
+- Use appropriate ping intervals (longer for production)
+- Configure health checks only for HTTP transport
+- Implement proper session cleanup
+- Use structured logging with appropriate levels
+- Optimize authentication for production workloads
+- Implement connection pooling for database operations
+
+## Testing Patterns
+
+```typescript
+// ✅ DO: Test server configuration
+describe("FastMCP Server Configuration", () => {
+  it("should create server with valid configuration", () => {
+    const server = createServer();
+    expect(server).toBeInstanceOf(FastMCP);
+  });
+  
+  it("should handle transport configuration", async () => {
+    process.env.MCP_TRANSPORT = "stdio";
+    const config = getTransportConfig();
+    expect(config.type).toBe("stdio");
+  });
+});
+```
