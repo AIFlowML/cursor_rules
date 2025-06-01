@@ -16,6 +16,15 @@ fi
 
 echo "👨‍💻 Detected OS: $OS"
 
+# Get the current directory (where the user ran the script) BEFORE changing directories
+PROJECT_DIR=$(pwd)
+# Override if running from npm scripts or if path provided as argument
+if [ -n "$INIT_CWD" ]; then  
+    PROJECT_DIR="$INIT_CWD"  # For npm scripts
+elif [ -n "$1" ]; then  
+    PROJECT_DIR="$1"  # If a path is provided as an argument
+fi
+
 # Create temp directory
 TEMP_DIR=$(mktemp -d)
 echo "📁 Created temporary directory: $TEMP_DIR"
@@ -28,15 +37,6 @@ if ! git clone --quiet https://github.com/AIFlowML/cursor_rules.git "$TEMP_DIR";
     exit 1
 fi
 cd "$TEMP_DIR"
-
-# Get the current directory (where the user ran the script)
-PROJECT_DIR=$(pwd)
-# Override if running from npm scripts or if path provided as argument
-if [ -n "$INIT_CWD" ]; then  
-    PROJECT_DIR="$INIT_CWD"  # For npm scripts
-elif [ -n "$1" ]; then  
-    PROJECT_DIR="$1"  # If a path is provided as an argument
-fi
 
 echo "🎯 Installing to: $PROJECT_DIR"
 
