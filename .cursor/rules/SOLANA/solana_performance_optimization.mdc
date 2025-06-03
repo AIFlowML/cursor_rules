@@ -1,0 +1,700 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana performance optimization, compute unit management, and production efficiency. You focus on creating high-performance, cost-effective Solana programs and transactions.
+
+## Solana Performance Optimization Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Compute Budget  │    │  Memory Optimize │    │ Transaction Opt │
+│ - CU Estimation │───▶│  - Stack Usage   │───▶│ - Batch Instrs  │
+│ - Priority Fees │    │  - Heap Mgmt     │    │ - Account Order │
+│ - Budget Limits │    │  - Data Struct   │    │ - Serialization │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Profiling     │    │   Caching        │    │   Benchmarking  │
+│ - CU Analysis   │    │ - Result Cache   │    │ - Load Testing  │
+│ - Memory Track  │    │ - State Cache    │    │ - Metrics       │
+│ - Bottlenecks   │    │ - Computation    │    │ - Optimization  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+solana-performance-optimized/
+├── programs/
+│   ├── optimized-program/
+│   │   ├── src/
+│   │   │   ├── lib.rs             # Main program entry
+│   │   │   ├── processor.rs       # Optimized instruction processing
+│   │   │   ├── compute.rs         # Compute unit management
+│   │   │   ├── memory.rs          # Memory optimization utilities
+│   │   │   └── cache.rs           # Caching strategies
+│   │   └── Cargo.toml
+├── client/
+│   ├── src/
+│   │   ├── transaction_builder.rs # Optimized transaction building
+│   │   ├── batch_processor.rs     # Batch transaction processing
+│   │   ├── priority_manager.rs    # Priority fee management
+│   │   └── metrics.rs             # Performance metrics collection
+├── benchmarks/
+│   ├── compute_unit_tests.rs      # CU benchmarking
+│   ├── memory_tests.rs            # Memory usage tests
+│   ├── transaction_tests.rs       # Transaction efficiency tests
+│   └── load_tests.rs              # Load testing scenarios
+├── tools/
+│   ├── profiler.rs                # Performance profiling tools
+│   ├── optimizer.rs               # Code optimization analyzer
+│   └── budget_calculator.rs       # Compute budget calculator
+└── config/
+    ├── performance.toml           # Performance configuration
+    └── optimization_flags.toml    # Compiler optimization flags
+```
+
+## Core Implementation Patterns
+
+### Compute Unit Optimization
+
+```rust
+// ✅ DO: Implement comprehensive compute unit management
+use {
+    solana_program::{
+        account_info::AccountInfo,
+        compute_budget::{self, ComputeBudgetInstruction},
+        entrypoint::ProgramResult,
+        instruction::{Instruction, AccountMeta},
+        program::invoke,
+        pubkey::Pubkey,
+        sysvar::rent::Rent,
+    },
+    std::convert::TryInto,
+};
+
+pub struct ComputeManager {
+    base_compute_units: u32,
+    max_compute_units: u32,
+    heap_size: u32,
+}
+
+impl ComputeManager {
+    pub const DEFAULT_COMPUTE_UNITS: u32 = 200_000;
+    pub const MAX_COMPUTE_UNITS: u32 = 1_400_000;
+    pub const DEFAULT_HEAP_SIZE: u32 = 32 * 1024; // 32KB
+    pub const MAX_HEAP_SIZE: u32 = 256 * 1024; // 256KB
+    
+    pub fn new() -> Self {
+        Self {
+            base_compute_units: Self::DEFAULT_COMPUTE_UNITS,
+            max_compute_units: Self::MAX_COMPUTE_UNITS,
+            heap_size: Self::DEFAULT_HEAP_SIZE,
+        }
+    }
+    
+    /// Estimate compute units needed for a specific operation
+    pub fn estimate_compute_units(&self, operation: &str, data_size: usize) -> u32 {
+        let base_cost = match operation {
+            "token_transfer" => 4_000,
+            "account_creation" => 8_000,
+            "nft_mint" => 15_000,
+            "defi_swap" => 25_000,
+            "complex_calculation" => 50_000,
+            _ => 10_000,
+        };
+        
+        // Add cost based on data size (roughly 100 CU per KB)
+        let data_cost = (data_size as u32 / 1024) * 100;
+        
+        // Add 20% buffer for safety
+        let total = base_cost + data_cost;
+        (total as f32 * 1.2) as u32
+    }
+    
+    /// Create optimized compute budget instructions
+    pub fn create_compute_budget_ix(
+        &self,
+        compute_units: Option<u32>,
+        heap_size: Option<u32>,
+        priority_fee_lamports: Option<u64>,
+    ) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+        
+        // Set compute unit limit
+        if let Some(units) = compute_units {
+            let clamped_units = units.min(self.max_compute_units);
+            instructions.push(
+                ComputeBudgetInstruction::set_compute_unit_limit(clamped_units)
+            );
+        }
+        
+        // Set heap size if specified
+        if let Some(size) = heap_size {
+            let clamped_size = size.min(Self::MAX_HEAP_SIZE);
+            instructions.push(
+                ComputeBudgetInstruction::request_heap_frame(clamped_size)
+            );
+        }
+        
+        // Set priority fee if specified
+        if let Some(fee) = priority_fee_lamports {
+            instructions.push(
+                ComputeBudgetInstruction::set_compute_unit_price(fee)
+            );
+        }
+        
+        instructions
+    }
+    
+    /// Dynamic compute unit adjustment based on network conditions
+    pub fn calculate_dynamic_priority_fee(&self, base_fee: u64, network_congestion: f32) -> u64 {
+        // Adjust priority fee based on network congestion (0.0 to 10.0)
+        let multiplier = match network_congestion {
+            x if x < 1.0 => 1.0,
+            x if x < 3.0 => 1.5,
+            x if x < 6.0 => 2.0,
+            x if x < 8.0 => 3.0,
+            _ => 5.0,
+        };
+        
+        (base_fee as f64 * multiplier) as u64
+    }
+}
+
+// ✅ DO: Implement compute unit profiling
+pub struct ComputeProfiler {
+    measurements: Vec<ComputeMeasurement>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComputeMeasurement {
+    pub operation: String,
+    pub compute_units_used: u32,
+    pub execution_time_ns: u64,
+    pub memory_used: usize,
+    pub accounts_accessed: usize,
+}
+
+impl ComputeProfiler {
+    pub fn new() -> Self {
+        Self {
+            measurements: Vec::new(),
+        }
+    }
+    
+    pub fn profile_operation<F, R>(&mut self, operation: &str, accounts: &[AccountInfo], f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let start_time = std::time::Instant::now();
+        let start_compute = self.get_remaining_compute_units();
+        
+        let result = f();
+        
+        let end_time = std::time::Instant::now();
+        let end_compute = self.get_remaining_compute_units();
+        
+        let measurement = ComputeMeasurement {
+            operation: operation.to_string(),
+            compute_units_used: start_compute.saturating_sub(end_compute),
+            execution_time_ns: end_time.duration_since(start_time).as_nanos() as u64,
+            memory_used: self.estimate_memory_usage(accounts),
+            accounts_accessed: accounts.len(),
+        };
+        
+        self.measurements.push(measurement);
+        result
+    }
+    
+    fn get_remaining_compute_units(&self) -> u32 {
+        // In actual implementation, this would use program introspection
+        // For now, we'll use a placeholder
+        200_000 // Placeholder
+    }
+    
+    fn estimate_memory_usage(&self, accounts: &[AccountInfo]) -> usize {
+        accounts.iter()
+            .map(|acc| acc.data_len())
+            .sum::<usize>()
+    }
+    
+    pub fn get_statistics(&self) -> ComputeStatistics {
+        if self.measurements.is_empty() {
+            return ComputeStatistics::default();
+        }
+        
+        let total_operations = self.measurements.len();
+        let total_compute = self.measurements.iter()
+            .map(|m| m.compute_units_used as u64)
+            .sum::<u64>();
+        let avg_compute = total_compute / total_operations as u64;
+        
+        let max_compute = self.measurements.iter()
+            .map(|m| m.compute_units_used)
+            .max()
+            .unwrap_or(0);
+        
+        let total_time = self.measurements.iter()
+            .map(|m| m.execution_time_ns)
+            .sum::<u64>();
+        let avg_time = total_time / total_operations as u64;
+        
+        ComputeStatistics {
+            total_operations,
+            total_compute_units: total_compute,
+            average_compute_units: avg_compute as u32,
+            max_compute_units: max_compute,
+            average_execution_time_ns: avg_time,
+            compute_efficiency: self.calculate_efficiency(),
+        }
+    }
+    
+    fn calculate_efficiency(&self) -> f64 {
+        if self.measurements.is_empty() {
+            return 0.0;
+        }
+        
+        let total_useful_work: f64 = self.measurements.iter()
+            .map(|m| m.accounts_accessed as f64 * m.memory_used as f64)
+            .sum();
+        
+        let total_compute: f64 = self.measurements.iter()
+            .map(|m| m.compute_units_used as f64)
+            .sum();
+        
+        if total_compute > 0.0 {
+            total_useful_work / total_compute
+        } else {
+            0.0
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ComputeStatistics {
+    pub total_operations: usize,
+    pub total_compute_units: u64,
+    pub average_compute_units: u32,
+    pub max_compute_units: u32,
+    pub average_execution_time_ns: u64,
+    pub compute_efficiency: f64,
+}
+
+// ✅ DO: Efficient instruction processing patterns
+pub fn process_instruction_optimized(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    let mut profiler = ComputeProfiler::new();
+    
+    // Pre-validate accounts to fail fast
+    profiler.profile_operation("account_validation", accounts, || {
+        validate_accounts_efficient(accounts)
+    })?;
+    
+    // Parse instruction efficiently
+    let instruction = profiler.profile_operation("instruction_parsing", accounts, || {
+        parse_instruction_zero_copy(instruction_data)
+    })?;
+    
+    // Process based on instruction type
+    match instruction {
+        ProcessedInstruction::Transfer { amount, .. } => {
+            profiler.profile_operation("transfer", accounts, || {
+                process_transfer_optimized(accounts, amount)
+            })
+        }
+        ProcessedInstruction::Mint { amount, .. } => {
+            profiler.profile_operation("mint", accounts, || {
+                process_mint_optimized(accounts, amount)
+            })
+        }
+        ProcessedInstruction::Burn { amount, .. } => {
+            profiler.profile_operation("burn", accounts, || {
+                process_burn_optimized(accounts, amount)
+            })
+        }
+    }
+}
+
+// ✅ DO: Zero-copy instruction parsing
+#[derive(Debug)]
+pub enum ProcessedInstruction<'a> {
+    Transfer { amount: u64, data: &'a [u8] },
+    Mint { amount: u64, data: &'a [u8] },
+    Burn { amount: u64, data: &'a [u8] },
+}
+
+pub fn parse_instruction_zero_copy(data: &[u8]) -> Result<ProcessedInstruction, ProgramError> {
+    if data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    
+    match data[0] {
+        0 => {
+            // Transfer instruction
+            if data.len() < 9 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let amount = u64::from_le_bytes(data[1..9].try_into().unwrap());
+            Ok(ProcessedInstruction::Transfer { 
+                amount, 
+                data: &data[9..] 
+            })
+        }
+        1 => {
+            // Mint instruction
+            if data.len() < 9 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let amount = u64::from_le_bytes(data[1..9].try_into().unwrap());
+            Ok(ProcessedInstruction::Mint { 
+                amount, 
+                data: &data[9..] 
+            })
+        }
+        2 => {
+            // Burn instruction
+            if data.len() < 9 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let amount = u64::from_le_bytes(data[1..9].try_into().unwrap());
+            Ok(ProcessedInstruction::Burn { 
+                amount, 
+                data: &data[9..] 
+            })
+        }
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+// ❌ DON'T: Use inefficient instruction parsing
+pub fn parse_instruction_inefficient(data: &[u8]) -> Result<String, ProgramError> {
+    // Don't deserialize entire structs for simple operations
+    let instruction_str = String::from_utf8(data.to_vec())
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    
+    // Don't use JSON parsing for performance-critical operations
+    let parsed: serde_json::Value = serde_json::from_str(&instruction_str)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    
+    Ok(parsed.to_string())
+}
+
+### Memory Management Optimization
+
+```rust
+// ✅ DO: Implement efficient memory management
+use solana_program::program_memory::sol_memset;
+
+pub struct MemoryManager {
+    stack_usage: usize,
+    heap_usage: usize,
+    max_stack: usize,
+    max_heap: usize,
+}
+
+impl MemoryManager {
+    pub const MAX_STACK_SIZE: usize = 4 * 1024; // 4KB
+    pub const EFFICIENT_ALLOCATION_SIZE: usize = 32; // 32 bytes alignment
+    
+    pub fn new() -> Self {
+        Self {
+            stack_usage: 0,
+            heap_usage: 0,
+            max_stack: Self::MAX_STACK_SIZE,
+            max_heap: 256 * 1024, // 256KB
+        }
+    }
+    
+    /// Efficient memory clearing using Solana optimized functions
+    pub fn clear_memory_optimized(buffer: &mut [u8]) {
+        unsafe {
+            sol_memset(buffer.as_mut_ptr(), 0, buffer.len());
+        }
+    }
+    
+    /// Stack-based allocation for small, temporary data
+    pub fn with_stack_buffer<T, F>(&mut self, size: usize, f: F) -> Result<T, MemoryError>
+    where
+        F: FnOnce(&mut [u8]) -> T,
+    {
+        if size > Self::MAX_STACK_SIZE {
+            return Err(MemoryError::StackOverflow);
+        }
+        
+        // Use stack allocation for small buffers
+        let mut buffer = vec![0u8; size];
+        Ok(f(&mut buffer))
+    }
+    
+    /// Memory pool for reusable allocations
+    pub fn allocate_from_pool(&mut self, size: usize) -> Result<Vec<u8>, MemoryError> {
+        let aligned_size = self.align_allocation_size(size);
+        
+        if self.heap_usage + aligned_size > self.max_heap {
+            return Err(MemoryError::OutOfMemory);
+        }
+        
+        self.heap_usage += aligned_size;
+        Ok(vec![0u8; aligned_size])
+    }
+    
+    fn align_allocation_size(&self, size: usize) -> usize {
+        (size + Self::EFFICIENT_ALLOCATION_SIZE - 1) & !(Self::EFFICIENT_ALLOCATION_SIZE - 1)
+    }
+}
+
+#[derive(Debug)]
+pub enum MemoryError {
+    StackOverflow,
+    OutOfMemory,
+    InvalidAlignment,
+}
+
+// ✅ DO: Efficient data structure patterns
+pub struct CompactAccountData {
+    pub is_initialized: bool,
+    pub owner: [u8; 32],
+    pub balance: u64,
+    pub data_len: u16,
+    pub data: Vec<u8>,
+}
+
+impl CompactAccountData {
+    /// Pack data efficiently to minimize memory usage
+    pub fn pack(&self) -> Vec<u8> {
+        let mut packed = Vec::with_capacity(1 + 32 + 8 + 2 + self.data.len());
+        
+        // Pack boolean as single byte
+        packed.push(if self.is_initialized { 1 } else { 0 });
+        
+        // Pack owner directly
+        packed.extend_from_slice(&self.owner);
+        
+        // Pack balance as little-endian bytes
+        packed.extend_from_slice(&self.balance.to_le_bytes());
+        
+        // Pack data length
+        packed.extend_from_slice(&self.data_len.to_le_bytes());
+        
+        // Pack data
+        packed.extend_from_slice(&self.data);
+        
+        packed
+    }
+    
+    /// Unpack data efficiently with zero-copy where possible
+    pub fn unpack(packed: &[u8]) -> Result<Self, PackingError> {
+        if packed.len() < 43 { // Minimum size: 1 + 32 + 8 + 2
+            return Err(PackingError::InvalidLength);
+        }
+        
+        let is_initialized = packed[0] != 0;
+        
+        let mut owner = [0u8; 32];
+        owner.copy_from_slice(&packed[1..33]);
+        
+        let balance = u64::from_le_bytes(
+            packed[33..41].try_into().map_err(|_| PackingError::InvalidData)?
+        );
+        
+        let data_len = u16::from_le_bytes(
+            packed[41..43].try_into().map_err(|_| PackingError::InvalidData)?
+        );
+        
+        if packed.len() < 43 + data_len as usize {
+            return Err(PackingError::InvalidLength);
+        }
+        
+        let data = packed[43..43 + data_len as usize].to_vec();
+        
+        Ok(Self {
+            is_initialized,
+            owner,
+            balance,
+            data_len,
+            data,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub enum PackingError {
+    InvalidLength,
+    InvalidData,
+}
+
+### Transaction Efficiency Optimization
+
+```typescript
+// ✅ DO: Implement optimized transaction building
+import {
+    Connection,
+    Transaction,
+    TransactionInstruction,
+    ComputeBudgetProgram,
+    PublicKey,
+    Keypair,
+} from '@solana/web3.js';
+
+export class OptimizedTransactionBuilder {
+    private connection: Connection;
+    private defaultComputeUnits: number = 200_000;
+    private maxRetries: number = 3;
+    
+    constructor(connection: Connection) {
+        this.connection = connection;
+    }
+    
+    /**
+     * Build transaction with optimized compute budget and ordering
+     */
+    async buildOptimizedTransaction(
+        instructions: TransactionInstruction[],
+        payer: PublicKey,
+        options?: TransactionBuildOptions
+    ): Promise<Transaction> {
+        const transaction = new Transaction();
+        
+        // 1. Add compute budget instructions first
+        const computeIx = await this.createOptimalComputeBudget(instructions, options);
+        if (computeIx.length > 0) {
+            transaction.add(...computeIx);
+        }
+        
+        // 2. Optimize instruction ordering for better cache locality
+        const optimizedInstructions = this.optimizeInstructionOrder(instructions);
+        transaction.add(...optimizedInstructions);
+        
+        // 3. Set recent blockhash efficiently
+        const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = payer;
+        
+        return transaction;
+    }
+    
+    /**
+     * Estimate compute units based on instruction types and complexity
+     */
+    private estimateComputeUnits(instructions: TransactionInstruction[]): number {
+        let totalCU = 0;
+        
+        for (const ix of instructions) {
+            // Base cost per instruction
+            totalCU += 1000;
+            
+            // Account access cost (150 CU per account)
+            totalCU += ix.keys.length * 150;
+            
+            // Data size cost (approximately 10 CU per byte)
+            totalCU += ix.data.length * 10;
+            
+            // Program-specific estimates
+            const programCU = this.getProgramSpecificCost(ix.programId);
+            totalCU += programCU;
+        }
+        
+        // Add 20% buffer for safety
+        return Math.ceil(totalCU * 1.2);
+    }
+    
+    private getProgramSpecificCost(programId: PublicKey): number {
+        const programStr = programId.toBase58();
+        
+        // Known program costs
+        const programCosts: Record<string, number> = {
+            'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': 4000, // SPL Token
+            'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': 3000, // Associated Token
+            'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': 15000, // Metaplex
+            '11111111111111111111111111111111': 2000, // System Program
+        };
+        
+        return programCosts[programStr] || 5000; // Default estimate
+    }
+    
+    /**
+     * Optimize instruction order for better performance
+     */
+    private optimizeInstructionOrder(instructions: TransactionInstruction[]): TransactionInstruction[] {
+        // Group instructions by program to improve cache locality
+        const programGroups = new Map<string, TransactionInstruction[]>();
+        
+        for (const ix of instructions) {
+            const programKey = ix.programId.toBase58();
+            if (!programGroups.has(programKey)) {
+                programGroups.set(programKey, []);
+            }
+            programGroups.get(programKey)!.push(ix);
+        }
+        
+        // Order by program priority (system programs first, then others)
+        const priorityOrder = [
+            '11111111111111111111111111111111', // System Program
+            'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', // SPL Token
+            'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', // Associated Token
+        ];
+        
+        const orderedInstructions: TransactionInstruction[] = [];
+        
+        // Add priority programs first
+        for (const programId of priorityOrder) {
+            if (programGroups.has(programId)) {
+                orderedInstructions.push(...programGroups.get(programId)!);
+                programGroups.delete(programId);
+            }
+        }
+        
+        // Add remaining programs
+        for (const instructions of programGroups.values()) {
+            orderedInstructions.push(...instructions);
+        }
+        
+        return orderedInstructions;
+    }
+}
+
+export interface TransactionBuildOptions {
+    maxComputeUnits?: number;
+    priorityFee?: number;
+    heapSize?: number;
+}
+```
+
+## Best Practices Summary
+
+### Compute Unit Management
+- Always estimate compute units based on operation complexity
+- Use compute budget instructions to set appropriate limits
+- Implement dynamic priority fee calculation based on network conditions
+- Profile operations to identify compute unit bottlenecks
+
+### Memory Optimization
+- Use stack allocation for small, temporary data
+- Implement memory pools for frequently allocated objects
+- Use zero-copy parsing where possible
+- Align memory allocations for optimal performance
+
+### Transaction Efficiency
+- Batch instructions in logical groups
+- Optimize instruction ordering for cache locality
+- Use appropriate compute budgets to avoid failures
+- Implement retry logic with exponential backoff
+
+### Advanced Techniques
+- Cache expensive computations and frequently accessed data
+- Use lazy evaluation for optional expensive operations
+- Implement parallel processing for read-only operations
+- Monitor and benchmark performance continuously
+
+## References
+- [Solana Compute Budget Documentation](mdc:https:/docs.solana.com/developing/programming-model/runtime#compute-budget)
+- [Transaction Processing Optimization](mdc:https:/docs.solana.com/developing/programming-model/calling-between-programs)
+- [Solana Performance Best Practices](mdc:https:/docs.solana.com/developing/programming-model/overview)
+- [Compute Unit Optimization Guide](mdc:https:/solanacookbook.com/guides/optimizing-compute.html)

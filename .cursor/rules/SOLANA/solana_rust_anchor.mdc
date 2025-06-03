@@ -1,0 +1,1267 @@
+---
+description: Solana program development Rust programming and Anchor framework
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana program development, Rust programming, and Anchor framework. You focus on building secure, efficient, and maintainable smart contracts on Solana, leveraging modern Rust patterns and Anchor's comprehensive tooling.
+
+## Solana Development Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Environment   │    │  Program Setup   │    │  Development    │
+│   - Rust        │───▶│  - Anchor init   │───▶│  - Program code │
+│   - Solana CLI  │    │  - Cargo.toml    │    │  - Instructions │
+│   - Anchor CLI  │    │  - lib.rs        │    │  - Accounts     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Build & Test  │    │     Deploy      │    │   Integration   │
+│   - anchor build│    │  - anchor deploy │    │  - Web3.js      │
+│   - anchor test │    │  - solana deploy │    │  - Metaplex     │
+│   - localnet    │    │  - devnet/main   │    │  - TypeScript   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+solana-program/
+├── Anchor.toml              # Anchor workspace configuration
+├── Cargo.toml               # Rust workspace configuration  
+├── package.json             # Node.js dependencies (optional)
+├── programs/                # Solana programs
+│   └── my-program/
+│       ├── Cargo.toml       # Program dependencies
+│       └── src/
+│           ├── lib.rs       # Program entry point
+│           ├── instructions/# Instruction handlers
+│           │   ├── mod.rs
+│           │   ├── initialize.rs
+│           │   └── update.rs
+│           ├── state/       # Account structures
+│           │   ├── mod.rs
+│           │   └── user.rs
+│           └── errors.rs    # Custom error definitions
+├── tests/                   # Integration tests
+│   ├── my-program.ts        # TypeScript tests
+│   └── utils.ts             # Test utilities
+├── app/                     # Frontend application (optional)
+│   ├── src/
+│   │   ├── idl/             # Generated IDL files
+│   │   ├── components/      # React components
+│   │   └── utils/           # Web3 utilities
+│   └── package.json
+├── migrations/              # Deployment scripts
+│   └── deploy.ts
+└── target/                  # Build artifacts
+    ├── deploy/              # Deployable programs
+    ├── idl/                 # Interface Definition Language
+    └── types/               # Generated TypeScript types
+```
+
+## Core Implementation Patterns
+
+### Environment Setup
+
+```bash
+# ✅ DO: Install complete Solana development environment
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Install Solana CLI
+sh -c "$(curl -sSfL https://release.solana.com/v1.18.0/install)"
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+
+# Install Anchor CLI
+cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+avm install latest
+avm use latest
+
+# ✅ DO: Verify installations
+solana --version
+anchor --version
+rustc --version
+
+# ✅ DO: Configure Solana CLI for development
+solana config set --url localhost                    # For local development
+solana config set --url https://api.devnet.solana.com  # For devnet testing
+
+# ✅ DO: Generate or import keypair
+solana-keygen new --outfile ~/.config/solana/id.json
+solana config set --keypair ~/.config/solana/id.json
+
+# ❌ DON'T: Skip environment verification
+# ❌ DON'T: Use mainnet for development/testing
+```
+
+### Project Initialization
+
+```bash
+# ✅ DO: Initialize Anchor workspace properly
+anchor init my-solana-project --javascript  # With JS/TS integration
+anchor init my-solana-project --no-git     # Without git initialization
+
+# ✅ DO: Initialize with proper program name
+cd my-solana-project
+anchor new my-program                       # Add new program to workspace
+
+# ✅ DO: Configure Anchor.toml properly
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+my_program = "YourProgramIDHere..."
+
+[programs.devnet]
+my_program = "YourProgramIDHere..."
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+# ❌ DON'T: Initialize without proper configuration
+# ❌ DON'T: Skip program ID configuration
+```
+
+### Program Structure with Anchor
+
+```rust
+// ✅ DO: Comprehensive program structure
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+
+declare_id!("YourProgramIDHere...");
+
+#[program]
+pub mod my_program {
+    use super::*;
+
+    pub fn initialize(ctx: Context<Initialize>, data: u64) -> Result<()> {
+        let user_account = &mut ctx.accounts.user_account;
+        user_account.authority = ctx.accounts.user.key();
+        user_account.data = data;
+        user_account.bump = ctx.bumps.user_account;
+        
+        msg!("User account initialized with data: {}", data);
+        Ok(())
+    }
+
+    pub fn update(ctx: Context<Update>, new_data: u64) -> Result<()> {
+        let user_account = &mut ctx.accounts.user_account;
+        
+        require!(
+            user_account.authority == ctx.accounts.user.key(),
+            ErrorCode::Unauthorized
+        );
+        
+        user_account.data = new_data;
+        
+        emit!(DataUpdated {
+            user: user_account.authority,
+            old_data: user_account.data,
+            new_data,
+        });
+        
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = user,
+        space = UserAccount::LEN,
+        seeds = [b"user", user.key().as_ref()],
+        bump
+    )]
+    pub user_account: Account<'info, UserAccount>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Update<'info> {
+    pub user: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"user", user.key().as_ref()],
+        bump = user_account.bump,
+        has_one = authority @ ErrorCode::Unauthorized
+    )]
+    pub user_account: Account<'info, UserAccount>,
+}
+
+#[account]
+pub struct UserAccount {
+    pub authority: Pubkey,
+    pub data: u64,
+    pub bump: u8,
+}
+
+impl UserAccount {
+    pub const LEN: usize = 8 + 32 + 8 + 1; // discriminator + pubkey + u64 + u8
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("You are not authorized to perform this action.")]
+    Unauthorized,
+    #[msg("Invalid data provided.")]
+    InvalidData,
+}
+
+#[event]
+pub struct DataUpdated {
+    pub user: Pubkey,
+    pub old_data: u64,
+    pub new_data: u64,
+}
+
+// ❌ DON'T: Use minimal account validation
+#[derive(Accounts)]
+pub struct BadInitialize<'info> {
+    pub user: Signer<'info>,
+    #[account(init, payer = user)]  // Missing space, seeds, validation
+    pub user_account: Account<'info, UserAccount>,
+    pub system_program: Program<'info, System>,
+}
+```
+
+### Advanced Account Patterns
+
+```rust
+// ✅ DO: Implement comprehensive account security
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Mint};
+
+#[derive(Accounts)]
+#[instruction(bump: u8)]
+pub struct SecureTransfer<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"vault", mint.key().as_ref()],
+        bump,
+        constraint = vault.owner == program_id,
+        constraint = vault.mint == mint.key(),
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    
+    #[account(
+        mut,
+        constraint = user_token_account.owner == authority.key(),
+        constraint = user_token_account.mint == mint.key(),
+    )]
+    pub user_token_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        constraint = mint.decimals == 9,
+        constraint = mint.supply > 0,
+    )]
+    pub mint: Account<'info, Mint>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+// ✅ DO: Implement proper space calculation
+#[account]
+pub struct UserProfile {
+    pub authority: Pubkey,          // 32 bytes
+    pub username: String,           // 4 + max_len bytes
+    pub level: u32,                 // 4 bytes  
+    pub experience: u64,            // 8 bytes
+    pub achievements: Vec<u8>,      // 4 + max_len bytes
+    pub created_at: i64,            // 8 bytes
+    pub updated_at: i64,            // 8 bytes
+}
+
+impl UserProfile {
+    pub const MAX_USERNAME_LEN: usize = 32;
+    pub const MAX_ACHIEVEMENTS_LEN: usize = 100;
+    
+    pub const LEN: usize = 8 +          // discriminator
+        32 +                            // authority
+        4 + Self::MAX_USERNAME_LEN +    // username
+        4 +                             // level
+        8 +                             // experience
+        4 + Self::MAX_ACHIEVEMENTS_LEN + // achievements
+        8 +                             // created_at
+        8;                              // updated_at
+}
+
+// ❌ DON'T: Use imprecise space calculations
+#[account]
+pub struct BadUserProfile {
+    pub authority: Pubkey,
+    pub username: String,    // Variable length without limits
+    pub data: Vec<u8>,       // Unbounded vector
+}
+
+impl BadUserProfile {
+    pub const LEN: usize = 100; // Arbitrary, likely insufficient
+}
+```
+
+### Error Handling and Security
+
+```rust
+// ✅ DO: Implement comprehensive error handling
+#[error_code]
+pub enum MyProgramError {
+    #[msg("Insufficient funds for this operation")]
+    InsufficientFunds,
+    #[msg("Invalid amount: must be greater than zero")]
+    InvalidAmount,
+    #[msg("User account not found or not initialized")]
+    AccountNotFound,
+    #[msg("Unauthorized: signer does not match account authority")]
+    Unauthorized,
+    #[msg("Arithmetic overflow in calculation")]
+    ArithmeticOverflow,
+    #[msg("Invalid timestamp: cannot be in the future")]
+    InvalidTimestamp,
+    #[msg("Account already initialized")]
+    AlreadyInitialized,
+    #[msg("Invalid mint for this operation")]
+    InvalidMint,
+}
+
+// ✅ DO: Implement proper validation and security checks
+pub fn secure_transfer(
+    ctx: Context<SecureTransfer>,
+    amount: u64,
+) -> Result<()> {
+    // Input validation
+    require!(amount > 0, MyProgramError::InvalidAmount);
+    
+    // Authority validation
+    require!(
+        ctx.accounts.vault.owner == ctx.program_id,
+        MyProgramError::Unauthorized
+    );
+    
+    // Balance validation
+    require!(
+        ctx.accounts.vault.amount >= amount,
+        MyProgramError::InsufficientFunds
+    );
+    
+    // Arithmetic safety
+    let new_balance = ctx.accounts.vault.amount
+        .checked_sub(amount)
+        .ok_or(MyProgramError::ArithmeticOverflow)?;
+        
+    // Perform transfer using CPI
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        Transfer {
+            from: ctx.accounts.vault.to_account_info(),
+            to: ctx.accounts.user_token_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        },
+    );
+    
+    token::transfer(cpi_ctx, amount)?;
+    
+    msg!("Transferred {} tokens", amount);
+    Ok(())
+}
+
+// ❌ DON'T: Skip validation and error handling
+pub fn insecure_transfer(ctx: Context<SecureTransfer>, amount: u64) -> Result<()> {
+    // No validation, no error handling
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        Transfer {
+            from: ctx.accounts.vault.to_account_info(),
+            to: ctx.accounts.user_token_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        },
+    );
+    token::transfer(cpi_ctx, amount)?;
+    Ok(())
+}
+```
+
+## Testing Patterns
+
+### Comprehensive Testing Setup
+
+```typescript
+// ✅ DO: Set up comprehensive test environment
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import { createMint, createAccount, mintTo, getAccount } from "@solana/spl-token";
+import { expect } from "chai";
+import { MyProgram } from "../target/types/my_program";
+
+describe("MyProgram", () => {
+    // Configure the client to use the local cluster
+    const provider = anchor.AnchorProvider.env();
+    anchor.setProvider(provider);
+
+    const program = anchor.workspace.MyProgram as Program<MyProgram>;
+    const connection = provider.connection;
+    const wallet = provider.wallet;
+
+    let mint: PublicKey;
+    let userTokenAccount: PublicKey;
+    let vault: PublicKey;
+    let user: Keypair;
+    let userAccount: PublicKey;
+
+    before(async () => {
+        // Setup test accounts and mint
+        user = Keypair.generate();
+        
+        // Airdrop SOL to user
+        const signature = await connection.requestAirdrop(
+            user.publicKey,
+            2 * anchor.web3.LAMPORTS_PER_SOL
+        );
+        await connection.confirmTransaction(signature);
+
+        // Create mint
+        mint = await createMint(
+            connection,
+            user,
+            user.publicKey,
+            null,
+            9
+        );
+
+        // Create user token account
+        userTokenAccount = await createAccount(
+            connection,
+            user,
+            mint,
+            user.publicKey
+        );
+
+        // Mint tokens to user
+        await mintTo(
+            connection,
+            user,
+            mint,
+            userTokenAccount,
+            user.publicKey,
+            1000 * 10**9
+        );
+
+        // Derive PDAs
+        [userAccount] = PublicKey.findProgramAddressSync(
+            [Buffer.from("user"), user.publicKey.toBuffer()],
+            program.programId
+        );
+
+        [vault] = PublicKey.findProgramAddressSync(
+            [Buffer.from("vault"), mint.toBuffer()],
+            program.programId
+        );
+    });
+
+    describe("initialize", () => {
+        it("should initialize user account successfully", async () => {
+            const data = new anchor.BN(42);
+
+            const tx = await program.methods
+                .initialize(data)
+                .accounts({
+                    user: user.publicKey,
+                    userAccount,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([user])
+                .rpc();
+
+            console.log("Initialize transaction signature:", tx);
+
+            // Verify account was created correctly
+            const account = await program.account.userAccount.fetch(userAccount);
+            expect(account.authority.toString()).to.equal(user.publicKey.toString());
+            expect(account.data.toString()).to.equal(data.toString());
+        });
+
+        it("should fail to initialize twice", async () => {
+            try {
+                await program.methods
+                    .initialize(new anchor.BN(100))
+                    .accounts({
+                        user: user.publicKey,
+                        userAccount,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .signers([user])
+                    .rpc();
+                
+                expect.fail("Should have failed");
+            } catch (err) {
+                expect(err.message).to.include("already in use");
+            }
+        });
+    });
+
+    describe("update", () => {
+        it("should update data successfully", async () => {
+            const newData = new anchor.BN(99);
+
+            await program.methods
+                .update(newData)
+                .accounts({
+                    user: user.publicKey,
+                    userAccount,
+                })
+                .signers([user])
+                .rpc();
+
+            const account = await program.account.userAccount.fetch(userAccount);
+            expect(account.data.toString()).to.equal(newData.toString());
+        });
+
+        it("should fail with unauthorized user", async () => {
+            const unauthorizedUser = Keypair.generate();
+            
+            // Airdrop SOL to unauthorized user
+            const signature = await connection.requestAirdrop(
+                unauthorizedUser.publicKey,
+                anchor.web3.LAMPORTS_PER_SOL
+            );
+            await connection.confirmTransaction(signature);
+
+            try {
+                await program.methods
+                    .update(new anchor.BN(999))
+                    .accounts({
+                        user: unauthorizedUser.publicKey,
+                        userAccount,
+                    })
+                    .signers([unauthorizedUser])
+                    .rpc();
+                
+                expect.fail("Should have failed");
+            } catch (err) {
+                expect(err.message).to.include("Unauthorized");
+            }
+        });
+    });
+});
+
+// ❌ DON'T: Write insufficient tests
+describe("Bad Tests", () => {
+    it("should work", async () => {
+        // No setup, no comprehensive testing
+        const tx = await program.methods.initialize(new anchor.BN(1)).rpc();
+        expect(tx).to.be.a("string");
+    });
+});
+```
+
+### Performance and Load Testing
+
+```typescript
+// ✅ DO: Implement performance testing
+describe("Performance Tests", () => {
+    it("should handle multiple concurrent transactions", async () => {
+        const users = Array.from({ length: 10 }, () => Keypair.generate());
+        
+        // Airdrop to all users
+        const airdropPromises = users.map(user => 
+            connection.requestAirdrop(user.publicKey, anchor.web3.LAMPORTS_PER_SOL)
+        );
+        await Promise.all(airdropPromises);
+
+        // Wait for confirmations
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Initialize accounts concurrently
+        const initializePromises = users.map(async (user, index) => {
+            const [userAccount] = PublicKey.findProgramAddressSync(
+                [Buffer.from("user"), user.publicKey.toBuffer()],
+                program.programId
+            );
+
+            return program.methods
+                .initialize(new anchor.BN(index))
+                .accounts({
+                    user: user.publicKey,
+                    userAccount,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([user])
+                .rpc();
+        });
+
+        const startTime = Date.now();
+        const transactions = await Promise.all(initializePromises);
+        const endTime = Date.now();
+
+        console.log(`Processed ${transactions.length} transactions in ${endTime - startTime}ms`);
+        expect(transactions).to.have.lengthOf(users.length);
+        transactions.forEach(tx => expect(tx).to.be.a("string"));
+    });
+
+    it("should handle large data efficiently", async () => {
+        const largeData = new anchor.BN("999999999999999999");
+        
+        const startTime = Date.now();
+        await program.methods
+            .update(largeData)
+            .accounts({
+                user: user.publicKey,
+                userAccount,
+            })
+            .signers([user])
+            .rpc();
+        const endTime = Date.now();
+
+        console.log(`Large data update took ${endTime - startTime}ms`);
+        expect(endTime - startTime).to.be.lessThan(5000); // Should complete in under 5 seconds
+    });
+});
+```
+
+## Web3.js Integration
+
+### Client-Side Integration Patterns
+
+```typescript
+// ✅ DO: Implement robust client-side integration
+import { Connection, PublicKey, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { Program, AnchorProvider, web3, BN } from "@coral-xyz/anchor";
+import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
+import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
+
+class SolanaService {
+    private connection: Connection;
+    private provider: AnchorProvider;
+    private program: Program;
+    private wallet: PhantomWalletAdapter;
+
+    constructor(network: WalletAdapterNetwork = WalletAdapterNetwork.Devnet) {
+        // Initialize connection
+        this.connection = new Connection(
+            this.getClusterUrl(network),
+            { commitment: "confirmed", confirmTransactionInitialTimeout: 60000 }
+        );
+
+        // Initialize wallet
+        this.wallet = new PhantomWalletAdapter();
+        
+        // Initialize provider
+        this.provider = new AnchorProvider(
+            this.connection,
+            this.wallet,
+            { commitment: "confirmed" }
+        );
+
+        // Initialize program (you'll need to load the IDL)
+        this.program = new Program(IDL, PROGRAM_ID, this.provider);
+    }
+
+    private getClusterUrl(network: WalletAdapterNetwork): string {
+        switch (network) {
+            case WalletAdapterNetwork.Mainnet:
+                return "https://api.mainnet-beta.solana.com";
+            case WalletAdapterNetwork.Devnet:
+                return "https://api.devnet.solana.com";
+            case WalletAdapterNetwork.Testnet:
+                return "https://api.testnet.solana.com";
+            default:
+                return "http://127.0.0.1:8899";
+        }
+    }
+
+    async connectWallet(): Promise<void> {
+        try {
+            await this.wallet.connect();
+            console.log("Wallet connected:", this.wallet.publicKey?.toString());
+        } catch (error) {
+            console.error("Failed to connect wallet:", error);
+            throw error;
+        }
+    }
+
+    async initializeUser(data: number): Promise<string> {
+        if (!this.wallet.publicKey) {
+            throw new Error("Wallet not connected");
+        }
+
+        try {
+            const [userAccount] = PublicKey.findProgramAddressSync(
+                [Buffer.from("user"), this.wallet.publicKey.toBuffer()],
+                this.program.programId
+            );
+
+            const tx = await this.program.methods
+                .initialize(new BN(data))
+                .accounts({
+                    user: this.wallet.publicKey,
+                    userAccount,
+                    systemProgram: web3.SystemProgram.programId,
+                })
+                .transaction();
+
+            const signature = await this.wallet.sendTransaction(tx, this.connection);
+            await this.connection.confirmTransaction(signature, "confirmed");
+
+            return signature;
+        } catch (error) {
+            console.error("Failed to initialize user:", error);
+            throw error;
+        }
+    }
+
+    async getUserAccount(): Promise<any> {
+        if (!this.wallet.publicKey) {
+            throw new Error("Wallet not connected");
+        }
+
+        try {
+            const [userAccount] = PublicKey.findProgramAddressSync(
+                [Buffer.from("user"), this.wallet.publicKey.toBuffer()],
+                this.program.programId
+            );
+
+            return await this.program.account.userAccount.fetch(userAccount);
+        } catch (error) {
+            console.error("Failed to fetch user account:", error);
+            return null;
+        }
+    }
+
+    async updateUser(newData: number): Promise<string> {
+        if (!this.wallet.publicKey) {
+            throw new Error("Wallet not connected");
+        }
+
+        try {
+            const [userAccount] = PublicKey.findProgramAddressSync(
+                [Buffer.from("user"), this.wallet.publicKey.toBuffer()],
+                this.program.programId
+            );
+
+            const tx = await this.program.methods
+                .update(new BN(newData))
+                .accounts({
+                    user: this.wallet.publicKey,
+                    userAccount,
+                })
+                .transaction();
+
+            const signature = await this.wallet.sendTransaction(tx, this.connection);
+            await this.connection.confirmTransaction(signature, "confirmed");
+
+            return signature;
+        } catch (error) {
+            console.error("Failed to update user:", error);
+            throw error;
+        }
+    }
+
+    // ✅ DO: Implement proper error handling and retry logic
+    async sendTransactionWithRetry(
+        transaction: Transaction,
+        maxRetries: number = 3
+    ): Promise<string> {
+        let lastError: Error;
+
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const signature = await this.wallet.sendTransaction(transaction, this.connection);
+                await this.connection.confirmTransaction(signature, "confirmed");
+                return signature;
+            } catch (error) {
+                lastError = error as Error;
+                console.warn(`Transaction attempt ${i + 1} failed:`, error);
+                
+                if (i < maxRetries - 1) {
+                    // Wait before retry
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                }
+            }
+        }
+
+        throw lastError;
+    }
+}
+
+// ❌ DON'T: Use minimal error handling
+class BadSolanaService {
+    async initializeUser(data: number): Promise<string> {
+        // No error handling, no connection verification
+        const tx = await this.program.methods.initialize(new BN(data)).rpc();
+        return tx;
+    }
+}
+```
+
+## Deployment and CI/CD
+
+### Deployment Scripts
+
+```typescript
+// ✅ DO: Implement comprehensive deployment
+import * as anchor from "@coral-xyz/anchor";
+import { PublicKey } from "@solana/web3.js";
+import fs from "fs";
+
+async function deployProgram() {
+    // Set up provider
+    const provider = anchor.AnchorProvider.env();
+    anchor.setProvider(provider);
+
+    console.log("Deploying to cluster:", provider.connection.rpcEndpoint);
+    console.log("Deploying with wallet:", provider.wallet.publicKey.toString());
+
+    try {
+        // Check wallet balance
+        const balance = await provider.connection.getBalance(provider.wallet.publicKey);
+        console.log("Wallet balance:", balance / anchor.web3.LAMPORTS_PER_SOL, "SOL");
+
+        if (balance < anchor.web3.LAMPORTS_PER_SOL) {
+            throw new Error("Insufficient SOL balance for deployment");
+        }
+
+        // Deploy program
+        console.log("Building program...");
+        const buildResult = await anchor.workspace.build();
+        
+        console.log("Deploying program...");
+        const programId = await anchor.workspace.deploy();
+        
+        console.log("Program deployed successfully!");
+        console.log("Program ID:", programId.toString());
+
+        // Update Anchor.toml with new program ID
+        const anchorToml = fs.readFileSync("Anchor.toml", "utf8");
+        const updatedToml = anchorToml.replace(
+            /my_program = ".*"/,
+            `my_program = "${programId.toString()}"`
+        );
+        fs.writeFileSync("Anchor.toml", updatedToml);
+
+        // Generate IDL
+        console.log("Generating IDL...");
+        await anchor.workspace.generateIdl();
+
+        console.log("Deployment completed successfully!");
+        return programId;
+
+    } catch (error) {
+        console.error("Deployment failed:", error);
+        throw error;
+    }
+}
+
+// ✅ DO: Implement environment-specific deployment
+async function deployToEnvironment(environment: "localnet" | "devnet" | "mainnet") {
+    const configs = {
+        localnet: {
+            url: "http://127.0.0.1:8899",
+            keyPath: "~/.config/solana/id.json"
+        },
+        devnet: {
+            url: "https://api.devnet.solana.com",
+            keyPath: "~/.config/solana/devnet.json"
+        },
+        mainnet: {
+            url: "https://api.mainnet-beta.solana.com",
+            keyPath: "~/.config/solana/mainnet.json"
+        }
+    };
+
+    const config = configs[environment];
+    
+    // Set Solana config
+    process.env.ANCHOR_PROVIDER_URL = config.url;
+    process.env.ANCHOR_WALLET = config.keyPath;
+
+    console.log(`Deploying to ${environment}...`);
+    const programId = await deployProgram();
+    
+    // Save deployment info
+    const deploymentInfo = {
+        environment,
+        programId: programId.toString(),
+        deployedAt: new Date().toISOString(),
+        cluster: config.url
+    };
+
+    fs.writeFileSync(
+        `deployments/${environment}.json`,
+        JSON.stringify(deploymentInfo, null, 2)
+    );
+
+    return programId;
+}
+
+// Run deployment
+if (require.main === module) {
+    const environment = process.argv[2] as "localnet" | "devnet" | "mainnet";
+    if (!environment) {
+        console.error("Usage: ts-node deploy.ts <localnet|devnet|mainnet>");
+        process.exit(1);
+    }
+
+    deployToEnvironment(environment)
+        .then(() => console.log("Deployment successful"))
+        .catch(error => {
+            console.error("Deployment failed:", error);
+            process.exit(1);
+        });
+}
+```
+
+### GitHub Actions CI/CD
+
+```yaml
+# ✅ DO: Implement comprehensive CI/CD pipeline
+name: Solana Program CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  SOLANA_VERSION: 1.18.0
+  ANCHOR_VERSION: 0.29.0
+  NODE_VERSION: 18
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache Solana Tools
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/solana/
+            ~/.local/share/solana/
+          key: solana-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.solana.com/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
+
+      - name: Setup Solana Keypair
+        run: |
+          mkdir -p ~/.config/solana
+          echo "${{ secrets.SOLANA_KEYPAIR }}" > ~/.config/solana/id.json
+          solana config set --keypair ~/.config/solana/id.json
+          solana config set --url localhost
+
+      - name: Start Local Validator
+        run: |
+          solana-test-validator --detach
+
+      - name: Build Program
+        run: anchor build
+
+      - name: Run Tests
+        run: anchor test --skip-local-validator
+
+      - name: Run Linting
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+          yarn lint
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run Security Audit
+        run: cargo audit
+
+      - name: Run Solana Security Scanner
+        run: |
+          # Add custom security scanning tools
+          echo "Running security checks..."
+
+  deploy-devnet:
+    needs: [lint-and-test, security-audit]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup deployment environment
+        # Similar setup steps as above
+
+      - name: Deploy to Devnet
+        run: |
+          solana config set --url https://api.devnet.solana.com
+          anchor deploy --provider.cluster devnet
+        env:
+          ANCHOR_WALLET: ~/.config/solana/id.json
+
+  deploy-mainnet:
+    needs: [lint-and-test, security-audit]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup production environment
+        # Setup with production keypairs and configurations
+
+      - name: Deploy to Mainnet
+        run: |
+          solana config set --url https://api.mainnet-beta.solana.com
+          anchor deploy --provider.cluster mainnet
+        env:
+          ANCHOR_WALLET: ~/.config/solana/mainnet.json
+```
+
+## Security Best Practices
+
+### Security Checklist
+
+```rust
+// ✅ DO: Implement comprehensive security measures
+
+// 1. Input Validation
+pub fn secure_function(ctx: Context<SecureContext>, amount: u64) -> Result<()> {
+    // Validate input ranges
+    require!(amount > 0, ErrorCode::InvalidAmount);
+    require!(amount <= MAX_AMOUNT, ErrorCode::AmountTooLarge);
+    
+    // Validate account ownership
+    require!(
+        ctx.accounts.user_account.authority == ctx.accounts.user.key(),
+        ErrorCode::Unauthorized
+    );
+    
+    // Validate account state
+    require!(
+        ctx.accounts.user_account.is_initialized,
+        ErrorCode::AccountNotInitialized
+    );
+    
+    Ok(())
+}
+
+// 2. Arithmetic Safety
+pub fn safe_arithmetic(a: u64, b: u64) -> Result<u64> {
+    a.checked_add(b).ok_or(ErrorCode::ArithmeticOverflow.into())
+}
+
+// 3. PDA Validation
+#[derive(Accounts)]
+pub struct SecureContext<'info> {
+    #[account(
+        mut,
+        seeds = [b"user", user.key().as_ref()],
+        bump,
+        constraint = user_account.authority == user.key() @ ErrorCode::Unauthorized
+    )]
+    pub user_account: Account<'info, UserAccount>,
+    
+    pub user: Signer<'info>,
+}
+
+// 4. Access Control
+#[access_control(is_admin(&ctx.accounts.authority))]
+pub fn admin_only_function(ctx: Context<AdminContext>) -> Result<()> {
+    // Function implementation
+    Ok(())
+}
+
+fn is_admin(authority: &Signer) -> Result<()> {
+    require!(
+        authority.key() == ADMIN_PUBKEY,
+        ErrorCode::NotAdmin
+    );
+    Ok(())
+}
+
+// 5. Reentrancy Protection
+pub fn protected_function(ctx: Context<ProtectedContext>) -> Result<()> {
+    let account = &mut ctx.accounts.user_account;
+    
+    require!(!account.is_locked, ErrorCode::ReentrancyDetected);
+    account.is_locked = true;
+    
+    // Perform operations...
+    
+    account.is_locked = false;
+    Ok(())
+}
+
+// ❌ DON'T: Skip security validations
+pub fn insecure_function(ctx: Context<InsecureContext>, amount: u64) -> Result<()> {
+    // No input validation
+    // No ownership checks
+    // No arithmetic safety
+    let result = amount + 1000000; // Potential overflow
+    Ok(())
+}
+```
+
+### Audit Preparation
+
+```rust
+// ✅ DO: Prepare for security audits
+#![deny(warnings)]
+#![deny(unused)]
+#![deny(missing_docs)]
+
+//! # My Solana Program
+//! 
+//! This program implements secure token operations with comprehensive
+//! validation and error handling.
+//! 
+//! ## Security Considerations
+//! 
+//! - All arithmetic operations use checked methods
+//! - Account ownership is validated for all operations
+//! - PDAs are properly validated with seeds and bumps
+//! - Access control is implemented for privileged functions
+
+use anchor_lang::prelude::*;
+
+declare_id!("YourProgramIDHere...");
+
+/// Main program module containing all instruction handlers
+#[program]
+pub mod my_program {
+    use super::*;
+    
+    /// Initialize a new user account
+    /// 
+    /// # Security
+    /// - Validates signer authority
+    /// - Uses PDA for deterministic account creation
+    /// - Proper space allocation to prevent account size attacks
+    pub fn initialize(ctx: Context<Initialize>, data: u64) -> Result<()> {
+        // Implementation with full documentation
+        Ok(())
+    }
+}
+
+/// Account validation for initialize instruction
+/// 
+/// # Security Notes
+/// - Uses PDA seeds for account derivation
+/// - Validates payer has sufficient funds
+/// - Proper space calculation prevents overflow
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    /// User authority that will own the account
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    /// User account to be created
+    /// 
+    /// Seeds: ["user", user.pubkey]
+    /// Space: Calculated based on UserAccount struct
+    #[account(
+        init,
+        payer = user,
+        space = UserAccount::LEN,
+        seeds = [b"user", user.key().as_ref()],
+        bump
+    )]
+    pub user_account: Account<'info, UserAccount>,
+    
+    pub system_program: Program<'info, System>,
+}
+```
+
+## Best Practices Summary
+
+### Code Organization
+- Use modular instruction structure with separate files
+- Implement comprehensive error handling with custom error types
+- Use proper account validation with constraints and seeds
+- Document all functions and security considerations
+
+### Performance
+- Optimize account space calculations
+- Use efficient data structures
+- Implement proper caching for client applications
+- Monitor transaction costs and optimize accordingly
+
+### Security
+- Validate all inputs and account ownership
+- Use checked arithmetic operations
+- Implement proper access control
+- Prepare comprehensive documentation for audits
+
+### Testing
+- Write unit tests for all instructions
+- Include integration tests with real transaction flows
+- Test error conditions and edge cases
+- Implement performance and load testing
+
+### Deployment
+- Use environment-specific configurations
+- Implement automated CI/CD pipelines
+- Monitor deployed programs for security issues
+- Maintain proper versioning and upgrade paths
+
+## References
+- [Solana Documentation](mdc:https:/docs.solana.com)
+- [Anchor Framework](mdc:https:/www.anchor-lang.com)
+- [Solana Web3.js](mdc:https:/solana-labs.github.io/solana-web3.js)
+- [Metaplex Documentation](mdc:https:/docs.metaplex.com)
+- [Solana Security Best Practices](mdc:https:/github.com/coral-xyz/sealevel-attacks)
+- [Rust Programming Language](mdc:https:/doc.rust-lang.org/book)

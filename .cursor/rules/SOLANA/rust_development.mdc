@@ -1,0 +1,1004 @@
+---
+description: Rust programming language for web3 and solana
+globs: 
+alwaysApply: false
+---
+> You are an expert in Rust programming language, focusing on safe, efficient, and maintainable code. You emphasize Rust's ownership system, memory safety, and performance characteristics while following modern Rust idioms and best practices.
+
+## Rust Development Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Project Setup │    │  Dependency Mgmt │    │  Development    │
+│   - cargo init  │───▶│  - Cargo.toml    │───▶│  - src/lib.rs   │
+│   - workspace   │    │  - cargo add     │    │  - modules      │
+│   - edition     │    │  - features      │    │  - traits       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Build & Test   │    │   Documentation  │    │   Distribution  │
+│  - cargo build  │    │  - cargo doc     │    │  - cargo publish│
+│  - cargo test   │    │  - examples/     │    │  - crates.io    │
+│  - cargo bench  │    │  - rustdoc       │    │  - versioning   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+rust-project/
+├── Cargo.toml               # Project manifest
+├── Cargo.lock               # Dependency lockfile
+├── src/
+│   ├── lib.rs               # Library root (for libraries)
+│   ├── main.rs              # Binary root (for binaries)
+│   ├── bin/                 # Additional binaries
+│   │   └── my-tool.rs
+│   └── modules/
+│       ├── mod.rs           # Module declarations
+│       ├── core.rs          # Core functionality
+│       ├── utils.rs         # Utility functions
+│       └── types.rs         # Type definitions
+├── tests/                   # Integration tests
+│   ├── common/
+│   │   └── mod.rs           # Common test utilities
+│   ├── integration_test.rs
+│   └── performance_test.rs
+├── benches/                 # Benchmarks
+│   └── benchmark.rs
+├── examples/                # Example usage
+│   └── basic_usage.rs
+├── docs/                    # Additional documentation
+│   └── guide.md
+├── target/                  # Build artifacts (gitignored)
+└── README.md
+```
+
+## Core Implementation Patterns
+
+### Project Setup and Configuration
+
+```toml
+# ✅ DO: Comprehensive Cargo.toml configuration
+[package]
+name = "my-rust-project"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT OR Apache-2.0"
+description = "A comprehensive Rust project with proper configuration"
+homepage = "https://github.com/username/my-rust-project"
+repository = "https://github.com/username/my-rust-project"
+readme = "README.md"
+keywords = ["rust", "example", "library"]
+categories = ["development-tools"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.0"
+tokio-test = "0.4"
+
+[features]
+default = ["std"]
+std = []
+async = ["tokio"]
+
+[[bin]]
+name = "my-tool"
+path = "src/bin/my-tool.rs"
+
+[[bench]]
+name = "performance"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+# ❌ DON'T: Use minimal configuration
+[package]
+name = "project"
+version = "0.1.0"
+edition = "2021"
+# Missing essential metadata
+```
+
+### Error Handling Patterns
+
+```rust
+// ✅ DO: Comprehensive error handling with thiserror
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum MyError {
+    #[error("IO operation failed")]
+    Io(#[from] std::io::Error),
+    
+    #[error("Parse error: {message}")]
+    Parse { message: String },
+    
+    #[error("Validation failed: {field} is invalid")]
+    Validation { field: String },
+    
+    #[error("Network error: {0}")]
+    Network(String),
+    
+    #[error("Configuration error: {source}")]
+    Config {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+pub type Result<T> = std::result::Result<T, MyError>;
+
+// ✅ DO: Implement proper error conversion
+impl From<serde_json::Error> for MyError {
+    fn from(err: serde_json::Error) -> Self {
+        MyError::Parse {
+            message: err.to_string(),
+        }
+    }
+}
+
+// ✅ DO: Use Result types consistently
+pub fn parse_config(path: &str) -> Result<Config> {
+    let content = std::fs::read_to_string(path)
+        .map_err(MyError::Io)?;
+    
+    let config: Config = serde_json::from_str(&content)?;
+    
+    if config.validate() {
+        Ok(config)
+    } else {
+        Err(MyError::Validation {
+            field: "configuration".to_string(),
+        })
+    }
+}
+
+// ❌ DON'T: Use panic or unwrap in library code
+pub fn bad_parse_config(path: &str) -> Config {
+    let content = std::fs::read_to_string(path).unwrap(); // Can panic
+    serde_json::from_str(&content).expect("Failed to parse") // Can panic
+}
+```
+
+### Memory Management and Ownership
+
+```rust
+// ✅ DO: Use proper ownership patterns
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub struct DataStore {
+    data: HashMap<String, String>,
+}
+
+impl DataStore {
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+    
+    // ✅ DO: Take ownership when you need to consume the value
+    pub fn insert_owned(mut self, key: String, value: String) -> Self {
+        self.data.insert(key, value);
+        self
+    }
+    
+    // ✅ DO: Borrow when you only need to read
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
+    }
+    
+    // ✅ DO: Take mutable reference when you need to modify
+    pub fn insert(&mut self, key: String, value: String) {
+        self.data.insert(key, value);
+    }
+    
+    // ✅ DO: Return borrowed data when possible
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.data.keys()
+    }
+    
+    // ✅ DO: Use Arc for shared ownership across threads
+    pub fn to_shared(self) -> Arc<Self> {
+        Arc::new(self)
+    }
+}
+
+// ✅ DO: Implement proper Clone when needed
+impl Clone for DataStore {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+        }
+    }
+}
+
+// ✅ DO: Use lifetimes for borrowed data structures
+pub struct DataProcessor<'a> {
+    store: &'a DataStore,
+    cache: HashMap<&'a str, String>,
+}
+
+impl<'a> DataProcessor<'a> {
+    pub fn new(store: &'a DataStore) -> Self {
+        Self {
+            store,
+            cache: HashMap::new(),
+        }
+    }
+    
+    pub fn process(&mut self, key: &'a str) -> Option<String> {
+        if let Some(cached) = self.cache.get(key) {
+            return Some(cached.clone());
+        }
+        
+        if let Some(value) = self.store.get(key) {
+            let processed = value.to_uppercase();
+            self.cache.insert(key, processed.clone());
+            Some(processed)
+        } else {
+            None
+        }
+    }
+}
+
+// ❌ DON'T: Use unnecessary clones or allocations
+pub fn bad_process_data(store: &DataStore, key: &str) -> String {
+    // Unnecessary clones and allocations
+    let all_data = store.data.clone(); // Clones entire HashMap
+    let value = all_data.get(key).unwrap().clone(); // Unnecessary clone
+    format!("{}", value) // Unnecessary format
+}
+```
+
+### Async Programming Patterns
+
+```rust
+// ✅ DO: Implement comprehensive async patterns
+use std::time::Duration;
+use tokio::time::{sleep, timeout};
+use futures::stream::{self, StreamExt};
+
+pub struct AsyncService {
+    client: reqwest::Client,
+    base_url: String,
+}
+
+impl AsyncService {
+    pub fn new(base_url: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url,
+        }
+    }
+    
+    // ✅ DO: Use proper async error handling
+    pub async fn fetch_data(&self, endpoint: &str) -> Result<String> {
+        let url = format!("{}/{}", self.base_url, endpoint);
+        
+        let response = timeout(Duration::from_secs(30), self.client.get(&url).send())
+            .await
+            .map_err(|_| MyError::Network("Request timed out".to_string()))?
+            .map_err(|e| MyError::Network(e.to_string()))?;
+            
+        if response.status().is_success() {
+            response
+                .text()
+                .await
+                .map_err(|e| MyError::Network(e.to_string()))
+        } else {
+            Err(MyError::Network(format!(
+                "HTTP error: {}", 
+                response.status()
+            )))
+        }
+    }
+    
+    // ✅ DO: Use streams for processing large datasets
+    pub async fn process_batch(&self, items: Vec<String>) -> Result<Vec<String>> {
+        let results: Result<Vec<_>> = stream::iter(items)
+            .map(|item| async move {
+                self.fetch_data(&item).await
+            })
+            .buffer_unordered(10) // Process up to 10 items concurrently
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect();
+            
+        results
+    }
+    
+    // ✅ DO: Implement retry logic with backoff
+    pub async fn fetch_with_retry(&self, endpoint: &str, max_retries: u32) -> Result<String> {
+        let mut last_error = None;
+        
+        for attempt in 0..=max_retries {
+            match self.fetch_data(endpoint).await {
+                Ok(data) => return Ok(data),
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        let delay = Duration::from_millis(100 * 2_u64.pow(attempt));
+                        sleep(delay).await;
+                    }
+                }
+            }
+        }
+        
+        Err(last_error.unwrap())
+    }
+}
+
+// ✅ DO: Use async traits when needed
+#[async_trait::async_trait]
+pub trait AsyncDataProcessor {
+    async fn process(&self, data: &str) -> Result<String>;
+    async fn batch_process(&self, data: Vec<String>) -> Result<Vec<String>>;
+}
+
+#[async_trait::async_trait]
+impl AsyncDataProcessor for AsyncService {
+    async fn process(&self, data: &str) -> Result<String> {
+        self.fetch_data(data).await
+    }
+    
+    async fn batch_process(&self, data: Vec<String>) -> Result<Vec<String>> {
+        self.process_batch(data).await
+    }
+}
+
+// ❌ DON'T: Block async context or ignore timeouts
+pub async fn bad_async_operation() -> Result<String> {
+    // Blocking call in async context
+    std::thread::sleep(Duration::from_secs(5)); // DON'T DO THIS
+    
+    // No timeout handling
+    let response = reqwest::get("https://api.example.com/data").await?;
+    
+    Ok(response.text().await?)
+}
+```
+
+### Trait Design and Generics
+
+```rust
+// ✅ DO: Design flexible traits with associated types
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
+
+pub trait Repository<T> {
+    type Id: Debug + Clone + Hash + Eq;
+    type Error: std::error::Error + Send + Sync + 'static;
+    
+    fn find_by_id(&self, id: &Self::Id) -> Result<Option<T>, Self::Error>;
+    fn save(&mut self, entity: T) -> Result<Self::Id, Self::Error>;
+    fn delete(&mut self, id: &Self::Id) -> Result<bool, Self::Error>;
+    fn find_all(&self) -> Result<Vec<T>, Self::Error>;
+}
+
+// ✅ DO: Use proper trait bounds
+pub fn process_entities<T, R>(repository: &R, processor: impl Fn(&T) -> T) 
+where
+    T: Clone + Debug,
+    R: Repository<T>,
+    R::Error: Display,
+{
+    match repository.find_all() {
+        Ok(entities) => {
+            for entity in entities {
+                let processed = processor(&entity);
+                println!("Processed: {:?}", processed);
+            }
+        }
+        Err(e) => {
+            eprintln!("Repository error: {}", e);
+        }
+    }
+}
+
+// ✅ DO: Implement marker traits appropriately
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EntityId(pub u64);
+
+#[derive(Debug, Clone)]
+pub struct User {
+    pub id: EntityId,
+    pub name: String,
+    pub email: String,
+}
+
+// ✅ DO: Use custom derive when appropriate
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Config {
+    pub database_url: String,
+    pub port: u16,
+    pub debug: bool,
+}
+
+// ✅ DO: Implement Display for user-facing types
+impl Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ID({})", self.0)
+    }
+}
+
+// ✅ DO: Use type aliases for complex types
+pub type ProcessingResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub type AsyncHandler = Box<dyn Fn(&str) -> Result<String, MyError> + Send + Sync>;
+
+// ❌ DON'T: Overuse generics or create overly complex trait hierarchies
+pub trait BadOverGeneric<T, U, V, W, X, Y, Z> 
+where 
+    T: Clone + Debug + Send + Sync + 'static,
+    U: Display + Hash + Eq + PartialEq + Clone,
+    V: Into<String> + From<&'static str>,
+    // ... too many constraints
+{
+    // Overly complex trait definition
+}
+```
+
+### Testing Patterns
+
+```rust
+// ✅ DO: Comprehensive testing with proper organization
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    
+    // ✅ DO: Create test fixtures and utilities
+    fn create_test_store() -> DataStore {
+        let mut store = DataStore::new();
+        store.insert("key1".to_string(), "value1".to_string());
+        store.insert("key2".to_string(), "value2".to_string());
+        store
+    }
+    
+    // ✅ DO: Test normal operation
+    #[test]
+    fn test_data_store_get() {
+        let store = create_test_store();
+        assert_eq!(store.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(store.get("nonexistent"), None);
+    }
+    
+    // ✅ DO: Test edge cases
+    #[test]
+    fn test_data_store_empty() {
+        let store = DataStore::new();
+        assert_eq!(store.get("any_key"), None);
+        assert_eq!(store.keys().count(), 0);
+    }
+    
+    // ✅ DO: Test error conditions
+    #[test]
+    fn test_parse_config_invalid_path() {
+        let result = parse_config("nonexistent.json");
+        assert!(result.is_err());
+        
+        match result {
+            Err(MyError::Io(_)) => {}, // Expected error type
+            _ => panic!("Expected IO error"),
+        }
+    }
+    
+    // ✅ DO: Use property-based testing for complex logic
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+        
+        proptest! {
+            #[test]
+            fn test_data_store_insert_get(key: String, value: String) {
+                let mut store = DataStore::new();
+                store.insert(key.clone(), value.clone());
+                prop_assert_eq!(store.get(&key), Some(&value));
+            }
+            
+            #[test]
+            fn test_data_processor_idempotent(s in "\\PC*") {
+                let mut store = DataStore::new();
+                store.insert("test".to_string(), s.clone());
+                
+                let mut processor = DataProcessor::new(&store);
+                let result1 = processor.process("test");
+                let result2 = processor.process("test");
+                
+                prop_assert_eq!(result1, result2);
+            }
+        }
+    }
+}
+
+// ✅ DO: Async testing
+#[cfg(test)]
+mod async_tests {
+    use super::*;
+    use tokio_test;
+    
+    #[tokio::test]
+    async fn test_async_service_fetch() {
+        let service = AsyncService::new("https://httpbin.org".to_string());
+        
+        // Test successful request
+        let result = service.fetch_data("get").await;
+        assert!(result.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_async_service_timeout() {
+        let service = AsyncService::new("https://httpbin.org".to_string());
+        
+        // Test with a very slow endpoint (this should timeout)
+        let result = service.fetch_data("delay/35").await;
+        assert!(result.is_err());
+    }
+    
+    // ✅ DO: Test concurrent operations
+    #[tokio::test]
+    async fn test_concurrent_processing() {
+        let service = AsyncService::new("https://httpbin.org".to_string());
+        let items = vec!["get".to_string(), "json".to_string(), "headers".to_string()];
+        
+        let results = service.process_batch(items).await;
+        assert!(results.is_ok());
+        assert_eq!(results.unwrap().len(), 3);
+    }
+}
+
+// ✅ DO: Integration tests in separate files
+// tests/integration_test.rs
+#[cfg(test)]
+mod integration_tests {
+    use my_rust_project::*;
+    
+    #[test]
+    fn test_full_workflow() {
+        let mut store = DataStore::new();
+        store.insert("config".to_string(), r#"{"debug": true}"#.to_string());
+        
+        let processor = DataProcessor::new(&store);
+        // Test complete workflow
+    }
+}
+
+// ❌ DON'T: Write tests without proper assertions or setup
+#[test]
+fn bad_test() {
+    let store = DataStore::new();
+    store.get("key"); // No assertion, test doesn't verify anything
+}
+```
+
+### Documentation and Examples
+
+```rust
+//! # My Rust Project
+//! 
+//! This crate provides a comprehensive example of Rust best practices,
+//! including proper error handling, async programming, and testing.
+//! 
+//! ## Quick Start
+//! 
+//! ```rust
+//! use my_rust_project::{DataStore, DataProcessor};
+//! 
+//! let mut store = DataStore::new();
+//! store.insert("key".to_string(), "value".to_string());
+//! 
+//! let processor = DataProcessor::new(&store);
+//! let result = processor.process("key");
+//! ```
+//! 
+//! ## Features
+//! 
+//! - **Memory Safety**: Leverages Rust's ownership system
+//! - **Performance**: Zero-cost abstractions and efficient algorithms  
+//! - **Async Support**: Full async/await support with tokio
+//! - **Error Handling**: Comprehensive error types with thiserror
+
+/// A high-performance data store with string keys and values.
+/// 
+/// The `DataStore` provides efficient storage and retrieval of string data
+/// with a focus on memory safety and performance.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// use my_rust_project::DataStore;
+/// 
+/// let mut store = DataStore::new();
+/// store.insert("user:1".to_string(), "Alice".to_string());
+/// 
+/// assert_eq!(store.get("user:1"), Some(&"Alice".to_string()));
+/// ```
+/// 
+/// # Performance
+/// 
+/// Operations have the following time complexities:
+/// - `insert`: O(1) average case
+/// - `get`: O(1) average case  
+/// - `keys`: O(n) where n is the number of keys
+pub struct DataStore {
+    /// Internal storage using a hash map for O(1) operations
+    data: HashMap<String, String>,
+}
+
+impl DataStore {
+    /// Creates a new empty data store.
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use my_rust_project::DataStore;
+    /// 
+    /// let store = DataStore::new();
+    /// assert_eq!(store.keys().count(), 0);
+    /// ```
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+    
+    /// Retrieves a value by its key.
+    /// 
+    /// Returns `Some(&value)` if the key exists, `None` otherwise.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `key` - The key to look up
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use my_rust_project::DataStore;
+    /// 
+    /// let mut store = DataStore::new();
+    /// store.insert("key".to_string(), "value".to_string());
+    /// 
+    /// assert_eq!(store.get("key"), Some(&"value".to_string()));
+    /// assert_eq!(store.get("missing"), None);
+    /// ```
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
+    }
+}
+
+// ✅ DO: Provide comprehensive examples
+/// # Example: Building a Configuration System
+/// 
+/// ```rust
+/// use my_rust_project::{Config, parse_config, MyError};
+/// use std::fs::write;
+/// 
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a temporary config file
+/// let config_content = r#"
+/// {
+///     "database_url": "postgres://localhost/mydb",
+///     "port": 8080,
+///     "debug": true
+/// }
+/// "#;
+/// 
+/// write("config.json", config_content)?;
+/// 
+/// // Parse the configuration
+/// let config = parse_config("config.json")?;
+/// println!("Server will run on port: {}", config.port);
+/// 
+/// # std::fs::remove_file("config.json")?;
+/// # Ok(())
+/// # }
+/// ```
+
+// ❌ DON'T: Write minimal or unclear documentation
+/// Does something with data
+pub fn bad_function(data: &str) -> String {
+    // No examples, unclear purpose, no error information
+    data.to_uppercase()
+}
+```
+
+### Performance Optimization
+
+```rust
+// ✅ DO: Implement performance-conscious code
+use std::collections::HashMap;
+use std::sync::Arc;
+use parking_lot::RwLock; // Faster than std::sync::RwLock
+
+/// High-performance cache with concurrent access support
+pub struct PerformantCache<K, V> {
+    data: Arc<RwLock<HashMap<K, Arc<V>>>>,
+    max_size: usize,
+}
+
+impl<K, V> PerformantCache<K, V> 
+where 
+    K: Clone + Eq + std::hash::Hash,
+    V: Clone,
+{
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(HashMap::with_capacity(max_size))),
+            max_size,
+        }
+    }
+    
+    // ✅ DO: Use read locks for read operations
+    pub fn get(&self, key: &K) -> Option<Arc<V>> {
+        let data = self.data.read();
+        data.get(key).cloned()
+    }
+    
+    // ✅ DO: Minimize lock scope
+    pub fn insert(&self, key: K, value: V) -> Option<Arc<V>> {
+        let value = Arc::new(value);
+        let mut data = self.data.write();
+        
+        // Implement simple LRU eviction if needed
+        if data.len() >= self.max_size && !data.contains_key(&key) {
+            if let Some(first_key) = data.keys().next().cloned() {
+                data.remove(&first_key);
+            }
+        }
+        
+        data.insert(key, value.clone());
+        Some(value)
+    }
+    
+    // ✅ DO: Use efficient iteration patterns
+    pub fn retain<F>(&self, mut predicate: F) 
+    where 
+        F: FnMut(&K, &V) -> bool,
+    {
+        let mut data = self.data.write();
+        data.retain(|k, v| predicate(k, v));
+    }
+}
+
+// ✅ DO: Use zero-copy operations when possible
+pub fn process_lines_efficiently(input: &str) -> Vec<&str> {
+    input
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with('#'))
+        .collect()
+}
+
+// ✅ DO: Use iterators instead of collecting when possible
+pub fn count_valid_lines(input: &str) -> usize {
+    input
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with('#'))
+        .count() // No intermediate collection
+}
+
+// ✅ DO: Use const for compile-time constants
+pub const DEFAULT_BUFFER_SIZE: usize = 8192;
+pub const MAX_RETRIES: u32 = 3;
+
+// ✅ DO: Use appropriate data structures
+use indexmap::IndexMap; // Preserves insertion order
+use smallvec::SmallVec; // Stack-allocated for small collections
+
+pub type SmallStringVec = SmallVec<[String; 4]>; // Optimize for 4 or fewer items
+pub type OrderedMap<K, V> = IndexMap<K, V>;
+
+// ❌ DON'T: Use inefficient patterns
+pub fn inefficient_processing(data: Vec<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    
+    for item in data {
+        // Inefficient: multiple allocations and string operations
+        let processed = format!("{}", item.to_uppercase().trim());
+        result.push(processed);
+    }
+    
+    result
+}
+
+// ✅ DO: Efficient alternative
+pub fn efficient_processing(data: Vec<String>) -> Vec<String> {
+    data.into_iter()
+        .map(|mut item| {
+            item.make_ascii_uppercase(); // In-place modification
+            item.trim().to_string()      // Only allocate when necessary
+        })
+        .collect()
+}
+```
+
+### Security Best Practices
+
+```rust
+// ✅ DO: Implement secure coding practices
+use secrecy::{Secret, ExposeSecret};
+use zeroize::Zeroize;
+
+/// Secure configuration that protects sensitive data
+#[derive(Debug)]
+pub struct SecureConfig {
+    pub database_url: String,
+    pub api_key: Secret<String>,
+    pub encryption_key: Secret<Vec<u8>>,
+}
+
+impl SecureConfig {
+    /// Load configuration from environment variables securely
+    pub fn from_env() -> Result<Self> {
+        let database_url = std::env::var("DATABASE_URL")
+            .map_err(|_| MyError::Config { 
+                source: "DATABASE_URL not set".into() 
+            })?;
+            
+        let api_key = std::env::var("API_KEY")
+            .map(Secret::new)
+            .map_err(|_| MyError::Config { 
+                source: "API_KEY not set".into() 
+            })?;
+            
+        let encryption_key = std::env::var("ENCRYPTION_KEY")
+            .map(|key| Secret::new(key.into_bytes()))
+            .map_err(|_| MyError::Config { 
+                source: "ENCRYPTION_KEY not set".into() 
+            })?;
+            
+        Ok(Self {
+            database_url,
+            api_key,
+            encryption_key,
+        })
+    }
+    
+    /// Get API key for use (exposes secret temporarily)
+    pub fn with_api_key<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&str) -> R,
+    {
+        f(self.api_key.expose_secret())
+    }
+}
+
+// ✅ DO: Implement secure string handling
+#[derive(Clone)]
+pub struct SecureString {
+    data: Secret<String>,
+}
+
+impl SecureString {
+    pub fn new(data: String) -> Self {
+        Self {
+            data: Secret::new(data),
+        }
+    }
+    
+    pub fn expose<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&str) -> R,
+    {
+        f(self.data.expose_secret())
+    }
+}
+
+impl Drop for SecureString {
+    fn drop(&mut self) {
+        // Secure memory cleanup is handled by Secret<T>
+    }
+}
+
+// ✅ DO: Validate inputs thoroughly
+pub fn validate_user_input(input: &str) -> Result<String> {
+    // Check length
+    if input.is_empty() {
+        return Err(MyError::Validation {
+            field: "input cannot be empty".to_string(),
+        });
+    }
+    
+    if input.len() > 1000 {
+        return Err(MyError::Validation {
+            field: "input too long".to_string(),
+        });
+    }
+    
+    // Check for dangerous characters
+    if input.contains('\0') || input.contains('\x1b') {
+        return Err(MyError::Validation {
+            field: "input contains invalid characters".to_string(),
+        });
+    }
+    
+    // Sanitize and return
+    Ok(input.trim().to_string())
+}
+
+// ✅ DO: Use constant-time comparison for secrets
+use subtle::ConstantTimeEq;
+
+pub fn verify_token(provided: &[u8], expected: &[u8]) -> bool {
+    provided.ct_eq(expected).into()
+}
+
+// ❌ DON'T: Use timing-vulnerable comparisons for secrets
+pub fn insecure_verify_token(provided: &str, expected: &str) -> bool {
+    provided == expected // Vulnerable to timing attacks
+}
+
+// ❌ DON'T: Log or expose sensitive data
+pub fn bad_debug_config(config: &SecureConfig) {
+    println!("Config: {:?}", config); // Might expose secrets in logs
+}
+```
+
+## Best Practices Summary
+
+### Code Organization
+- Use modules to organize related functionality
+- Implement comprehensive error handling with custom error types
+- Document all public APIs with examples
+- Use appropriate visibility modifiers (pub, pub(crate), etc.)
+
+### Performance
+- Choose the right data structures for your use case
+- Use iterators instead of collecting intermediate results
+- Minimize allocations and clones
+- Profile and benchmark performance-critical code
+
+### Safety and Security
+- Validate all inputs thoroughly
+- Use const-time operations for security-sensitive comparisons
+- Protect sensitive data with appropriate types
+- Handle errors explicitly, avoid panics in library code
+
+### Testing
+- Write unit tests for all public functions
+- Include integration tests for complete workflows
+- Test error conditions and edge cases
+- Use property-based testing for complex logic
+
+### Async Programming
+- Use proper timeout handling for network operations
+- Implement retry logic with exponential backoff
+- Use streams for processing large datasets
+- Avoid blocking operations in async contexts
+
+### Memory Management
+- Understand ownership, borrowing, and lifetimes
+- Use Arc/Rc for shared ownership when needed
+- Prefer borrowing over cloning when possible
+- Use appropriate smart pointers for different scenarios
+
+## References
+- [The Rust Programming Language](mdc:https:/doc.rust-lang.org/book)
+- [Rust Performance Book](mdc:https:/nnethercote.github.io/perf-book)
+- [Rust Security Guidelines](mdc:https:/anssi-fr.github.io/rust-guide)
+- [Rust API Guidelines](mdc:https:/rust-lang.github.io/api-guidelines)
+- [Async Book](mdc:https:/rust-lang.github.io/async-book)
+- [Cargo Book](mdc:https:/doc.rust-lang.org/cargo)

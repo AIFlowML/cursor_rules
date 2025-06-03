@@ -1,0 +1,1176 @@
+---
+description: SPL Token development, token economics, and asset management on Solana
+globs: 
+alwaysApply: false
+---
+> You are an expert in SPL Token development, token economics, and asset management on Solana. You focus on secure, efficient token operations with proper authority management and comprehensive error handling.
+
+## SPL Token Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Token Mint     │    │ Token Account    │    │ Token Transfer  │
+│  Operations     │───▶│  Management      │───▶│  Operations     │
+│                 │    │                  │    │                 │
+│ - Mint creation │    │ - ATA patterns   │    │ - Standard xfer │
+│ - Authority mgmt│    │ - Account init   │    │ - Batch ops     │
+│ - Mint/freeze   │    │ - Multi-owner    │    │ - Conditional   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Advanced Token  │    │   Supply Mgmt    │    │   Metadata &    │
+│   Features      │    │   & Analytics    │    │   Integration   │
+│                 │    │                  │    │                 │
+│ - Token burning │    │ - Supply track   │    │ - Metadata link │
+│ - Account close │    │ - Analytics      │    │ - Cross-program │
+│ - Rent recovery │    │ - Auditing       │    │ - Standards     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+spl-tokens/
+├── src/
+│   ├── mint/
+│   │   ├── mod.rs              # Mint exports
+│   │   ├── creation.rs         # Mint creation
+│   │   ├── authority.rs        # Authority management
+│   │   ├── operations.rs       # Mint/freeze ops
+│   │   └── metadata.rs         # Mint metadata
+│   ├── accounts/
+│   │   ├── ata.rs             # Associated Token Accounts
+│   │   ├── creation.rs        # Account creation
+│   │   ├── management.rs      # Account management
+│   │   └── delegation.rs      # Delegation patterns
+│   ├── transfers/
+│   │   ├── standard.rs        # Standard transfers
+│   │   ├── batch.rs           # Batch operations
+│   │   ├── conditional.rs     # Conditional logic
+│   │   └── cross_program.rs   # Cross-program calls
+│   ├── advanced/
+│   │   ├── burning.rs         # Token burning
+│   │   ├── closing.rs         # Account closing
+│   │   ├── supply.rs          # Supply management
+│   │   └── analytics.rs       # Token analytics
+│   └── utils/
+│       ├── validation.rs      # Token validation
+│       ├── calculations.rs    # Amount calculations
+│       └── constants.rs       # Token constants
+```
+
+## Core Implementation Patterns
+
+### Token Mint Operations
+
+```rust
+// ✅ DO: Comprehensive token mint management with security
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Transfer};
+use anchor_spl::associated_token::AssociatedToken;
+use solana_program::program_pack::Pack;
+
+#[derive(Accounts)]
+pub struct CreateMint<'info> {
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = decimals,
+        mint::authority = mint_authority,
+        mint::freeze_authority = freeze_authority,
+    )]
+    pub mint: Account<'info, Mint>,
+    
+    /// CHECK: Mint authority can be any account
+    pub mint_authority: UncheckedAccount<'info>,
+    
+    /// CHECK: Freeze authority can be any account or None
+    pub freeze_authority: Option<UncheckedAccount<'info>>,
+    
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct MintTokens<'info> {
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = recipient,
+    )]
+    pub recipient_token_account: Account<'info, TokenAccount>,
+    
+    /// CHECK: Can be any account
+    pub recipient: UncheckedAccount<'info>,
+    
+    pub mint_authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+pub struct TokenMintManager {
+    pub mint_decimals: u8,
+    pub total_supply_cap: Option<u64>,
+    pub minting_enabled: bool,
+}
+
+impl TokenMintManager {
+    pub fn new(decimals: u8, supply_cap: Option<u64>) -> Self {
+        Self {
+            mint_decimals: decimals,
+            total_supply_cap: supply_cap,
+            minting_enabled: true,
+        }
+    }
+    
+    /// Create a new token mint with comprehensive validation
+    pub fn create_mint(
+        ctx: Context<CreateMint>,
+        decimals: u8,
+        symbol: String,
+        name: String,
+    ) -> Result<()> {
+        // Validate inputs
+        require!(decimals <= 9, TokenError::InvalidDecimals);
+        require!(symbol.len() <= 10, TokenError::SymbolTooLong);
+        require!(name.len() <= 32, TokenError::NameTooLong);
+        require!(!symbol.is_empty(), TokenError::EmptySymbol);
+        require!(!name.is_empty(), TokenError::EmptyName);
+        
+        // Validate symbol contains only valid characters
+        for char in symbol.chars() {
+            require!(
+                char.is_ascii_alphanumeric() || char == '_',
+                TokenError::InvalidSymbolChar
+            );
+        }
+        
+        msg!("Creating mint with symbol: {}, name: {}, decimals: {}", symbol, name, decimals);
+        
+        // The mint account is automatically initialized by Anchor
+        // due to the #[account(init, ...)] constraint
+        
+        Ok(())
+    }
+    
+    /// Mint tokens with comprehensive checks
+    pub fn mint_tokens(
+        ctx: Context<MintTokens>,
+        amount: u64,
+    ) -> Result<()> {
+        let mint = &ctx.accounts.mint;
+        let mint_authority = &ctx.accounts.mint_authority;
+        
+        // Verify mint authority
+        require!(
+            mint.mint_authority.contains(&mint_authority.key()),
+            TokenError::InvalidMintAuthority
+        );
+        
+        // Check if minting is frozen
+        require!(!mint.is_frozen(), TokenError::MintFrozen);
+        
+        // Validate amount
+        require!(amount > 0, TokenError::InvalidAmount);
+        
+        // Check supply cap if set
+        let new_supply = mint.supply.checked_add(amount)
+            .ok_or(TokenError::SupplyOverflow)?;
+        
+        // Additional supply cap check would go here if implemented
+        
+        // Calculate amount with decimals
+        let mint_amount = Self::calculate_token_amount(amount, mint.decimals)?;
+        
+        msg!("Minting {} tokens (raw: {})", amount, mint_amount);
+        
+        // Perform the mint operation
+        let cpi_accounts = MintTo {
+            mint: ctx.accounts.mint.to_account_info(),
+            to: ctx.accounts.recipient_token_account.to_account_info(),
+            authority: ctx.accounts.mint_authority.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::mint_to(cpi_ctx, mint_amount)?;
+        
+        emit!(TokensMinted {
+            mint: ctx.accounts.mint.key(),
+            recipient: ctx.accounts.recipient.key(),
+            amount: mint_amount,
+            new_supply: new_supply,
+        });
+        
+        Ok(())
+    }
+    
+    /// Transfer mint authority with security checks
+    pub fn transfer_mint_authority(
+        ctx: Context<TransferMintAuthority>,
+        new_authority: Option<Pubkey>,
+    ) -> Result<()> {
+        let mint = &mut ctx.accounts.mint;
+        let current_authority = &ctx.accounts.current_authority;
+        
+        // Verify current authority
+        require!(
+            mint.mint_authority.contains(&current_authority.key()),
+            TokenError::InvalidMintAuthority
+        );
+        
+        msg!(
+            "Transferring mint authority from {} to {:?}",
+            current_authority.key(),
+            new_authority
+        );
+        
+        // Update mint authority
+        let cpi_accounts = token::SetAuthority {
+            account_or_mint: ctx.accounts.mint.to_account_info(),
+            current_authority: ctx.accounts.current_authority.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::set_authority(
+            cpi_ctx,
+            token::spl_token::instruction::AuthorityType::MintTokens,
+            new_authority,
+        )?;
+        
+        emit!(MintAuthorityTransferred {
+            mint: ctx.accounts.mint.key(),
+            old_authority: current_authority.key(),
+            new_authority,
+        });
+        
+        Ok(())
+    }
+    
+    /// Freeze/unfreeze mint operations
+    pub fn set_mint_freeze_state(
+        ctx: Context<FreezeMint>,
+        freeze: bool,
+    ) -> Result<()> {
+        let mint = &ctx.accounts.mint;
+        let freeze_authority = &ctx.accounts.freeze_authority;
+        
+        // Verify freeze authority exists
+        require!(
+            mint.freeze_authority.is_some(),
+            TokenError::NoFreezeAuthority
+        );
+        
+        require!(
+            mint.freeze_authority.contains(&freeze_authority.key()),
+            TokenError::InvalidFreezeAuthority
+        );
+        
+        msg!("Setting mint freeze state to: {}", freeze);
+        
+        // Implementation would depend on whether using standard SPL or custom logic
+        // For standard SPL, you'd use the freeze/thaw account instructions
+        
+        Ok(())
+    }
+    
+    /// Calculate token amount considering decimals
+    pub fn calculate_token_amount(amount: u64, decimals: u8) -> Result<u64> {
+        let multiplier = 10u64.checked_pow(decimals as u32)
+            .ok_or(TokenError::DecimalOverflow)?;
+        
+        amount.checked_mul(multiplier)
+            .ok_or(TokenError::AmountOverflow.into())
+    }
+    
+    /// Calculate human-readable amount from token amount
+    pub fn calculate_human_amount(token_amount: u64, decimals: u8) -> Result<f64> {
+        let divisor = 10u64.checked_pow(decimals as u32)
+            .ok_or(TokenError::DecimalOverflow)?;
+        
+        Ok(token_amount as f64 / divisor as f64)
+    }
+}
+
+#[derive(Accounts)]
+pub struct TransferMintAuthority<'info> {
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    pub current_authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct FreezeMint<'info> {
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    pub freeze_authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+// Events for monitoring
+#[event]
+pub struct TokensMinted {
+    pub mint: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub new_supply: u64,
+}
+
+#[event]
+pub struct MintAuthorityTransferred {
+    pub mint: Pubkey,
+    pub old_authority: Pubkey,
+    pub new_authority: Option<Pubkey>,
+}
+```
+
+### Token Account Management
+
+```rust
+// ✅ DO: Comprehensive token account management with ATA patterns
+use anchor_lang::prelude::*;
+use anchor_spl::token::{TokenAccount, Token};
+use anchor_spl::associated_token::{AssociatedToken, Create};
+
+#[derive(Accounts)]
+pub struct CreateTokenAccount<'info> {
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = owner,
+    )]
+    pub token_account: Account<'info, TokenAccount>,
+    
+    pub mint: Account<'info, Mint>,
+    
+    /// CHECK: Can be any account
+    pub owner: UncheckedAccount<'info>,
+    
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+}
+
+pub struct TokenAccountManager;
+
+impl TokenAccountManager {
+    /// Create Associated Token Account with validation
+    pub fn create_associated_token_account(
+        ctx: Context<CreateTokenAccount>,
+    ) -> Result<()> {
+        let mint = &ctx.accounts.mint;
+        let owner = &ctx.accounts.owner;
+        
+        msg!(
+            "Creating ATA for mint {} and owner {}",
+            mint.key(),
+            owner.key()
+        );
+        
+        // Verify mint is properly initialized
+        require!(mint.is_initialized, TokenError::MintNotInitialized);
+        
+        // The ATA is automatically created by Anchor constraints
+        // Additional validation can be added here
+        
+        emit!(TokenAccountCreated {
+            token_account: ctx.accounts.token_account.key(),
+            mint: mint.key(),
+            owner: owner.key(),
+        });
+        
+        Ok(())
+    }
+    
+    /// Get or create ATA address
+    pub fn get_associated_token_address(
+        wallet: &Pubkey,
+        mint: &Pubkey,
+    ) -> Pubkey {
+        anchor_spl::associated_token::get_associated_token_address(wallet, mint)
+    }
+    
+    /// Validate token account ownership and state
+    pub fn validate_token_account(
+        token_account: &Account<TokenAccount>,
+        expected_mint: &Pubkey,
+        expected_owner: &Pubkey,
+    ) -> Result<()> {
+        require!(
+            token_account.mint == *expected_mint,
+            TokenError::InvalidMint
+        );
+        
+        require!(
+            token_account.owner == *expected_owner,
+            TokenError::InvalidOwner
+        );
+        
+        require!(
+            !token_account.is_frozen(),
+            TokenError::AccountFrozen
+        );
+        
+        Ok(())
+    }
+    
+    /// Delegate token account authority
+    pub fn delegate_tokens(
+        ctx: Context<DelegateTokens>,
+        amount: u64,
+    ) -> Result<()> {
+        let token_account = &ctx.accounts.token_account;
+        let owner = &ctx.accounts.owner;
+        let delegate = &ctx.accounts.delegate;
+        
+        // Verify owner
+        require!(
+            token_account.owner == owner.key(),
+            TokenError::InvalidOwner
+        );
+        
+        // Verify sufficient balance
+        require!(
+            token_account.amount >= amount,
+            TokenError::InsufficientBalance
+        );
+        
+        msg!(
+            "Delegating {} tokens from {} to {}",
+            amount,
+            owner.key(),
+            delegate.key()
+        );
+        
+        let cpi_accounts = token::Approve {
+            to: ctx.accounts.token_account.to_account_info(),
+            delegate: ctx.accounts.delegate.to_account_info(),
+            authority: ctx.accounts.owner.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::approve(cpi_ctx, amount)?;
+        
+        emit!(TokensDelegated {
+            token_account: ctx.accounts.token_account.key(),
+            owner: owner.key(),
+            delegate: delegate.key(),
+            amount,
+        });
+        
+        Ok(())
+    }
+    
+    /// Revoke delegation
+    pub fn revoke_delegation(
+        ctx: Context<RevokeDelegation>,
+    ) -> Result<()> {
+        let token_account = &ctx.accounts.token_account;
+        let owner = &ctx.accounts.owner;
+        
+        require!(
+            token_account.owner == owner.key(),
+            TokenError::InvalidOwner
+        );
+        
+        msg!("Revoking delegation for token account {}", token_account.key());
+        
+        let cpi_accounts = token::Revoke {
+            source: ctx.accounts.token_account.to_account_info(),
+            authority: ctx.accounts.owner.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::revoke(cpi_ctx)?;
+        
+        emit!(DelegationRevoked {
+            token_account: ctx.accounts.token_account.key(),
+            owner: owner.key(),
+        });
+        
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct DelegateTokens<'info> {
+    #[account(mut)]
+    pub token_account: Account<'info, TokenAccount>,
+    pub owner: Signer<'info>,
+    /// CHECK: Can be any account
+    pub delegate: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct RevokeDelegation<'info> {
+    #[account(mut)]
+    pub token_account: Account<'info, TokenAccount>,
+    pub owner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[event]
+pub struct TokenAccountCreated {
+    pub token_account: Pubkey,
+    pub mint: Pubkey,
+    pub owner: Pubkey,
+}
+
+#[event]
+pub struct TokensDelegated {
+    pub token_account: Pubkey,
+    pub owner: Pubkey,
+    pub delegate: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct DelegationRevoked {
+    pub token_account: Pubkey,
+    pub owner: Pubkey,
+}
+```
+
+### Token Transfer Operations
+
+```rust
+// ✅ DO: Comprehensive token transfer operations with security
+#[derive(Accounts)]
+pub struct TransferTokens<'info> {
+    #[account(
+        mut,
+        constraint = source_token_account.owner == authority.key(),
+    )]
+    pub source_token_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        mut,
+        constraint = destination_token_account.mint == source_token_account.mint,
+    )]
+    pub destination_token_account: Account<'info, TokenAccount>,
+    
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct BatchTransfer<'info> {
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    // Additional accounts would be passed as remaining_accounts
+}
+
+pub struct TokenTransferManager;
+
+impl TokenTransferManager {
+    /// Standard token transfer with comprehensive validation
+    pub fn transfer_tokens(
+        ctx: Context<TransferTokens>,
+        amount: u64,
+    ) -> Result<()> {
+        let source = &ctx.accounts.source_token_account;
+        let destination = &ctx.accounts.destination_token_account;
+        let authority = &ctx.accounts.authority;
+        
+        // Validate transfer amount
+        require!(amount > 0, TokenError::InvalidAmount);
+        
+        // Check sufficient balance
+        require!(
+            source.amount >= amount,
+            TokenError::InsufficientBalance
+        );
+        
+        // Verify accounts are not frozen
+        require!(!source.is_frozen(), TokenError::AccountFrozen);
+        require!(!destination.is_frozen(), TokenError::AccountFrozen);
+        
+        // Verify same mint
+        require!(
+            source.mint == destination.mint,
+            TokenError::MintMismatch
+        );
+        
+        // Check for self-transfer
+        require!(
+            source.key() != destination.key(),
+            TokenError::SelfTransfer
+        );
+        
+        msg!(
+            "Transferring {} tokens from {} to {}",
+            amount,
+            source.key(),
+            destination.key()
+        );
+        
+        // Perform transfer
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.source_token_account.to_account_info(),
+            to: ctx.accounts.destination_token_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::transfer(cpi_ctx, amount)?;
+        
+        emit!(TokensTransferred {
+            from: source.key(),
+            to: destination.key(),
+            amount,
+            authority: authority.key(),
+        });
+        
+        Ok(())
+    }
+    
+    /// Batch transfer with optimization
+    pub fn batch_transfer(
+        ctx: Context<BatchTransfer>,
+        transfers: Vec<TransferInstruction>,
+    ) -> Result<()> {
+        let authority = &ctx.accounts.authority;
+        
+        // Validate batch size
+        require!(
+            transfers.len() <= 10,
+            TokenError::BatchTooLarge
+        );
+        
+        require!(
+            !transfers.is_empty(),
+            TokenError::EmptyBatch
+        );
+        
+        let remaining_accounts = &ctx.remaining_accounts;
+        let mut account_index = 0;
+        
+        for (i, transfer) in transfers.iter().enumerate() {
+            // Validate transfer instruction
+            require!(transfer.amount > 0, TokenError::InvalidAmount);
+            
+            // Get accounts from remaining_accounts
+            let source_account = &remaining_accounts[account_index];
+            let dest_account = &remaining_accounts[account_index + 1];
+            account_index += 2;
+            
+            // Perform individual transfer validation and execution
+            Self::execute_single_transfer(
+                source_account,
+                dest_account,
+                authority,
+                &ctx.accounts.token_program,
+                transfer.amount,
+                i as u8,
+            )?;
+        }
+        
+        emit!(BatchTransferCompleted {
+            authority: authority.key(),
+            transfer_count: transfers.len() as u8,
+        });
+        
+        Ok(())
+    }
+    
+    /// Conditional transfer with custom logic
+    pub fn conditional_transfer(
+        ctx: Context<ConditionalTransfer>,
+        amount: u64,
+        condition: TransferCondition,
+    ) -> Result<()> {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        // Evaluate condition
+        let condition_met = match condition {
+            TransferCondition::TimeDelay { unlock_time } => {
+                current_time >= unlock_time
+            }
+            TransferCondition::MinimumBalance { required_balance } => {
+                ctx.accounts.source_token_account.amount >= required_balance
+            }
+            TransferCondition::MaximumAmount { max_amount } => {
+                amount <= max_amount
+            }
+            TransferCondition::WhitelistedRecipient { allowed_recipients } => {
+                allowed_recipients.contains(&ctx.accounts.destination_token_account.owner)
+            }
+        };
+        
+        require!(condition_met, TokenError::ConditionNotMet);
+        
+        // Proceed with standard transfer
+        Self::transfer_tokens_internal(
+            &ctx.accounts.source_token_account,
+            &ctx.accounts.destination_token_account,
+            &ctx.accounts.authority,
+            &ctx.accounts.token_program,
+            amount,
+        )?;
+        
+        emit!(ConditionalTransferExecuted {
+            from: ctx.accounts.source_token_account.key(),
+            to: ctx.accounts.destination_token_account.key(),
+            amount,
+            condition_type: std::mem::discriminant(&condition) as u8,
+        });
+        
+        Ok(())
+    }
+    
+    /// Internal transfer function for reuse
+    fn transfer_tokens_internal(
+        source: &Account<TokenAccount>,
+        destination: &Account<TokenAccount>,
+        authority: &Signer,
+        token_program: &Program<Token>,
+        amount: u64,
+    ) -> Result<()> {
+        let cpi_accounts = Transfer {
+            from: source.to_account_info(),
+            to: destination.to_account_info(),
+            authority: authority.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(token_program.to_account_info(), cpi_accounts);
+        token::transfer(cpi_ctx, amount)
+    }
+    
+    /// Execute single transfer in batch operation
+    fn execute_single_transfer(
+        source_info: &AccountInfo,
+        dest_info: &AccountInfo,
+        authority: &Signer,
+        token_program: &Program<Token>,
+        amount: u64,
+        index: u8,
+    ) -> Result<()> {
+        // Deserialize token accounts
+        let source_data = source_info.try_borrow_data()?;
+        let source_account = TokenAccount::try_deserialize(&mut source_data.as_ref())?;
+        
+        let dest_data = dest_info.try_borrow_data()?;
+        let dest_account = TokenAccount::try_deserialize(&mut dest_data.as_ref())?;
+        
+        // Validate accounts
+        require!(source_account.amount >= amount, TokenError::InsufficientBalance);
+        require!(source_account.mint == dest_account.mint, TokenError::MintMismatch);
+        require!(source_account.owner == authority.key(), TokenError::InvalidOwner);
+        
+        // Perform transfer
+        let cpi_accounts = Transfer {
+            from: source_info.clone(),
+            to: dest_info.clone(),
+            authority: authority.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(token_program.to_account_info(), cpi_accounts);
+        token::transfer(cpi_ctx, amount)?;
+        
+        msg!("Batch transfer {} completed: {} tokens", index, amount);
+        
+        Ok(())
+    }
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct TransferInstruction {
+    pub amount: u64,
+    pub memo: Option<String>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub enum TransferCondition {
+    TimeDelay { unlock_time: i64 },
+    MinimumBalance { required_balance: u64 },
+    MaximumAmount { max_amount: u64 },
+    WhitelistedRecipient { allowed_recipients: Vec<Pubkey> },
+}
+
+#[derive(Accounts)]
+pub struct ConditionalTransfer<'info> {
+    #[account(mut)]
+    pub source_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub destination_token_account: Account<'info, TokenAccount>,
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[event]
+pub struct TokensTransferred {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
+    pub authority: Pubkey,
+}
+
+#[event]
+pub struct BatchTransferCompleted {
+    pub authority: Pubkey,
+    pub transfer_count: u8,
+}
+
+#[event]
+pub struct ConditionalTransferExecuted {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
+    pub condition_type: u8,
+}
+```
+
+### Advanced Token Features
+
+```rust
+// ✅ DO: Advanced token features with burning and account management
+#[derive(Accounts)]
+pub struct BurnTokens<'info> {
+    #[account(
+        mut,
+        constraint = token_account.owner == authority.key(),
+    )]
+    pub token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct CloseTokenAccount<'info> {
+    #[account(
+        mut,
+        constraint = token_account.owner == authority.key(),
+        constraint = token_account.amount == 0,
+    )]
+    pub token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub destination: AccountInfo<'info>,
+    
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+pub struct AdvancedTokenManager;
+
+impl AdvancedTokenManager {
+    /// Burn tokens with comprehensive validation
+    pub fn burn_tokens(
+        ctx: Context<BurnTokens>,
+        amount: u64,
+    ) -> Result<()> {
+        let token_account = &ctx.accounts.token_account;
+        let mint = &ctx.accounts.mint;
+        let authority = &ctx.accounts.authority;
+        
+        // Validate burn amount
+        require!(amount > 0, TokenError::InvalidAmount);
+        
+        // Check sufficient balance
+        require!(
+            token_account.amount >= amount,
+            TokenError::InsufficientBalance
+        );
+        
+        // Verify token account mint matches
+        require!(
+            token_account.mint == mint.key(),
+            TokenError::MintMismatch
+        );
+        
+        // Check if account is frozen
+        require!(!token_account.is_frozen(), TokenError::AccountFrozen);
+        
+        let old_supply = mint.supply;
+        
+        msg!(
+            "Burning {} tokens from account {}. Current supply: {}",
+            amount,
+            token_account.key(),
+            old_supply
+        );
+        
+        // Perform burn operation
+        let cpi_accounts = token::Burn {
+            mint: ctx.accounts.mint.to_account_info(),
+            from: ctx.accounts.token_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::burn(cpi_ctx, amount)?;
+        
+        let new_supply = old_supply.checked_sub(amount)
+            .ok_or(TokenError::SupplyUnderflow)?;
+        
+        emit!(TokensBurned {
+            token_account: token_account.key(),
+            mint: mint.key(),
+            amount,
+            authority: authority.key(),
+            old_supply,
+            new_supply,
+        });
+        
+        Ok(())
+    }
+    
+    /// Close token account and recover rent
+    pub fn close_token_account(
+        ctx: Context<CloseTokenAccount>,
+    ) -> Result<()> {
+        let token_account = &ctx.accounts.token_account;
+        let destination = &ctx.accounts.destination;
+        let authority = &ctx.accounts.authority;
+        
+        // Verify account has zero balance
+        require!(
+            token_account.amount == 0,
+            TokenError::AccountNotEmpty
+        );
+        
+        // Verify no delegation
+        require!(
+            token_account.delegate.is_none(),
+            TokenError::DelegationExists
+        );
+        
+        msg!(
+            "Closing token account {} and sending rent to {}",
+            token_account.key(),
+            destination.key()
+        );
+        
+        // Close the account
+        let cpi_accounts = token::CloseAccount {
+            account: ctx.accounts.token_account.to_account_info(),
+            destination: ctx.accounts.destination.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        };
+        
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        token::close_account(cpi_ctx)?;
+        
+        emit!(TokenAccountClosed {
+            token_account: token_account.key(),
+            authority: authority.key(),
+            destination: destination.key(),
+        });
+        
+        Ok(())
+    }
+    
+    /// Get token supply information
+    pub fn get_supply_info(mint: &Account<Mint>) -> SupplyInfo {
+        SupplyInfo {
+            total_supply: mint.supply,
+            decimals: mint.decimals,
+            is_initialized: mint.is_initialized,
+            freeze_authority: mint.freeze_authority,
+            mint_authority: mint.mint_authority,
+        }
+    }
+    
+    /// Calculate token metrics
+    pub fn calculate_token_metrics(
+        mint: &Account<Mint>,
+        holder_count: u32,
+    ) -> TokenMetrics {
+        let circulating_supply = mint.supply;
+        let max_supply = u64::MAX; // Would be configurable in real implementation
+        
+        TokenMetrics {
+            circulating_supply,
+            max_supply,
+            holder_count,
+            supply_utilization: if max_supply > 0 {
+                (circulating_supply as f64 / max_supply as f64) * 100.0
+            } else {
+                0.0
+            },
+            decimals: mint.decimals,
+        }
+    }
+    
+    /// Validate token account state for analytics
+    pub fn validate_account_state(
+        token_account: &Account<TokenAccount>,
+    ) -> AccountStateInfo {
+        AccountStateInfo {
+            balance: token_account.amount,
+            is_frozen: token_account.is_frozen(),
+            delegate: token_account.delegate,
+            delegated_amount: token_account.delegated_amount,
+            owner: token_account.owner,
+            mint: token_account.mint,
+        }
+    }
+}
+
+// Data structures for token analytics
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SupplyInfo {
+    pub total_supply: u64,
+    pub decimals: u8,
+    pub is_initialized: bool,
+    pub freeze_authority: Option<Pubkey>,
+    pub mint_authority: Option<Pubkey>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TokenMetrics {
+    pub circulating_supply: u64,
+    pub max_supply: u64,
+    pub holder_count: u32,
+    pub supply_utilization: f64,
+    pub decimals: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct AccountStateInfo {
+    pub balance: u64,
+    pub is_frozen: bool,
+    pub delegate: Option<Pubkey>,
+    pub delegated_amount: u64,
+    pub owner: Pubkey,
+    pub mint: Pubkey,
+}
+
+// Events for advanced operations
+#[event]
+pub struct TokensBurned {
+    pub token_account: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub authority: Pubkey,
+    pub old_supply: u64,
+    pub new_supply: u64,
+}
+
+#[event]
+pub struct TokenAccountClosed {
+    pub token_account: Pubkey,
+    pub authority: Pubkey,
+    pub destination: Pubkey,
+}
+
+// Custom error types
+#[error_code]
+pub enum TokenError {
+    #[msg("Invalid decimals specified")]
+    InvalidDecimals,
+    #[msg("Symbol too long")]
+    SymbolTooLong,
+    #[msg("Name too long")]
+    NameTooLong,
+    #[msg("Empty symbol not allowed")]
+    EmptySymbol,
+    #[msg("Empty name not allowed")]
+    EmptyName,
+    #[msg("Invalid symbol character")]
+    InvalidSymbolChar,
+    #[msg("Invalid mint authority")]
+    InvalidMintAuthority,
+    #[msg("Mint is frozen")]
+    MintFrozen,
+    #[msg("Invalid amount")]
+    InvalidAmount,
+    #[msg("Supply overflow")]
+    SupplyOverflow,
+    #[msg("Decimal overflow")]
+    DecimalOverflow,
+    #[msg("Amount overflow")]
+    AmountOverflow,
+    #[msg("Mint not initialized")]
+    MintNotInitialized,
+    #[msg("Invalid mint")]
+    InvalidMint,
+    #[msg("Invalid owner")]
+    InvalidOwner,
+    #[msg("Account frozen")]
+    AccountFrozen,
+    #[msg("Insufficient balance")]
+    InsufficientBalance,
+    #[msg("Mint mismatch")]
+    MintMismatch,
+    #[msg("Self transfer not allowed")]
+    SelfTransfer,
+    #[msg("Batch too large")]
+    BatchTooLarge,
+    #[msg("Empty batch")]
+    EmptyBatch,
+    #[msg("Condition not met")]
+    ConditionNotMet,
+    #[msg("Supply underflow")]
+    SupplyUnderflow,
+    #[msg("Account not empty")]
+    AccountNotEmpty,
+    #[msg("Delegation exists")]
+    DelegationExists,
+    #[msg("No freeze authority")]
+    NoFreezeAuthority,
+    #[msg("Invalid freeze authority")]
+    InvalidFreezeAuthority,
+}
+```
+
+## Best Practices Summary
+
+### Token Mint Management
+- Always validate input parameters (decimals, symbol, name)
+- Implement proper authority management with transfer capabilities
+- Use supply caps and minting controls for economic security
+- Emit events for all significant mint operations
+
+### Account Management
+- Prefer Associated Token Accounts for standard use cases
+- Validate account state before operations
+- Implement delegation patterns for advanced use cases
+- Handle account freezing and unfreezing properly
+
+### Transfer Operations
+- Validate all transfer parameters before execution
+- Check account states (frozen, balance, ownership)
+- Implement batch operations for efficiency
+- Support conditional transfers for complex logic
+
+### Advanced Features
+- Implement secure token burning with supply tracking
+- Provide account closing with rent recovery
+- Calculate and track token metrics and analytics
+- Support metadata association for enhanced functionality
+
+## References
+- [SPL Token Program](mdc:https:/spl.solana.com/token)
+- [Associated Token Account](mdc:https:/spl.solana.com/associated-token-account)
+- [Anchor Token Integration](mdc:https:/book.anchor-lang.com/anchor_in_depth/the_program_module.html)

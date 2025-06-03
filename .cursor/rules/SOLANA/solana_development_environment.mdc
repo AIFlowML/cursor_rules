@@ -1,0 +1,1085 @@
+---
+description: Solana local development environments, test validator configuration, and development tooling
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana local development environments, test validator configuration, and development tooling. You focus on creating efficient, reliable development setups that mirror production environments.
+
+## Solana Development Environment Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Local Validator│    │  Account Cloning │    │  Program Deploy │
+│  - Test Network │───▶│   - Mainnet Data │───▶│   - Local Build │
+│  - Custom Config│    │   - State Sync   │    │   - Hot Reload  │
+│  - Fast Slots   │    │   - Snapshots    │    │   - Debug Mode  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  CLI Tools      │    │  IDE Integration │    │  Test Data      │
+│  - solana-cli   │    │   - Debugging    │    │   - Funding     │
+│  - anchor       │    │   - IntelliSense │    │   - Reset       │
+│  - spl-token    │    │   - Extensions   │    │   - Seed Data   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+solana-dev-environment/
+├── config/
+│   ├── validator-config.yml      # Validator configuration
+│   ├── genesis-config.yml        # Genesis block configuration
+│   ├── feature-gates.json        # Feature activation settings
+│   └── accounts-to-clone.json    # Mainnet accounts to clone
+├── scripts/
+│   ├── setup-validator.sh        # Validator setup script
+│   ├── clone-accounts.sh          # Account cloning script
+│   ├── fund-accounts.sh           # Test account funding
+│   ├── reset-env.sh              # Environment reset
+│   └── snapshot-manager.sh       # Snapshot management
+├── tools/
+│   ├── account-fetcher.rs         # Account data fetcher
+│   ├── program-deployer.rs        # Program deployment tool
+│   ├── log-parser.rs             # Log parsing utilities
+│   └── health-checker.rs         # Environment health checks
+├── test-data/
+│   ├── accounts/                 # Test account data
+│   │   ├── funded-wallets.json   # Pre-funded test wallets
+│   │   └── program-accounts.json # Program account states
+│   ├── programs/                 # Test program binaries
+│   └── snapshots/               # Environment snapshots
+├── docker/
+│   ├── Dockerfile               # Development container
+│   ├── docker-compose.yml       # Multi-service setup
+│   └── solana-validator.yml     # Validator service config
+└── .vscode/
+    ├── settings.json            # VS Code configuration
+    ├── launch.json              # Debug configurations
+    └── extensions.json          # Recommended extensions
+```
+
+## Core Implementation Patterns
+
+### Local Validator Setup
+
+```bash
+#!/bin/bash
+# ✅ DO: Comprehensive validator setup script
+
+set -e
+
+# Configuration variables
+VALIDATOR_DATA_DIR="./test-ledger"
+VALIDATOR_LOG_DIR="./logs"
+FAUCET_ACCOUNT="./test-accounts/faucet.json"
+ACCOUNTS_DIR="./test-accounts"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# ✅ DO: Clean previous validator state
+cleanup_validator() {
+    log_info "Cleaning up previous validator state..."
+    
+    # Stop any running validator
+    pkill -f solana-test-validator || true
+    
+    # Remove old ledger data
+    if [ -d "$VALIDATOR_DATA_DIR" ]; then
+        rm -rf "$VALIDATOR_DATA_DIR"
+        log_info "Removed old ledger data"
+    fi
+    
+    # Create fresh directories
+    mkdir -p "$VALIDATOR_DATA_DIR"
+    mkdir -p "$VALIDATOR_LOG_DIR"
+    mkdir -p "$ACCOUNTS_DIR"
+}
+
+# ✅ DO: Generate test accounts
+generate_test_accounts() {
+    log_info "Generating test accounts..."
+    
+    # Create faucet account with large balance
+    solana-keygen new --no-bip39-passphrase --silent --outfile "$FAUCET_ACCOUNT"
+    
+    # Generate additional test accounts
+    for i in {1..10}; do
+        local account_file="$ACCOUNTS_DIR/test-account-$i.json"
+        solana-keygen new --no-bip39-passphrase --silent --outfile "$account_file"
+        log_info "Generated test account $i: $(solana-keygen pubkey $account_file)"
+    done
+}
+
+# ✅ DO: Configure validator with custom settings
+start_validator() {
+    log_info "Starting Solana test validator..."
+    
+    # Validator configuration
+    local config_args=(
+        --ledger "$VALIDATOR_DATA_DIR"
+        --bind-address 0.0.0.0
+        --rpc-port 8899
+        --rpc-bind-address 0.0.0.0
+        --faucet-port 9900
+        --faucet-sol 1000000
+        --reset
+        --quiet
+        --slots-per-epoch 32
+        --confirm-transaction-initial-timeout 30
+        --no-bpf-jit
+        --log "$VALIDATOR_LOG_DIR/validator.log"
+    )
+    
+    # Add accounts to clone from mainnet
+    if [ -f "config/accounts-to-clone.json" ]; then
+        while IFS= read -r account; do
+            if [[ $account =~ ^[A-Za-z0-9]{44}$ ]]; then
+                config_args+=(--clone-upgradeable-program "$account")
+                log_info "Cloning account: $account"
+            fi
+        done < config/accounts-to-clone.json
+    fi
+    
+    # Add programs to clone
+    config_args+=(
+        --clone-upgradeable-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA  # Token Program
+        --clone-upgradeable-program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL   # Associated Token
+        --clone-upgradeable-program metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s     # Metaplex
+    )
+    
+    # Start validator in background
+    solana-test-validator "${config_args[@]}" &
+    local validator_pid=$!
+    
+    log_info "Validator started with PID: $validator_pid"
+    echo $validator_pid > "$VALIDATOR_DATA_DIR/validator.pid"
+    
+    # Wait for validator to be ready
+    log_info "Waiting for validator to be ready..."
+    local attempts=0
+    local max_attempts=30
+    
+    while [ $attempts -lt $max_attempts ]; do
+        if solana cluster-version &>/dev/null; then
+            log_info "Validator is ready!"
+            break
+        fi
+        sleep 2
+        ((attempts++))
+    done
+    
+    if [ $attempts -eq $max_attempts ]; then
+        log_error "Validator failed to start within timeout"
+        exit 1
+    fi
+}
+
+# ✅ DO: Fund test accounts
+fund_test_accounts() {
+    log_info "Funding test accounts..."
+    
+    # Set cluster to localhost
+    solana config set --url localhost
+    
+    # Fund test accounts
+    for account_file in "$ACCOUNTS_DIR"/test-account-*.json; do
+        if [ -f "$account_file" ]; then
+            local pubkey=$(solana-keygen pubkey "$account_file")
+            solana airdrop 100 "$pubkey" --commitment confirmed
+            log_info "Funded account $pubkey with 100 SOL"
+        fi
+    done
+}
+
+# Main execution
+main() {
+    log_info "Setting up Solana development environment..."
+    
+    cleanup_validator
+    generate_test_accounts
+    start_validator
+    fund_test_accounts
+    
+    log_info "✅ Development environment ready!"
+    log_info "RPC URL: http://localhost:8899"
+    log_info "Faucet URL: http://localhost:9900"
+    log_info "Use 'pkill -f solana-test-validator' to stop"
+}
+
+main "$@"
+```
+
+### Account & Program Cloning
+
+```rust
+// ✅ DO: Implement account fetcher for cloning mainnet data
+use {
+    solana_client::rpc_client::RpcClient,
+    solana_sdk::{
+        account::Account,
+        pubkey::Pubkey,
+        commitment_config::CommitmentConfig,
+    },
+    serde::{Serialize, Deserialize},
+    std::{
+        collections::HashMap,
+        fs::File,
+        io::Write,
+        str::FromStr,
+    },
+    tokio::time::{sleep, Duration},
+};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AccountSnapshot {
+    pub pubkey: String,
+    pub lamports: u64,
+    pub data: Vec<u8>,
+    pub owner: String,
+    pub executable: bool,
+    pub rent_epoch: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProgramSnapshot {
+    pub program_id: String,
+    pub executable_account: AccountSnapshot,
+    pub program_data_account: Option<AccountSnapshot>,
+}
+
+pub struct AccountFetcher {
+    client: RpcClient,
+    commitment: CommitmentConfig,
+}
+
+impl AccountFetcher {
+    pub fn new(rpc_url: &str) -> Self {
+        Self {
+            client: RpcClient::new_with_commitment(
+                rpc_url.to_string(),
+                CommitmentConfig::confirmed(),
+            ),
+            commitment: CommitmentConfig::confirmed(),
+        }
+    }
+    
+    /// Fetch and save account data for local validator cloning
+    pub async fn clone_account(&self, pubkey: &Pubkey) -> Result<AccountSnapshot, Box<dyn std::error::Error>> {
+        println!("Fetching account: {}", pubkey);
+        
+        let account = self.client.get_account_with_commitment(pubkey, self.commitment)?;
+        
+        match account.value {
+            Some(account) => {
+                let snapshot = AccountSnapshot {
+                    pubkey: pubkey.to_string(),
+                    lamports: account.lamports,
+                    data: account.data,
+                    owner: account.owner.to_string(),
+                    executable: account.executable,
+                    rent_epoch: account.rent_epoch,
+                };
+                
+                println!("✅ Fetched account {} ({} bytes)", pubkey, snapshot.data.len());
+                Ok(snapshot)
+            }
+            None => Err(format!("Account {} not found", pubkey).into()),
+        }
+    }
+    
+    /// Clone upgradeable program with both executable and data accounts
+    pub async fn clone_upgradeable_program(&self, program_id: &Pubkey) -> Result<ProgramSnapshot, Box<dyn std::error::Error>> {
+        println!("Cloning upgradeable program: {}", program_id);
+        
+        // Fetch executable account
+        let executable_account = self.clone_account(program_id).await?;
+        
+        // For upgradeable programs, find the program data account
+        let program_data_account = if executable_account.executable {
+            // Parse program data account address from executable account data
+            if executable_account.data.len() >= 36 {
+                let program_data_pubkey_bytes = &executable_account.data[4..36];
+                let program_data_pubkey = Pubkey::new(program_data_pubkey_bytes);
+                
+                match self.clone_account(&program_data_pubkey).await {
+                    Ok(data_account) => Some(data_account),
+                    Err(e) => {
+                        println!("⚠️  Could not fetch program data account: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        Ok(ProgramSnapshot {
+            program_id: program_id.to_string(),
+            executable_account,
+            program_data_account,
+        })
+    }
+    
+    /// Batch clone multiple accounts with rate limiting
+    pub async fn batch_clone_accounts(&self, pubkeys: &[Pubkey]) -> Result<Vec<AccountSnapshot>, Box<dyn std::error::Error>> {
+        let mut snapshots = Vec::new();
+        
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            match self.clone_account(pubkey).await {
+                Ok(snapshot) => snapshots.push(snapshot),
+                Err(e) => println!("❌ Failed to clone account {}: {}", pubkey, e),
+            }
+            
+            // Rate limiting to avoid overwhelming RPC
+            if i % 10 == 0 && i > 0 {
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+        
+        Ok(snapshots)
+    }
+    
+    /// Save account snapshots to JSON file
+    pub fn save_snapshots(&self, snapshots: &[AccountSnapshot], filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let json = serde_json::to_string_pretty(snapshots)?;
+        let mut file = File::create(filename)?;
+        file.write_all(json.as_bytes())?;
+        
+        println!("✅ Saved {} account snapshots to {}", snapshots.len(), filename);
+        Ok(())
+    }
+    
+    /// Load account snapshots from JSON file
+    pub fn load_snapshots(&self, filename: &str) -> Result<Vec<AccountSnapshot>, Box<dyn std::error::Error>> {
+        let file = std::fs::read_to_string(filename)?;
+        let snapshots: Vec<AccountSnapshot> = serde_json::from_str(&file)?;
+        
+        println!("✅ Loaded {} account snapshots from {}", snapshots.len(), filename);
+        Ok(snapshots)
+    }
+}
+
+// ✅ DO: Implement clone script for specific protocols
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let fetcher = AccountFetcher::new("https://api.mainnet-beta.solana.com");
+    
+    // Define important accounts to clone
+    let important_accounts = vec![
+        // SPL Token Program
+        Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")?,
+        // Associated Token Program
+        Pubkey::from_str("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")?,
+        // Metaplex Token Metadata
+        Pubkey::from_str("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")?,
+        // System Program
+        Pubkey::from_str("11111111111111111111111111111111")?,
+    ];
+    
+    // Clone popular DeFi programs
+    let defi_programs = vec![
+        // Raydium AMM
+        "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+        // Serum DEX
+        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        // Orca
+        "9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP",
+    ];
+    
+    println!("Starting account cloning process...");
+    
+    // Clone important system accounts
+    let snapshots = fetcher.batch_clone_accounts(&important_accounts).await?;
+    fetcher.save_snapshots(&snapshots, "test-data/system-accounts.json")?;
+    
+    // Clone DeFi programs
+    for program_str in defi_programs {
+        let program_id = Pubkey::from_str(program_str)?;
+        match fetcher.clone_upgradeable_program(&program_id).await {
+            Ok(program_snapshot) => {
+                let filename = format!("test-data/programs/{}.json", program_str);
+                let json = serde_json::to_string_pretty(&program_snapshot)?;
+                std::fs::write(&filename, json)?;
+                println!("✅ Saved program snapshot: {}", filename);
+            }
+            Err(e) => println!("❌ Failed to clone program {}: {}", program_str, e),
+        }
+    }
+    
+    println!("✅ Account cloning completed!");
+    Ok(())
+}
+```
+
+### Development Tooling & IDE Configuration
+
+```json
+// ✅ DO: VS Code configuration for Solana development
+// .vscode/settings.json
+{
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.cargo.features": "all",
+    "rust-analyzer.imports.group.enable": false,
+    "rust-analyzer.completion.autoimport.enable": true,
+    "rust-analyzer.hover.actions.enable": true,
+    "rust-analyzer.lens.enable": true,
+    "rust-analyzer.lens.implementations.enable": true,
+    "rust-analyzer.lens.references.enable": true,
+    "rust-analyzer.lens.methodReferences.enable": true,
+    
+    "typescript.preferences.importModuleSpecifier": "relative",
+    "typescript.suggest.autoImports": true,
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    
+    "solana.commitment": "confirmed",
+    "solana.cluster": "http://localhost:8899",
+    "solana.explorer": "http://localhost:8899",
+    
+    "files.associations": {
+        "*.toml": "toml",
+        "*.ron": "rust"
+    },
+    
+    "terminal.integrated.env.linux": {
+        "SOLANA_CLI_CONFIG": "${workspaceFolder}/.config/solana/cli/config.yml"
+    },
+    "terminal.integrated.env.osx": {
+        "SOLANA_CLI_CONFIG": "${workspaceFolder}/.config/solana/cli/config.yml"
+    },
+    "terminal.integrated.env.windows": {
+        "SOLANA_CLI_CONFIG": "${workspaceFolder}\\.config\\solana\\cli\\config.yml"
+    },
+    
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll": true,
+        "source.organizeImports": true
+    },
+    
+    "search.exclude": {
+        "**/target": true,
+        "**/node_modules": true,
+        "**/test-ledger": true,
+        "**/logs": true
+    },
+    
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/test-ledger/**": true,
+        "**/logs/**": true
+    }
+}
+```
+
+```json
+// ✅ DO: Debug configuration for Solana programs
+// .vscode/launch.json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Rust Program",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/${workspaceFolderBasename}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "RUST_LOG": "debug"
+            },
+            "preLaunchTask": "rust: cargo build"
+        },
+        {
+            "name": "Debug Anchor Program",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/${fileBasenameNoExtension}.ts",
+            "env": {
+                "ANCHOR_PROVIDER_URL": "http://localhost:8899",
+                "ANCHOR_WALLET": "${workspaceFolder}/test-accounts/test-account-1.json"
+            },
+            "runtimeArgs": ["--loader", "ts-node/esm"],
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ]
+        },
+        {
+            "name": "Test Solana Program",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/node_modules/.bin/mocha",
+            "args": [
+                "tests/**/*.ts",
+                "--timeout",
+                "60000"
+            ],
+            "env": {
+                "NODE_ENV": "test",
+                "SOLANA_CLI_CONFIG": "${workspaceFolder}/.config/solana/cli/config.yml"
+            },
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
+        }
+    ]
+}
+```
+
+### Testing Data Management
+
+```typescript
+// ✅ DO: Implement test data seeding and management
+import {
+    Connection,
+    Keypair,
+    PublicKey,
+    LAMPORTS_PER_SOL,
+    SystemProgram,
+    Transaction,
+    sendAndConfirmTransaction,
+} from '@solana/web3.js';
+import {
+    createMint,
+    createAccount,
+    mintTo,
+    getOrCreateAssociatedTokenAccount,
+    TOKEN_PROGRAM_ID,
+} from '@solana/spl-token';
+import fs from 'fs';
+import path from 'path';
+
+export interface TestAccountConfig {
+    name: string;
+    balance: number; // in SOL
+    tokens?: {
+        mint: string;
+        amount: number;
+    }[];
+}
+
+export interface TestEnvironmentConfig {
+    accounts: TestAccountConfig[];
+    mints: {
+        name: string;
+        symbol: string;
+        decimals: number;
+        supply: number;
+    }[];
+}
+
+export class TestDataManager {
+    private connection: Connection;
+    private payer: Keypair;
+    private configPath: string;
+    
+    constructor(rpcUrl: string = "http://localhost:8899") {
+        this.connection = new Connection(rpcUrl, 'confirmed');
+        this.configPath = path.join(process.cwd(), 'test-data');
+        
+        // Load or create payer account
+        this.payer = this.loadOrCreateKeypair('payer.json');
+    }
+    
+    private loadOrCreateKeypair(filename: string): Keypair {
+        const filepath = path.join(this.configPath, 'accounts', filename);
+        
+        if (fs.existsSync(filepath)) {
+            const secretKey = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+            return Keypair.fromSecretKey(new Uint8Array(secretKey));
+        } else {
+            const keypair = Keypair.generate();
+            const dir = path.dirname(filepath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(filepath, JSON.stringify(Array.from(keypair.secretKey)));
+            return keypair;
+        }
+    }
+    
+    async setupTestEnvironment(config: TestEnvironmentConfig): Promise<void> {
+        console.log('🚀 Setting up test environment...');
+        
+        // Fund payer account
+        await this.requestAirdrop(this.payer.publicKey, 1000);
+        
+        // Create test mints
+        const mintKeypairs: Record<string, Keypair> = {};
+        for (const mintConfig of config.mints) {
+            console.log(`Creating mint: ${mintConfig.name}`);
+            const mintKeypair = await this.createTestMint(mintConfig);
+            mintKeypairs[mintConfig.name] = mintKeypair;
+        }
+        
+        // Create and fund test accounts
+        for (const accountConfig of config.accounts) {
+            console.log(`Setting up account: ${accountConfig.name}`);
+            await this.createTestAccount(accountConfig, mintKeypairs);
+        }
+        
+        console.log('✅ Test environment setup complete!');
+    }
+    
+    private async createTestMint(config: {
+        name: string;
+        symbol: string;
+        decimals: number;
+        supply: number;
+    }): Promise<Keypair> {
+        const mintKeypair = this.loadOrCreateKeypair(`${config.name}-mint.json`);
+        
+        try {
+            // Check if mint already exists
+            await this.connection.getAccountInfo(mintKeypair.publicKey);
+            console.log(`✅ Mint ${config.name} already exists`);
+            return mintKeypair;
+        } catch {
+            // Create new mint
+            await createMint(
+                this.connection,
+                this.payer,
+                this.payer.publicKey,
+                this.payer.publicKey,
+                config.decimals,
+                mintKeypair
+            );
+            
+            console.log(`✅ Created mint ${config.name}: ${mintKeypair.publicKey.toBase58()}`);
+            return mintKeypair;
+        }
+    }
+    
+    private async createTestAccount(
+        config: TestAccountConfig,
+        mints: Record<string, Keypair>
+    ): Promise<void> {
+        const accountKeypair = this.loadOrCreateKeypair(`${config.name}.json`);
+        
+        // Fund with SOL
+        if (config.balance > 0) {
+            await this.requestAirdrop(accountKeypair.publicKey, config.balance);
+        }
+        
+        // Create token accounts and mint tokens
+        if (config.tokens) {
+            for (const tokenConfig of config.tokens) {
+                const mintKeypair = mints[tokenConfig.mint];
+                if (!mintKeypair) {
+                    console.warn(`⚠️  Unknown mint: ${tokenConfig.mint}`);
+                    continue;
+                }
+                
+                // Create associated token account
+                const tokenAccount = await getOrCreateAssociatedTokenAccount(
+                    this.connection,
+                    this.payer,
+                    mintKeypair.publicKey,
+                    accountKeypair.publicKey
+                );
+                
+                // Mint tokens to account
+                if (tokenConfig.amount > 0) {
+                    await mintTo(
+                        this.connection,
+                        this.payer,
+                        mintKeypair.publicKey,
+                        tokenAccount.address,
+                        this.payer.publicKey,
+                        tokenConfig.amount
+                    );
+                    
+                    console.log(`✅ Minted ${tokenConfig.amount} ${tokenConfig.mint} to ${config.name}`);
+                }
+            }
+        }
+    }
+    
+    private async requestAirdrop(publicKey: PublicKey, amount: number): Promise<void> {
+        const balance = await this.connection.getBalance(publicKey);
+        const requiredBalance = amount * LAMPORTS_PER_SOL;
+        
+        if (balance < requiredBalance) {
+            const airdropAmount = requiredBalance - balance;
+            console.log(`💰 Airdropping ${airdropAmount / LAMPORTS_PER_SOL} SOL to ${publicKey.toBase58()}`);
+            
+            const signature = await this.connection.requestAirdrop(publicKey, airdropAmount);
+            await this.connection.confirmTransaction(signature);
+        }
+    }
+    
+    async resetEnvironment(): Promise<void> {
+        console.log('🔄 Resetting test environment...');
+        
+        const accountsDir = path.join(this.configPath, 'accounts');
+        if (fs.existsSync(accountsDir)) {
+            fs.rmSync(accountsDir, { recursive: true });
+            console.log('✅ Removed all test accounts');
+        }
+        
+        console.log('✅ Environment reset complete');
+    }
+    
+    async createSnapshot(name: string): Promise<void> {
+        console.log(`📸 Creating snapshot: ${name}`);
+        
+        const snapshotDir = path.join(this.configPath, 'snapshots', name);
+        if (!fs.existsSync(snapshotDir)) {
+            fs.mkdirSync(snapshotDir, { recursive: true });
+        }
+        
+        // Copy current account states
+        const accountsDir = path.join(this.configPath, 'accounts');
+        if (fs.existsSync(accountsDir)) {
+            fs.cpSync(accountsDir, path.join(snapshotDir, 'accounts'), { recursive: true });
+        }
+        
+        // Save snapshot metadata
+        const metadata = {
+            name,
+            timestamp: new Date().toISOString(),
+            rpcUrl: this.connection.rpcEndpoint,
+        };
+        
+        fs.writeFileSync(
+            path.join(snapshotDir, 'metadata.json'),
+            JSON.stringify(metadata, null, 2)
+        );
+        
+        console.log(`✅ Snapshot created: ${name}`);
+    }
+    
+    async loadSnapshot(name: string): Promise<void> {
+        console.log(`📂 Loading snapshot: ${name}`);
+        
+        const snapshotDir = path.join(this.configPath, 'snapshots', name);
+        if (!fs.existsSync(snapshotDir)) {
+            throw new Error(`Snapshot ${name} not found`);
+        }
+        
+        // Restore account states
+        const accountsBackup = path.join(snapshotDir, 'accounts');
+        const accountsDir = path.join(this.configPath, 'accounts');
+        
+        if (fs.existsSync(accountsDir)) {
+            fs.rmSync(accountsDir, { recursive: true });
+        }
+        
+        if (fs.existsSync(accountsBackup)) {
+            fs.cpSync(accountsBackup, accountsDir, { recursive: true });
+        }
+        
+        console.log(`✅ Snapshot loaded: ${name}`);
+    }
+}
+
+// ✅ DO: Example test environment configuration
+export const defaultTestConfig: TestEnvironmentConfig = {
+    accounts: [
+        {
+            name: 'alice',
+            balance: 100,
+            tokens: [
+                { mint: 'USDC', amount: 10000 },
+                { mint: 'USDT', amount: 5000 },
+            ]
+        },
+        {
+            name: 'bob',
+            balance: 50,
+            tokens: [
+                { mint: 'USDC', amount: 2000 },
+            ]
+        },
+        {
+            name: 'carol',
+            balance: 25,
+        }
+    ],
+    mints: [
+        {
+            name: 'USDC',
+            symbol: 'USDC',
+            decimals: 6,
+            supply: 1000000,
+        },
+        {
+            name: 'USDT',
+            symbol: 'USDT',
+            decimals: 6,
+            supply: 500000,
+        }
+    ]
+};
+```
+
+## Advanced Patterns
+
+### Docker Development Environment
+
+```yaml
+# ✅ DO: Docker Compose for complete development environment
+# docker-compose.yml
+version: '3.8'
+
+services:
+  solana-validator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8899:8899"   # RPC
+      - "9900:9900"   # Faucet
+      - "8900:8900"   # WebSocket
+    volumes:
+      - ./test-ledger:/solana/test-ledger
+      - ./logs:/solana/logs
+      - ./config:/solana/config
+    environment:
+      - RUST_LOG=solana=info
+    command: >
+      solana-test-validator
+      --ledger /solana/test-ledger
+      --bind-address 0.0.0.0
+      --rpc-port 8899
+      --rpc-bind-address 0.0.0.0
+      --faucet-port 9900
+      --faucet-sol 1000000
+      --reset
+      --quiet
+      --slots-per-epoch 32
+      --log /solana/logs/validator.log
+    healthcheck:
+      test: ["CMD", "solana", "cluster-version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: solana_dev
+      POSTGRES_USER: solana
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+### Environment Health Monitoring
+
+```rust
+// ✅ DO: Health check system for development environment
+use {
+    solana_client::rpc_client::RpcClient,
+    solana_sdk::commitment_config::CommitmentConfig,
+    tokio::time::{sleep, Duration},
+    serde_json::json,
+};
+
+pub struct EnvironmentHealthChecker {
+    rpc_client: RpcClient,
+}
+
+impl EnvironmentHealthChecker {
+    pub fn new(rpc_url: &str) -> Self {
+        Self {
+            rpc_client: RpcClient::new_with_commitment(
+                rpc_url.to_string(),
+                CommitmentConfig::confirmed(),
+            ),
+        }
+    }
+    
+    pub async fn run_health_checks(&self) -> Result<HealthReport, Box<dyn std::error::Error>> {
+        let mut report = HealthReport::default();
+        
+        // Check RPC connectivity
+        report.rpc_status = self.check_rpc_connectivity().await;
+        
+        // Check validator status
+        report.validator_status = self.check_validator_status().await;
+        
+        // Check slot progression
+        report.slot_progression = self.check_slot_progression().await;
+        
+        // Check faucet availability
+        report.faucet_status = self.check_faucet_status().await;
+        
+        // Overall health
+        report.overall_health = self.calculate_overall_health(&report);
+        
+        Ok(report)
+    }
+    
+    async fn check_rpc_connectivity(&self) -> HealthStatus {
+        match self.rpc_client.get_version() {
+            Ok(_) => HealthStatus::Healthy,
+            Err(e) => HealthStatus::Unhealthy(format!("RPC error: {}", e)),
+        }
+    }
+    
+    async fn check_validator_status(&self) -> HealthStatus {
+        match self.rpc_client.get_cluster_nodes() {
+            Ok(nodes) if !nodes.is_empty() => HealthStatus::Healthy,
+            Ok(_) => HealthStatus::Unhealthy("No validator nodes found".to_string()),
+            Err(e) => HealthStatus::Unhealthy(format!("Validator check failed: {}", e)),
+        }
+    }
+    
+    async fn check_slot_progression(&self) -> HealthStatus {
+        let initial_slot = match self.rpc_client.get_slot() {
+            Ok(slot) => slot,
+            Err(e) => return HealthStatus::Unhealthy(format!("Could not get slot: {}", e)),
+        };
+        
+        // Wait 5 seconds and check if slot progressed
+        sleep(Duration::from_secs(5)).await;
+        
+        match self.rpc_client.get_slot() {
+            Ok(new_slot) if new_slot > initial_slot => HealthStatus::Healthy,
+            Ok(_) => HealthStatus::Unhealthy("Slots not progressing".to_string()),
+            Err(e) => HealthStatus::Unhealthy(format!("Slot progression check failed: {}", e)),
+        }
+    }
+    
+    async fn check_faucet_status(&self) -> HealthStatus {
+        // Try to get faucet information (if available)
+        // This is a simplified check - in practice you'd test actual airdrop
+        match reqwest::get("http://localhost:9900/health").await {
+            Ok(response) if response.status().is_success() => HealthStatus::Healthy,
+            Ok(response) => HealthStatus::Unhealthy(
+                format!("Faucet responded with status: {}", response.status())
+            ),
+            Err(e) => HealthStatus::Unhealthy(format!("Faucet unreachable: {}", e)),
+        }
+    }
+    
+    fn calculate_overall_health(&self, report: &HealthReport) -> HealthStatus {
+        let statuses = vec![
+            &report.rpc_status,
+            &report.validator_status,
+            &report.slot_progression,
+        ];
+        
+        if statuses.iter().all(|s| matches!(s, HealthStatus::Healthy)) {
+            HealthStatus::Healthy
+        } else {
+            let unhealthy_count = statuses.iter()
+                .filter(|s| matches!(s, HealthStatus::Unhealthy(_)))
+                .count();
+            
+            HealthStatus::Unhealthy(format!("{} critical checks failed", unhealthy_count))
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct HealthReport {
+    pub rpc_status: HealthStatus,
+    pub validator_status: HealthStatus,
+    pub slot_progression: HealthStatus,
+    pub faucet_status: HealthStatus,
+    pub overall_health: HealthStatus,
+}
+
+#[derive(Debug)]
+pub enum HealthStatus {
+    Healthy,
+    Unhealthy(String),
+}
+
+impl Default for HealthStatus {
+    fn default() -> Self {
+        HealthStatus::Unhealthy("Not checked".to_string())
+    }
+}
+
+impl HealthReport {
+    pub fn print_summary(&self) {
+        println!("\n🏥 Environment Health Report");
+        println!("============================");
+        
+        self.print_status("RPC Connectivity", &self.rpc_status);
+        self.print_status("Validator Status", &self.validator_status);
+        self.print_status("Slot Progression", &self.slot_progression);
+        self.print_status("Faucet Status", &self.faucet_status);
+        
+        println!("----------------------------");
+        self.print_status("Overall Health", &self.overall_health);
+        println!();
+    }
+    
+    fn print_status(&self, name: &str, status: &HealthStatus) {
+        match status {
+            HealthStatus::Healthy => println!("✅ {}: Healthy", name),
+            HealthStatus::Unhealthy(msg) => println!("❌ {}: {}", name, msg),
+        }
+    }
+}
+```
+
+## Best Practices Summary
+
+### Local Validator Setup
+- Use consistent configuration across team members
+- Clone essential mainnet programs for realistic testing
+- Configure appropriate slot timing for faster development
+- Implement proper cleanup and reset procedures
+
+### Account & Program Management
+- Automate account cloning from mainnet for testing
+- Maintain snapshots of important program states
+- Use version control for test data configurations
+- Implement rate limiting for RPC requests
+
+### Development Workflow
+- Set up comprehensive IDE configurations
+- Use debugging configurations for both Rust and TypeScript
+- Implement hot reloading for faster iteration
+- Integrate health checks into development workflow
+
+### Testing Environment
+- Automate test data seeding and management
+- Use deterministic test accounts and scenarios
+- Implement snapshot and restore functionality
+- Provide easy environment reset capabilities
+
+## References
+- [Solana Test Validator Documentation](mdc:https:/docs.solana.com/developing/test-validator)
+- [Solana CLI Configuration](mdc:https:/docs.solana.com/cli/conventions)
+- [Anchor Development Environment](mdc:https:/www.anchor-lang.com/docs/installation)
+- [VS Code Rust Extension](mdc:https:/marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

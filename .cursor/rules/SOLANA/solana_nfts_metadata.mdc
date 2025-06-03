@@ -1,0 +1,995 @@
+---
+description: Solana NFT development, Metaplex Token Metadata Standard
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana NFT development, Metaplex Token Metadata Standard, and digital asset management. You focus on producing secure, efficient NFT programs using the latest Metaplex standards and best practices.
+
+## Solana NFT Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   NFT Mint      │    │   Metadata PDA   │    │   Collection    │
+│   - Mint Auth   │───▶│   - Name/Symbol  │───▶│   - Verify Auth │
+│   - Freeze Auth │    │   - URI/Image    │    │   - Size        │
+│   - Supply: 1   │    │   - Attributes   │    │   - Family      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Token Account │    │   Master Edition │    │   Marketplace   │
+│   - Owner       │    │   - Max Supply   │    │   - Listings    │
+│   - Amount: 1   │    │   - Edition Num  │    │   - Royalties   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+nft-program/
+├── programs/
+│   └── nft-program/
+│       ├── src/
+│       │   ├── lib.rs                    # Program entry point
+│       │   ├── instructions/
+│       │   │   ├── mod.rs               # Instruction exports
+│       │   │   ├── mint_nft.rs          # NFT minting logic
+│       │   │   ├── update_metadata.rs   # Metadata updates
+│       │   │   ├── create_collection.rs # Collection creation
+│       │   │   ├── verify_collection.rs # Collection verification
+│       │   │   └── transfer_nft.rs      # Transfer with royalties
+│       │   ├── state/
+│       │   │   ├── mod.rs               # State exports
+│       │   │   ├── nft_config.rs        # NFT configuration
+│       │   │   ├── collection_data.rs   # Collection state
+│       │   │   └── marketplace.rs       # Marketplace state
+│       │   ├── utils/
+│       │   │   ├── mod.rs               # Utility exports
+│       │   │   ├── metadata.rs          # Metadata helpers
+│       │   │   ├── verification.rs      # Verification utils
+│       │   │   └── royalties.rs         # Royalty calculations
+│       │   └── errors.rs                # Custom errors
+│       └── Cargo.toml
+├── tests/
+│   ├── nft_minting.rs                   # Minting tests
+│   ├── collection_management.rs         # Collection tests
+│   └── marketplace_integration.rs       # Marketplace tests
+└── metadata/
+    ├── schemas/                         # JSON schemas
+    └── examples/                        # Example metadata
+```
+
+## Core Implementation Patterns
+
+### NFT Minting & Creation
+
+```rust
+// ✅ DO: Use Metaplex Token Metadata for NFT creation
+use {
+    anchor_lang::prelude::*,
+    mpl_token_metadata::{
+        instruction::{create_metadata_accounts_v3, create_master_edition_v3},
+        state::{DataV2, TokenMetadataAccount},
+    },
+    anchor_spl::{
+        associated_token::AssociatedToken,
+        token::{Mint, Token, TokenAccount},
+    },
+};
+
+#[derive(Accounts)]
+pub struct MintNft<'info> {
+    #[account(mut)]
+    pub mint_authority: Signer<'info>,
+    
+    /// CHECK: This is not dangerous because we validate it matches expected mint
+    #[account(mut)]
+    pub mint: Account<'info, Mint>,
+    
+    #[account(
+        init,
+        payer = mint_authority,
+        associated_token::mint = mint,
+        associated_token::authority = mint_authority,
+    )]
+    pub token_account: Account<'info, TokenAccount>,
+    
+    /// CHECK: This account will be created by the metaplex program
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: This account will be created by the metaplex program
+    #[account(mut)]
+    pub master_edition: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+    /// CHECK: This is the metaplex program
+    pub token_metadata_program: UncheckedAccount<'info>,
+}
+
+impl<'info> MintNft<'info> {
+    pub fn mint_nft(
+        &mut self,
+        name: String,
+        symbol: String,
+        uri: String,
+        seller_fee_basis_points: u16,
+        creators: Option<Vec<mpl_token_metadata::state::Creator>>,
+    ) -> Result<()> {
+        // Validate metadata parameters
+        require!(name.len() <= 32, NftError::NameTooLong);
+        require!(symbol.len() <= 10, NftError::SymbolTooLong);
+        require!(uri.len() <= 200, NftError::UriTooLong);
+        require!(seller_fee_basis_points <= 10000, NftError::InvalidRoyalty);
+        
+        // Create metadata
+        let metadata_data = DataV2 {
+            name,
+            symbol,
+            uri,
+            seller_fee_basis_points,
+            creators,
+            collection: None,
+            uses: None,
+        };
+        
+        // Mint token to associated account
+        anchor_spl::token::mint_to(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::MintTo {
+                    mint: self.mint.to_account_info(),
+                    to: self.token_account.to_account_info(),
+                    authority: self.mint_authority.to_account_info(),
+                },
+            ),
+            1, // NFTs have supply of 1
+        )?;
+        
+        // Create metadata account
+        self.create_metadata_account(metadata_data)?;
+        
+        // Create master edition (makes it NFT, not fungible token)
+        self.create_master_edition()?;
+        
+        Ok(())
+    }
+    
+    fn create_metadata_account(&self, data: DataV2) -> Result<()> {
+        let accounts = vec![
+            self.metadata.to_account_info(),
+            self.mint.to_account_info(),
+            self.mint_authority.to_account_info(),
+            self.mint_authority.to_account_info(),
+            self.system_program.to_account_info(),
+            self.rent.to_account_info(),
+        ];
+        
+        let instruction = create_metadata_accounts_v3(
+            *self.token_metadata_program.key,
+            *self.metadata.key,
+            *self.mint.key,
+            *self.mint_authority.key,
+            *self.mint_authority.key,
+            *self.mint_authority.key,
+            data,
+            true, // is_mutable
+            true, // update_authority_is_signer
+            None, // collection_details
+        );
+        
+        solana_program::program::invoke(
+            &instruction,
+            &accounts,
+        )?;
+        
+        Ok(())
+    }
+    
+    fn create_master_edition(&self) -> Result<()> {
+        let accounts = vec![
+            self.master_edition.to_account_info(),
+            self.mint.to_account_info(),
+            self.mint_authority.to_account_info(),
+            self.mint_authority.to_account_info(),
+            self.metadata.to_account_info(),
+            self.token_metadata_program.to_account_info(),
+            self.token_program.to_account_info(),
+            self.system_program.to_account_info(),
+            self.rent.to_account_info(),
+        ];
+        
+        let instruction = create_master_edition_v3(
+            *self.token_metadata_program.key,
+            *self.master_edition.key,
+            *self.mint.key,
+            *self.mint_authority.key,
+            *self.mint_authority.key,
+            *self.metadata.key,
+            *self.mint_authority.key,
+            Some(0), // max_supply (0 means unique)
+        );
+        
+        solana_program::program::invoke(
+            &instruction,
+            &accounts,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ❌ DON'T: Create NFTs without proper metadata standards
+#[derive(Accounts)]
+pub struct BadMintNft<'info> {
+    pub mint: Account<'info, Mint>,
+    // Missing metadata, master edition, proper validation
+}
+```
+
+### Collection Management
+
+```rust
+// ✅ DO: Implement proper collection creation and verification
+use mpl_token_metadata::state::{CollectionDetails, Collection};
+
+#[derive(Accounts)]
+pub struct CreateCollection<'info> {
+    #[account(mut)]
+    pub collection_authority: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = collection_authority,
+        mint::decimals = 0,
+        mint::authority = collection_authority.key(),
+        mint::freeze_authority = collection_authority.key(),
+    )]
+    pub collection_mint: Account<'info, Mint>,
+    
+    /// CHECK: Validated by Metaplex program
+    #[account(mut)]
+    pub collection_metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: Validated by Metaplex program
+    #[account(mut)]
+    pub collection_master_edition: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+    /// CHECK: This is the metaplex program
+    pub token_metadata_program: UncheckedAccount<'info>,
+}
+
+impl<'info> CreateCollection<'info> {
+    pub fn create_collection(
+        &mut self,
+        name: String,
+        symbol: String,
+        uri: String,
+        seller_fee_basis_points: u16,
+        creators: Option<Vec<mpl_token_metadata::state::Creator>>,
+        size: u64,
+    ) -> Result<()> {
+        // Validate collection parameters
+        require!(size > 0, NftError::InvalidCollectionSize);
+        require!(size <= 10000, NftError::CollectionTooLarge);
+        
+        let collection_data = DataV2 {
+            name,
+            symbol,
+            uri,
+            seller_fee_basis_points,
+            creators,
+            collection: None,
+            uses: None,
+        };
+        
+        // Create collection metadata with size details
+        let collection_details = Some(CollectionDetails::V1 { size });
+        
+        // Implementation similar to mint_nft but with collection_details
+        self.create_collection_metadata(collection_data, collection_details)?;
+        self.create_collection_master_edition()?;
+        
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct VerifyCollection<'info> {
+    #[account(mut)]
+    pub collection_authority: Signer<'info>,
+    
+    /// CHECK: Validated by constraints
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: Validated by constraints
+    pub collection_mint: UncheckedAccount<'info>,
+    
+    /// CHECK: Validated by constraints
+    pub collection_metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: Validated by constraints
+    pub collection_master_edition: UncheckedAccount<'info>,
+    
+    /// CHECK: This is the metaplex program
+    pub token_metadata_program: UncheckedAccount<'info>,
+}
+
+impl<'info> VerifyCollection<'info> {
+    pub fn verify_collection(&self) -> Result<()> {
+        let accounts = vec![
+            self.metadata.to_account_info(),
+            self.collection_authority.to_account_info(),
+            self.collection_mint.to_account_info(),
+            self.collection_metadata.to_account_info(),
+            self.collection_master_edition.to_account_info(),
+        ];
+        
+        let instruction = mpl_token_metadata::instruction::verify_collection(
+            *self.token_metadata_program.key,
+            *self.metadata.key,
+            *self.collection_authority.key,
+            *self.collection_authority.key,
+            *self.collection_mint.key,
+            *self.collection_metadata.key,
+            *self.collection_master_edition.key,
+            None,
+        );
+        
+        solana_program::program::invoke(
+            &instruction,
+            &accounts,
+        )?;
+        
+        Ok(())
+    }
+}
+```
+
+### Metadata Management & Updates
+
+```rust
+// ✅ DO: Implement secure metadata update patterns
+#[derive(Accounts)]
+pub struct UpdateMetadata<'info> {
+    #[account(mut)]
+    pub update_authority: Signer<'info>,
+    
+    /// CHECK: Validated by Metaplex constraints
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+    
+    /// CHECK: This is the metaplex program
+    pub token_metadata_program: UncheckedAccount<'info>,
+}
+
+impl<'info> UpdateMetadata<'info> {
+    pub fn update_metadata(
+        &self,
+        new_data: Option<DataV2>,
+        new_update_authority: Option<Pubkey>,
+        primary_sale_happened: Option<bool>,
+        is_mutable: Option<bool>,
+    ) -> Result<()> {
+        // Validate update permissions and data
+        if let Some(ref data) = new_data {
+            require!(data.name.len() <= 32, NftError::NameTooLong);
+            require!(data.symbol.len() <= 10, NftError::SymbolTooLong);
+            require!(data.uri.len() <= 200, NftError::UriTooLong);
+            require!(data.seller_fee_basis_points <= 10000, NftError::InvalidRoyalty);
+        }
+        
+        let instruction = mpl_token_metadata::instruction::update_metadata_accounts_v2(
+            *self.token_metadata_program.key,
+            *self.metadata.key,
+            *self.update_authority.key,
+            new_update_authority,
+            new_data,
+            primary_sale_happened,
+            is_mutable,
+        );
+        
+        let accounts = vec![
+            self.metadata.to_account_info(),
+            self.update_authority.to_account_info(),
+        ];
+        
+        solana_program::program::invoke(
+            &instruction,
+            &accounts,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement metadata URI validation utilities
+pub mod metadata_utils {
+    use super::*;
+    
+    pub struct MetadataValidator;
+    
+    impl MetadataValidator {
+        pub fn validate_uri(uri: &str) -> Result<()> {
+            require!(!uri.is_empty(), NftError::EmptyUri);
+            require!(uri.len() <= 200, NftError::UriTooLong);
+            
+            // Validate URI format
+            if uri.starts_with("https://") || uri.starts_with("ipfs://") || uri.starts_with("ar://") {
+                Ok(())
+            } else {
+                Err(NftError::InvalidUriFormat.into())
+            }
+        }
+        
+        pub fn validate_creators(creators: &Option<Vec<mpl_token_metadata::state::Creator>>) -> Result<()> {
+            if let Some(creators_list) = creators {
+                require!(creators_list.len() <= 5, NftError::TooManyCreators);
+                
+                let total_share: u8 = creators_list.iter()
+                    .map(|creator| creator.share)
+                    .sum();
+                
+                require!(total_share == 100, NftError::InvalidCreatorShares);
+                
+                // Validate each creator
+                for creator in creators_list {
+                    require!(creator.share > 0, NftError::ZeroCreatorShare);
+                }
+            }
+            
+            Ok(())
+        }
+        
+        pub fn calculate_royalty_amount(sale_price: u64, royalty_basis_points: u16) -> Result<u64> {
+            require!(royalty_basis_points <= 10000, NftError::InvalidRoyalty);
+            
+            let royalty_amount = sale_price
+                .checked_mul(royalty_basis_points as u64)
+                .ok_or(NftError::ArithmeticOverflow)?
+                .checked_div(10000)
+                .ok_or(NftError::ArithmeticOverflow)?;
+            
+            Ok(royalty_amount)
+        }
+    }
+}
+```
+
+## Advanced Patterns
+
+### Marketplace Integration & Royalties
+
+```rust
+// ✅ DO: Implement marketplace patterns with royalty enforcement
+#[derive(Accounts)]
+pub struct MarketplaceSale<'info> {
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+    
+    /// CHECK: Validated by constraints
+    #[account(mut)]
+    pub seller: UncheckedAccount<'info>,
+    
+    #[account(mut)]
+    pub nft_mint: Account<'info, Mint>,
+    
+    #[account(
+        mut,
+        associated_token::mint = nft_mint,
+        associated_token::authority = seller,
+    )]
+    pub seller_token_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        init_if_needed,
+        payer = buyer,
+        associated_token::mint = nft_mint,
+        associated_token::authority = buyer,
+    )]
+    pub buyer_token_account: Account<'info, TokenAccount>,
+    
+    /// CHECK: Validated by Metaplex
+    pub metadata: UncheckedAccount<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"marketplace", nft_mint.key().as_ref()],
+        bump,
+    )]
+    pub listing: Account<'info, Listing>,
+    
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[account]
+pub struct Listing {
+    pub seller: Pubkey,
+    pub mint: Pubkey,
+    pub price: u64,
+    pub created_at: i64,
+    pub is_active: bool,
+    pub bump: u8,
+}
+
+impl<'info> MarketplaceSale<'info> {
+    pub fn execute_sale(&mut self, sale_price: u64) -> Result<()> {
+        require!(self.listing.is_active, MarketplaceError::ListingNotActive);
+        require!(sale_price >= self.listing.price, MarketplaceError::InsufficientPrice);
+        
+        // Parse metadata to get royalty information
+        let metadata_account = &self.metadata;
+        let metadata = mpl_token_metadata::state::Metadata::from_account_info(metadata_account)?;
+        
+        // Calculate and distribute royalties
+        if let Some(creators) = &metadata.data.creators {
+            self.distribute_royalties(sale_price, creators)?;
+        }
+        
+        // Calculate seller proceeds after royalties
+        let royalty_amount = metadata_utils::MetadataValidator::calculate_royalty_amount(
+            sale_price,
+            metadata.data.seller_fee_basis_points,
+        )?;
+        
+        let seller_proceeds = sale_price
+            .checked_sub(royalty_amount)
+            .ok_or(MarketplaceError::ArithmeticOverflow)?;
+        
+        // Transfer payment to seller
+        self.transfer_payment_to_seller(seller_proceeds)?;
+        
+        // Transfer NFT to buyer
+        self.transfer_nft_to_buyer()?;
+        
+        // Mark listing as inactive
+        self.listing.is_active = false;
+        
+        Ok(())
+    }
+    
+    fn distribute_royalties(
+        &self,
+        sale_price: u64,
+        creators: &[mpl_token_metadata::state::Creator],
+    ) -> Result<()> {
+        for creator in creators {
+            if creator.verified {
+                let creator_royalty = sale_price
+                    .checked_mul(creator.share as u64)
+                    .ok_or(MarketplaceError::ArithmeticOverflow)?
+                    .checked_div(10000)
+                    .ok_or(MarketplaceError::ArithmeticOverflow)?;
+                
+                if creator_royalty > 0 {
+                    // Transfer royalty to creator
+                    **self.buyer.to_account_info().try_borrow_mut_lamports()? = self.buyer
+                        .to_account_info()
+                        .lamports()
+                        .checked_sub(creator_royalty)
+                        .ok_or(MarketplaceError::InsufficientFunds)?;
+                    
+                    **creator.address.try_borrow_mut_lamports()? = creator.address
+                        .lamports()
+                        .checked_add(creator_royalty)
+                        .ok_or(MarketplaceError::ArithmeticOverflow)?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn transfer_nft_to_buyer(&self) -> Result<()> {
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: self.seller_token_account.to_account_info(),
+                    to: self.buyer_token_account.to_account_info(),
+                    authority: self.seller.to_account_info(),
+                },
+            ),
+            1,
+        )?;
+        
+        Ok(())
+    }
+}
+```
+
+### Generative NFT Systems
+
+```rust
+// ✅ DO: Implement secure generative NFT minting with randomness
+#[derive(Accounts)]
+pub struct MintGenerativeNft<'info> {
+    #[account(mut)]
+    pub minter: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"collection_config", collection_mint.key().as_ref()],
+        bump = collection_config.bump,
+    )]
+    pub collection_config: Account<'info, CollectionConfig>,
+    
+    /// CHECK: Validated by collection_config
+    pub collection_mint: UncheckedAccount<'info>,
+    
+    #[account(
+        init,
+        payer = minter,
+        mint::decimals = 0,
+        mint::authority = collection_config.key(),
+        mint::freeze_authority = collection_config.key(),
+    )]
+    pub nft_mint: Account<'info, Mint>,
+    
+    /// CHECK: Recent slothashes sysvar
+    pub recent_slothashes: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[account]
+pub struct CollectionConfig {
+    pub authority: Pubkey,
+    pub collection_mint: Pubkey,
+    pub total_supply: u64,
+    pub current_supply: u64,
+    pub base_uri: String,
+    pub price: u64,
+    pub go_live_date: i64,
+    pub traits: Vec<TraitLayer>,
+    pub bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct TraitLayer {
+    pub name: String,
+    pub traits: Vec<Trait>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct Trait {
+    pub name: String,
+    pub rarity_weight: u16,
+    pub image_hash: String,
+}
+
+impl<'info> MintGenerativeNft<'info> {
+    pub fn mint_generative_nft(&mut self) -> Result<()> {
+        let config = &mut self.collection_config;
+        
+        // Validate minting conditions
+        require!(
+            Clock::get()?.unix_timestamp >= config.go_live_date,
+            GenerativeError::MintNotLive
+        );
+        require!(
+            config.current_supply < config.total_supply,
+            GenerativeError::CollectionSoldOut
+        );
+        
+        // Generate traits using on-chain randomness
+        let random_seed = self.get_random_seed()?;
+        let generated_traits = self.generate_traits(random_seed)?;
+        
+        // Create metadata URI based on traits
+        let metadata_uri = self.build_metadata_uri(&generated_traits)?;
+        
+        // Mint NFT with generated metadata
+        self.mint_nft_with_metadata(metadata_uri, generated_traits)?;
+        
+        // Increment supply
+        config.current_supply = config.current_supply
+            .checked_add(1)
+            .ok_or(GenerativeError::ArithmeticOverflow)?;
+        
+        Ok(())
+    }
+    
+    fn get_random_seed(&self) -> Result<u64> {
+        let slot_hashes = &self.recent_slothashes;
+        let data = slot_hashes.data.borrow();
+        
+        // Use recent slot hash as randomness source
+        let most_recent = &data[0..8];
+        let seed = u64::from_le_bytes(
+            most_recent.try_into()
+                .map_err(|_| GenerativeError::InvalidRandomness)?
+        );
+        
+        // Combine with current timestamp and mint count for additional entropy
+        let timestamp = Clock::get()?.unix_timestamp as u64;
+        let supply = self.collection_config.current_supply;
+        
+        Ok(seed.wrapping_add(timestamp).wrapping_add(supply))
+    }
+    
+    fn generate_traits(&self, seed: u64) -> Result<Vec<(String, String)>> {
+        let mut generated_traits = Vec::new();
+        let mut current_seed = seed;
+        
+        for trait_layer in &self.collection_config.traits {
+            // Calculate total weight for this layer
+            let total_weight: u32 = trait_layer.traits
+                .iter()
+                .map(|t| t.rarity_weight as u32)
+                .sum();
+            
+            // Generate random number for trait selection
+            let random_value = (current_seed % total_weight as u64) as u32;
+            
+            // Select trait based on rarity weights
+            let mut weight_sum = 0u32;
+            for trait in &trait_layer.traits {
+                weight_sum += trait.rarity_weight as u32;
+                if random_value < weight_sum {
+                    generated_traits.push((trait_layer.name.clone(), trait.name.clone()));
+                    break;
+                }
+            }
+            
+            // Update seed for next layer
+            current_seed = current_seed.wrapping_mul(1103515245).wrapping_add(12345);
+        }
+        
+        Ok(generated_traits)
+    }
+}
+```
+
+## Security Patterns
+
+### NFT Transfer Restrictions
+
+```rust
+// ✅ DO: Implement transfer restrictions and hooks
+#[derive(Accounts)]
+pub struct TransferWithRestrictions<'info> {
+    pub authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub from_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub to_token_account: Account<'info, TokenAccount>,
+    
+    pub nft_mint: Account<'info, Mint>,
+    
+    /// CHECK: Validated by Metaplex
+    pub metadata: UncheckedAccount<'info>,
+    
+    #[account(
+        seeds = [b"transfer_config", nft_mint.key().as_ref()],
+        bump = transfer_config.bump,
+    )]
+    pub transfer_config: Account<'info, TransferConfig>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+#[account]
+pub struct TransferConfig {
+    pub mint: Pubkey,
+    pub transfer_restrictions: TransferRestrictions,
+    pub royalty_enforcement: bool,
+    pub creator_verification_required: bool,
+    pub bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct TransferRestrictions {
+    pub freeze_until: Option<i64>,
+    pub allowed_programs: Vec<Pubkey>,
+    pub require_memo: bool,
+    pub max_transfers_per_day: Option<u16>,
+}
+
+impl<'info> TransferWithRestrictions<'info> {
+    pub fn transfer_with_restrictions(&self, memo: Option<String>) -> Result<()> {
+        let config = &self.transfer_config;
+        let restrictions = &config.transfer_restrictions;
+        
+        // Check freeze period
+        if let Some(freeze_until) = restrictions.freeze_until {
+            require!(
+                Clock::get()?.unix_timestamp >= freeze_until,
+                TransferError::TransferFrozen
+            );
+        }
+        
+        // Check memo requirement
+        if restrictions.require_memo {
+            require!(memo.is_some(), TransferError::MemoRequired);
+        }
+        
+        // Validate creator verification if required
+        if config.creator_verification_required {
+            self.validate_creator_verification()?;
+        }
+        
+        // Check transfer limits
+        if let Some(max_transfers) = restrictions.max_transfers_per_day {
+            self.check_daily_transfer_limit(max_transfers)?;
+        }
+        
+        // Execute transfer
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: self.from_token_account.to_account_info(),
+                    to: self.to_token_account.to_account_info(),
+                    authority: self.authority.to_account_info(),
+                },
+            ),
+            1,
+        )?;
+        
+        Ok(())
+    }
+    
+    fn validate_creator_verification(&self) -> Result<()> {
+        let metadata_account = &self.metadata;
+        let metadata = mpl_token_metadata::state::Metadata::from_account_info(metadata_account)?;
+        
+        if let Some(creators) = &metadata.data.creators {
+            let verified_creators = creators.iter().filter(|c| c.verified).count();
+            require!(verified_creators > 0, TransferError::NoVerifiedCreators);
+        }
+        
+        Ok(())
+    }
+}
+```
+
+## Error Handling
+
+```rust
+// ✅ DO: Define comprehensive NFT-specific errors
+#[error_code]
+pub enum NftError {
+    #[msg("NFT name is too long (max 32 characters)")]
+    NameTooLong,
+    
+    #[msg("NFT symbol is too long (max 10 characters)")]
+    SymbolTooLong,
+    
+    #[msg("Metadata URI is too long (max 200 characters)")]
+    UriTooLong,
+    
+    #[msg("URI cannot be empty")]
+    EmptyUri,
+    
+    #[msg("Invalid URI format (must start with https://, ipfs://, or ar://)")]
+    InvalidUriFormat,
+    
+    #[msg("Royalty percentage cannot exceed 100% (10000 basis points)")]
+    InvalidRoyalty,
+    
+    #[msg("Too many creators (max 5)")]
+    TooManyCreators,
+    
+    #[msg("Creator shares must sum to 100")]
+    InvalidCreatorShares,
+    
+    #[msg("Creator share cannot be zero")]
+    ZeroCreatorShare,
+    
+    #[msg("Collection size must be greater than zero")]
+    InvalidCollectionSize,
+    
+    #[msg("Collection size cannot exceed 10,000")]
+    CollectionTooLarge,
+    
+    #[msg("Arithmetic overflow occurred")]
+    ArithmeticOverflow,
+}
+
+#[error_code]
+pub enum MarketplaceError {
+    #[msg("Listing is not active")]
+    ListingNotActive,
+    
+    #[msg("Insufficient price offered")]
+    InsufficientPrice,
+    
+    #[msg("Insufficient funds for purchase")]
+    InsufficientFunds,
+    
+    #[msg("Arithmetic overflow in calculations")]
+    ArithmeticOverflow,
+    
+    #[msg("Invalid marketplace fee")]
+    InvalidMarketplaceFee,
+    
+    #[msg("Unauthorized marketplace operation")]
+    UnauthorizedOperation,
+}
+
+#[error_code]
+pub enum GenerativeError {
+    #[msg("Minting has not started yet")]
+    MintNotLive,
+    
+    #[msg("Collection is sold out")]
+    CollectionSoldOut,
+    
+    #[msg("Invalid randomness source")]
+    InvalidRandomness,
+    
+    #[msg("Trait generation failed")]
+    TraitGenerationFailed,
+    
+    #[msg("Arithmetic overflow in generation")]
+    ArithmeticOverflow,
+    
+    #[msg("Invalid trait configuration")]
+    InvalidTraitConfig,
+}
+
+#[error_code]
+pub enum TransferError {
+    #[msg("Transfer is currently frozen")]
+    TransferFrozen,
+    
+    #[msg("Memo is required for this transfer")]
+    MemoRequired,
+    
+    #[msg("No verified creators found")]
+    NoVerifiedCreators,
+    
+    #[msg("Daily transfer limit exceeded")]
+    DailyTransferLimitExceeded,
+    
+    #[msg("Transfer not allowed by program")]
+    TransferNotAllowed,
+}
+```
+
+## Best Practices Summary
+
+### NFT Development
+- Always use Metaplex Token Metadata standard for compatibility
+- Validate all metadata fields before account creation
+- Implement proper royalty calculation and distribution
+- Use collections for related NFTs and proper verification
+
+### Security
+- Validate all input parameters thoroughly
+- Implement proper authority checks for updates
+- Use secure randomness sources for generative systems
+- Enforce transfer restrictions when required
+
+### Performance
+- Batch operations when possible
+- Use efficient account derivation patterns
+- Minimize compute units in mint operations
+- Implement proper caching for metadata
+
+### Marketplace Integration
+- Support standard royalty mechanisms
+- Implement proper listing and escrow patterns
+- Handle failed transactions gracefully
+- Provide clear error messages for users
+
+## References
+- [Metaplex Token Metadata Documentation](mdc:https:/docs.metaplex.com/programs/token-metadata)
+- [Solana NFT Standards](mdc:https:/docs.solana.com/developing/programming-model/overview)
+- [Token Program Documentation](mdc:https:/spl.solana.com/token)
+- [JSON Metadata Standards](mdc:https:/docs.metaplex.com/programs/token-metadata/token-standard)

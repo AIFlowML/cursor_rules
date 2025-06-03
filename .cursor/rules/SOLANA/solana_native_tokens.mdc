@@ -1,0 +1,958 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana native token handling, SOL/WSOL operations, and system program integration. You focus on producing secure, efficient programs for native token management and cross-program SOL operations.
+
+## Solana Native Token Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Native SOL    │    │   System Program │    │  Wrapped SOL    │
+│   - Lamports    │───▶│   - Transfers    │───▶│   - WSOL Mint   │
+│   - Balances    │    │   - Accounts     │    │   - Token Ops   │
+│   - Rent        │    │   - Allocation   │    │   - Sync Native │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   DeFi Pools    │    │   Staking        │    │   Fee Management│
+│   - LP Tokens   │    │   - Validators   │    │   - Compute     │
+│   - AMM         │    │   - Rewards      │    │   - Priority    │
+│   - Swaps       │    │   - Delegation   │    │   - Estimation  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+native-tokens-program/
+├── programs/
+│   └── native-tokens/
+│       ├── src/
+│       │   ├── lib.rs                    # Program entry point
+│       │   ├── instructions/
+│       │   │   ├── mod.rs               # Instruction exports
+│       │   │   ├── sol_transfer.rs      # Native SOL transfers
+│       │   │   ├── wsol_operations.rs   # Wrapped SOL management
+│       │   │   ├── batch_transfer.rs    # Batch operations
+│       │   │   └── rent_management.rs   # Rent exemption handling
+│       │   ├── state/
+│       │   │   ├── mod.rs               # State exports
+│       │   │   ├── account_info.rs      # Account state tracking
+│       │   │   ├── balance_tracker.rs   # Balance management
+│       │   │   └── fee_config.rs        # Fee configuration
+│       │   ├── utils/
+│       │   │   ├── mod.rs               # Utility exports
+│       │   │   ├── lamport_math.rs      # SOL/lamport conversions
+│       │   │   ├── rent_calculator.rs   # Rent calculations
+│       │   │   ├── wsol_helpers.rs      # WSOL utilities
+│       │   │   └── validation.rs        # Input validation
+│       │   └── errors.rs                # Custom errors
+│       └── Cargo.toml
+├── tests/
+│   ├── sol_transfers.rs                 # SOL transfer tests
+│   ├── wsol_management.rs               # WSOL operation tests
+│   ├── defi_integration.rs              # DeFi protocol tests
+│   └── performance_tests.rs             # Performance benchmarks
+└── examples/
+    ├── simple_transfer.rs               # Basic SOL transfer
+    ├── wsol_swap.rs                     # WSOL trading example
+    └── liquidity_pool.rs                # SOL in LP example
+```
+
+## Core Implementation Patterns
+
+### Native SOL Transfer Operations
+
+```rust
+// ✅ DO: Implement secure native SOL transfers
+use {
+    anchor_lang::prelude::*,
+    solana_program::{
+        system_instruction,
+        system_program::ID as SYSTEM_PROGRAM_ID,
+    },
+};
+
+#[derive(Accounts)]
+pub struct TransferSol<'info> {
+    #[account(mut)]
+    pub from: Signer<'info>,
+    
+    /// CHECK: Can be any account to receive SOL
+    #[account(mut)]
+    pub to: UncheckedAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> TransferSol<'info> {
+    pub fn transfer_sol(&mut self, amount: u64) -> Result<()> {
+        // Validate transfer amount
+        require!(amount > 0, NativeTokenError::ZeroTransferAmount);
+        
+        // Check sender has sufficient balance
+        let from_balance = self.from.to_account_info().lamports();
+        require!(
+            from_balance >= amount,
+            NativeTokenError::InsufficientBalance
+        );
+        
+        // Calculate post-transfer balance and ensure rent exemption if needed
+        let remaining_balance = from_balance
+            .checked_sub(amount)
+            .ok_or(NativeTokenError::ArithmeticOverflow)?;
+        
+        // Check if sender account needs to remain rent-exempt
+        if self.from.to_account_info().data_len() > 0 {
+            let rent = Rent::get()?;
+            let min_balance = rent.minimum_balance(self.from.to_account_info().data_len());
+            require!(
+                remaining_balance >= min_balance,
+                NativeTokenError::WouldBreakRentExemption
+            );
+        }
+        
+        // Execute transfer using system program
+        let transfer_instruction = system_instruction::transfer(
+            &self.from.key(),
+            &self.to.key(),
+            amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke(
+            &transfer_instruction,
+            &[
+                self.from.to_account_info(),
+                self.to.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement batch SOL transfers for efficiency
+#[derive(Accounts)]
+pub struct BatchTransferSol<'info> {
+    #[account(mut)]
+    pub from: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+    // Recipients passed as remaining_accounts
+}
+
+impl<'info> BatchTransferSol<'info> {
+    pub fn batch_transfer_sol(
+        &mut self,
+        amounts: Vec<u64>,
+        remaining_accounts: &[AccountInfo<'info>],
+    ) -> Result<()> {
+        // Validate inputs
+        require!(
+            amounts.len() == remaining_accounts.len(),
+            NativeTokenError::MismatchedArrayLengths
+        );
+        require!(
+            amounts.len() <= 10, // Reasonable batch limit
+            NativeTokenError::BatchTooLarge
+        );
+        
+        // Calculate total transfer amount
+        let total_amount: u64 = amounts.iter()
+            .try_fold(0u64, |acc, &amount| {
+                acc.checked_add(amount)
+                    .ok_or(NativeTokenError::ArithmeticOverflow)
+            })?;
+        
+        // Validate sender balance
+        let from_balance = self.from.to_account_info().lamports();
+        require!(
+            from_balance >= total_amount,
+            NativeTokenError::InsufficientBalance
+        );
+        
+        // Execute batch transfers
+        for (amount, recipient) in amounts.iter().zip(remaining_accounts.iter()) {
+            if *amount > 0 {
+                let transfer_instruction = system_instruction::transfer(
+                    &self.from.key(),
+                    recipient.key,
+                    *amount,
+                );
+                
+                anchor_lang::solana_program::program::invoke(
+                    &transfer_instruction,
+                    &[
+                        self.from.to_account_info(),
+                        recipient.clone(),
+                        self.system_program.to_account_info(),
+                    ],
+                )?;
+            }
+        }
+        
+        Ok(())
+    }
+}
+```
+
+### Wrapped SOL Management
+
+```rust
+// ✅ DO: Implement comprehensive WSOL operations
+use {
+    anchor_spl::{
+        associated_token::AssociatedToken,
+        token::{Token, TokenAccount, Mint, sync_native, close_account},
+    },
+    spl_token::native_mint,
+};
+
+#[derive(Accounts)]
+pub struct WrapSol<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = wsol_mint,
+        associated_token::authority = user,
+    )]
+    pub user_wsol_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        address = native_mint::ID,
+    )]
+    pub wsol_mint: Account<'info, Mint>,
+    
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> WrapSol<'info> {
+    pub fn wrap_sol(&mut self, amount: u64) -> Result<()> {
+        // Validate amount
+        require!(amount > 0, NativeTokenError::ZeroWrapAmount);
+        
+        // Check user has sufficient SOL balance
+        let user_balance = self.user.to_account_info().lamports();
+        require!(
+            user_balance >= amount,
+            NativeTokenError::InsufficientBalance
+        );
+        
+        // Transfer SOL to WSOL token account
+        let transfer_instruction = system_instruction::transfer(
+            &self.user.key(),
+            &self.user_wsol_account.key(),
+            amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke(
+            &transfer_instruction,
+            &[
+                self.user.to_account_info(),
+                self.user_wsol_account.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+        )?;
+        
+        // Sync the native token account to reflect the balance
+        let sync_accounts = anchor_spl::token::SyncNative {
+            account: self.user_wsol_account.to_account_info(),
+        };
+        
+        let sync_ctx = CpiContext::new(
+            self.token_program.to_account_info(),
+            sync_accounts,
+        );
+        
+        sync_native(sync_ctx)?;
+        
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct UnwrapSol<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        mut,
+        associated_token::mint = wsol_mint,
+        associated_token::authority = user,
+    )]
+    pub user_wsol_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        address = native_mint::ID,
+    )]
+    pub wsol_mint: Account<'info, Mint>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+impl<'info> UnwrapSol<'info> {
+    pub fn unwrap_sol(&mut self) -> Result<()> {
+        // Validate WSOL account has balance
+        require!(
+            self.user_wsol_account.amount > 0,
+            NativeTokenError::NoWsolToUnwrap
+        );
+        
+        // Close WSOL account to unwrap back to native SOL
+        let close_accounts = anchor_spl::token::CloseAccount {
+            account: self.user_wsol_account.to_account_info(),
+            destination: self.user.to_account_info(),
+            authority: self.user.to_account_info(),
+        };
+        
+        let close_ctx = CpiContext::new(
+            self.token_program.to_account_info(),
+            close_accounts,
+        );
+        
+        close_account(close_ctx)?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement WSOL utilities for DeFi integration
+pub mod wsol_utils {
+    use super::*;
+    
+    pub struct WsolManager;
+    
+    impl WsolManager {
+        pub fn calculate_wsol_needed(
+            sol_amount: u64,
+            include_rent_exemption: bool,
+        ) -> Result<u64> {
+            let mut total_needed = sol_amount;
+            
+            if include_rent_exemption {
+                let rent = Rent::get()?;
+                let rent_exemption = rent.minimum_balance(TokenAccount::LEN);
+                total_needed = total_needed
+                    .checked_add(rent_exemption)
+                    .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            }
+            
+            Ok(total_needed)
+        }
+        
+        pub fn get_wsol_balance(wsol_account: &Account<TokenAccount>) -> u64 {
+            wsol_account.amount
+        }
+        
+        pub fn is_wsol_account(account: &Account<TokenAccount>) -> bool {
+            account.mint == native_mint::ID
+        }
+        
+        pub fn estimate_unwrap_lamports(wsol_account: &Account<TokenAccount>) -> Result<u64> {
+            // Account balance + rent exemption will be returned
+            let account_balance = wsol_account.amount;
+            let rent = Rent::get()?;
+            let rent_exemption = rent.minimum_balance(TokenAccount::LEN);
+            
+            Ok(account_balance
+                .checked_add(rent_exemption)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?)
+        }
+    }
+}
+```
+
+### Lamport Conversions & Calculations
+
+```rust
+// ✅ DO: Implement precise lamport/SOL conversion utilities
+pub mod lamport_math {
+    use super::*;
+    
+    pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000; // 1 billion lamports = 1 SOL
+    
+    pub struct LamportCalculator;
+    
+    impl LamportCalculator {
+        pub fn sol_to_lamports(sol_amount: f64) -> Result<u64> {
+            // Validate input
+            require!(sol_amount >= 0.0, NativeTokenError::NegativeSolAmount);
+            require!(sol_amount.is_finite(), NativeTokenError::InvalidSolAmount);
+            
+            // Calculate lamports with precision handling
+            let lamports = sol_amount * LAMPORTS_PER_SOL as f64;
+            
+            // Check for overflow
+            require!(
+                lamports <= u64::MAX as f64,
+                NativeTokenError::SolAmountTooLarge
+            );
+            
+            Ok(lamports as u64)
+        }
+        
+        pub fn lamports_to_sol(lamports: u64) -> f64 {
+            lamports as f64 / LAMPORTS_PER_SOL as f64
+        }
+        
+        pub fn format_sol_amount(lamports: u64) -> String {
+            let sol = Self::lamports_to_sol(lamports);
+            format!("{:.9}", sol) // Show up to 9 decimal places
+        }
+        
+        pub fn calculate_percentage(amount: u64, percentage_basis_points: u16) -> Result<u64> {
+            require!(
+                percentage_basis_points <= 10_000,
+                NativeTokenError::InvalidPercentage
+            );
+            
+            let result = amount
+                .checked_mul(percentage_basis_points as u64)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?
+                .checked_div(10_000)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            
+            Ok(result)
+        }
+        
+        pub fn add_percentage(base_amount: u64, percentage_basis_points: u16) -> Result<u64> {
+            let percentage_amount = Self::calculate_percentage(base_amount, percentage_basis_points)?;
+            base_amount
+                .checked_add(percentage_amount)
+                .ok_or(NativeTokenError::ArithmeticOverflow.into())
+        }
+        
+        pub fn subtract_percentage(base_amount: u64, percentage_basis_points: u16) -> Result<u64> {
+            let percentage_amount = Self::calculate_percentage(base_amount, percentage_basis_points)?;
+            base_amount
+                .checked_sub(percentage_amount)
+                .ok_or(NativeTokenError::ArithmeticUnderflow.into())
+        }
+    }
+    
+    // ✅ DO: Implement rent calculation utilities
+    pub struct RentCalculator;
+    
+    impl RentCalculator {
+        pub fn calculate_rent_exemption(data_size: usize) -> Result<u64> {
+            let rent = Rent::get()?;
+            Ok(rent.minimum_balance(data_size))
+        }
+        
+        pub fn is_rent_exempt(account: &AccountInfo, data_size: usize) -> Result<bool> {
+            let rent = Rent::get()?;
+            let required_balance = rent.minimum_balance(data_size);
+            Ok(account.lamports() >= required_balance)
+        }
+        
+        pub fn lamports_needed_for_rent_exemption(
+            current_balance: u64,
+            data_size: usize,
+        ) -> Result<u64> {
+            let rent = Rent::get()?;
+            let required_balance = rent.minimum_balance(data_size);
+            
+            if current_balance >= required_balance {
+                Ok(0)
+            } else {
+                Ok(required_balance - current_balance)
+            }
+        }
+        
+        pub fn validate_rent_exemption_after_transfer(
+            account: &AccountInfo,
+            transfer_amount: u64,
+        ) -> Result<()> {
+            let current_balance = account.lamports();
+            let data_size = account.data_len();
+            
+            if data_size > 0 {
+                let remaining_balance = current_balance
+                    .checked_sub(transfer_amount)
+                    .ok_or(NativeTokenError::ArithmeticUnderflow)?;
+                
+                let rent = Rent::get()?;
+                let min_balance = rent.minimum_balance(data_size);
+                
+                require!(
+                    remaining_balance >= min_balance,
+                    NativeTokenError::WouldBreakRentExemption
+                );
+            }
+            
+            Ok(())
+        }
+    }
+}
+```
+
+## Advanced Patterns
+
+### DeFi Integration with Native SOL
+
+```rust
+// ✅ DO: Implement SOL liquidity pool operations
+#[derive(Accounts)]
+pub struct AddSolLiquidity<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(mut)]
+    pub pool_sol_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub pool_token_account: Account<'info, TokenAccount>,
+    
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = lp_mint,
+        associated_token::authority = user,
+    )]
+    pub user_lp_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub lp_mint: Account<'info, Mint>,
+    
+    #[account(
+        seeds = [b"pool_authority"],
+        bump,
+    )]
+    /// CHECK: PDA authority for pool operations
+    pub pool_authority: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> AddSolLiquidity<'info> {
+    pub fn add_sol_liquidity(
+        &mut self,
+        sol_amount: u64,
+        token_amount: u64,
+        minimum_lp_tokens: u64,
+    ) -> Result<()> {
+        // Validate inputs
+        require!(sol_amount > 0, NativeTokenError::ZeroLiquidityAmount);
+        require!(token_amount > 0, NativeTokenError::ZeroLiquidityAmount);
+        
+        // Calculate LP tokens to mint based on pool ratio
+        let lp_tokens_to_mint = self.calculate_lp_tokens(sol_amount, token_amount)?;
+        
+        require!(
+            lp_tokens_to_mint >= minimum_lp_tokens,
+            NativeTokenError::SlippageExceeded
+        );
+        
+        // Transfer SOL to pool (wrap as WSOL)
+        self.wrap_sol_for_pool(sol_amount)?;
+        
+        // Transfer tokens to pool
+        self.transfer_tokens_to_pool(token_amount)?;
+        
+        // Mint LP tokens to user
+        self.mint_lp_tokens(lp_tokens_to_mint)?;
+        
+        Ok(())
+    }
+    
+    fn calculate_lp_tokens(&self, sol_amount: u64, token_amount: u64) -> Result<u64> {
+        let pool_sol_balance = self.pool_sol_account.amount;
+        let pool_token_balance = self.pool_token_account.amount;
+        let lp_supply = self.lp_mint.supply;
+        
+        if lp_supply == 0 {
+            // Initial liquidity - use geometric mean
+            let lp_tokens = (sol_amount as f64 * token_amount as f64).sqrt() as u64;
+            Ok(lp_tokens)
+        } else {
+            // Subsequent liquidity - maintain pool ratio
+            let sol_ratio = sol_amount as f64 / pool_sol_balance as f64;
+            let token_ratio = token_amount as f64 / pool_token_balance as f64;
+            
+            // Use the smaller ratio to prevent MEV attacks
+            let ratio = sol_ratio.min(token_ratio);
+            let lp_tokens = (lp_supply as f64 * ratio) as u64;
+            
+            Ok(lp_tokens)
+        }
+    }
+    
+    fn wrap_sol_for_pool(&mut self, amount: u64) -> Result<()> {
+        // Transfer SOL directly to pool's WSOL account and sync
+        let transfer_instruction = system_instruction::transfer(
+            &self.user.key(),
+            &self.pool_sol_account.key(),
+            amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke(
+            &transfer_instruction,
+            &[
+                self.user.to_account_info(),
+                self.pool_sol_account.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+        )?;
+        
+        // Sync native balance
+        anchor_spl::token::sync_native(CpiContext::new(
+            self.token_program.to_account_info(),
+            anchor_spl::token::SyncNative {
+                account: self.pool_sol_account.to_account_info(),
+            },
+        ))?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement SOL staking integration
+#[derive(Accounts)]
+pub struct StakeSol<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(mut)]
+    pub stake_account: Account<'info, StakeAccount>,
+    
+    #[account(mut)]
+    pub validator_vote_account: Account<'info, VoteAccount>,
+    
+    pub stake_program: Program<'info, StakeProgram>,
+    pub system_program: Program<'info, System>,
+    pub clock: Sysvar<'info, Clock>,
+    pub stake_history: Sysvar<'info, StakeHistory>,
+    pub stake_config: Account<'info, StakeConfig>,
+}
+
+#[account]
+pub struct StakeAccount {
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub validator: Pubkey,
+    pub activation_epoch: u64,
+    pub deactivation_epoch: Option<u64>,
+    pub rewards_earned: u64,
+}
+
+impl<'info> StakeSol<'info> {
+    pub fn stake_sol(&mut self, amount: u64) -> Result<()> {
+        // Validate staking amount
+        require!(amount >= MIN_STAKE_AMOUNT, NativeTokenError::StakeAmountTooSmall);
+        
+        // Create stake account
+        let stake_account_size = std::mem::size_of::<StakeAccount>();
+        let rent = Rent::get()?;
+        let rent_exemption = rent.minimum_balance(stake_account_size);
+        
+        let total_required = amount
+            .checked_add(rent_exemption)
+            .ok_or(NativeTokenError::ArithmeticOverflow)?;
+        
+        require!(
+            self.user.to_account_info().lamports() >= total_required,
+            NativeTokenError::InsufficientBalance
+        );
+        
+        // Initialize stake account
+        self.stake_account.authority = self.user.key();
+        self.stake_account.amount = amount;
+        self.stake_account.validator = self.validator_vote_account.key();
+        self.stake_account.activation_epoch = Clock::get()?.epoch;
+        self.stake_account.deactivation_epoch = None;
+        self.stake_account.rewards_earned = 0;
+        
+        // Delegate stake to validator
+        // (Implementation would use native Solana staking instructions)
+        
+        Ok(())
+    }
+}
+```
+
+### Fee Management and Optimization
+
+```rust
+// ✅ DO: Implement comprehensive fee management
+pub mod fee_management {
+    use super::*;
+    
+    pub struct FeeManager;
+    
+    impl FeeManager {
+        pub fn calculate_compute_fee(
+            compute_units: u32,
+            microlamports_per_compute_unit: u64,
+        ) -> Result<u64> {
+            let fee = (compute_units as u64)
+                .checked_mul(microlamports_per_compute_unit)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?
+                .checked_div(1_000_000)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            
+            Ok(fee)
+        }
+        
+        pub fn calculate_priority_fee(
+            base_fee: u64,
+            priority_fee_lamports: u64,
+        ) -> Result<u64> {
+            base_fee
+                .checked_add(priority_fee_lamports)
+                .ok_or(NativeTokenError::ArithmeticOverflow.into())
+        }
+        
+        pub fn estimate_transaction_cost(
+            compute_units: u32,
+            num_signatures: u8,
+            priority_fee: u64,
+        ) -> Result<u64> {
+            // Base signature fee (5000 lamports per signature)
+            let signature_fee = (num_signatures as u64)
+                .checked_mul(5000)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            
+            // Compute fee (currently free for most operations)
+            let compute_fee = Self::calculate_compute_fee(compute_units, 0)?;
+            
+            // Total cost
+            let total_cost = signature_fee
+                .checked_add(compute_fee)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?
+                .checked_add(priority_fee)
+                .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            
+            Ok(total_cost)
+        }
+        
+        pub fn validate_fee_payment(
+            payer: &AccountInfo,
+            estimated_fee: u64,
+            keep_rent_exempt: bool,
+        ) -> Result<()> {
+            let payer_balance = payer.lamports();
+            let mut required_balance = estimated_fee;
+            
+            if keep_rent_exempt && payer.data_len() > 0 {
+                let rent = Rent::get()?;
+                let rent_exemption = rent.minimum_balance(payer.data_len());
+                required_balance = required_balance
+                    .checked_add(rent_exemption)
+                    .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            }
+            
+            require!(
+                payer_balance >= required_balance,
+                NativeTokenError::InsufficientFundsForFees
+            );
+            
+            Ok(())
+        }
+    }
+}
+
+// ✅ DO: Implement balance validation utilities
+pub mod balance_validation {
+    use super::*;
+    
+    pub struct BalanceValidator;
+    
+    impl BalanceValidator {
+        pub fn validate_minimum_balance(
+            account: &AccountInfo,
+            minimum_lamports: u64,
+        ) -> Result<()> {
+            require!(
+                account.lamports() >= minimum_lamports,
+                NativeTokenError::BalanceBelowMinimum
+            );
+            Ok(())
+        }
+        
+        pub fn validate_sufficient_for_operation(
+            account: &AccountInfo,
+            operation_cost: u64,
+            maintain_rent_exemption: bool,
+        ) -> Result<()> {
+            let current_balance = account.lamports();
+            let mut required_balance = operation_cost;
+            
+            if maintain_rent_exemption && account.data_len() > 0 {
+                let rent = Rent::get()?;
+                let rent_exemption = rent.minimum_balance(account.data_len());
+                required_balance = required_balance
+                    .checked_add(rent_exemption)
+                    .ok_or(NativeTokenError::ArithmeticOverflow)?;
+            }
+            
+            require!(
+                current_balance >= required_balance,
+                NativeTokenError::InsufficientBalance
+            );
+            
+            Ok(())
+        }
+        
+        pub fn calculate_available_balance(
+            account: &AccountInfo,
+            preserve_rent_exemption: bool,
+        ) -> Result<u64> {
+            let current_balance = account.lamports();
+            
+            if preserve_rent_exemption && account.data_len() > 0 {
+                let rent = Rent::get()?;
+                let rent_exemption = rent.minimum_balance(account.data_len());
+                
+                if current_balance > rent_exemption {
+                    Ok(current_balance - rent_exemption)
+                } else {
+                    Ok(0)
+                }
+            } else {
+                Ok(current_balance)
+            }
+        }
+        
+        pub fn validate_transfer_amount(
+            from_account: &AccountInfo,
+            amount: u64,
+            preserve_rent_exemption: bool,
+        ) -> Result<()> {
+            let available_balance = Self::calculate_available_balance(
+                from_account,
+                preserve_rent_exemption,
+            )?;
+            
+            require!(
+                available_balance >= amount,
+                NativeTokenError::TransferAmountExceedsAvailable
+            );
+            
+            Ok(())
+        }
+    }
+}
+```
+
+## Error Handling
+
+```rust
+// ✅ DO: Define comprehensive native token errors
+#[error_code]
+pub enum NativeTokenError {
+    #[msg("Transfer amount cannot be zero")]
+    ZeroTransferAmount,
+    
+    #[msg("Wrap amount cannot be zero")]
+    ZeroWrapAmount,
+    
+    #[msg("Liquidity amount cannot be zero")]
+    ZeroLiquidityAmount,
+    
+    #[msg("No WSOL balance to unwrap")]
+    NoWsolToUnwrap,
+    
+    #[msg("Insufficient SOL balance for operation")]
+    InsufficientBalance,
+    
+    #[msg("Insufficient funds to pay transaction fees")]
+    InsufficientFundsForFees,
+    
+    #[msg("Operation would break rent exemption")]
+    WouldBreakRentExemption,
+    
+    #[msg("Balance is below required minimum")]
+    BalanceBelowMinimum,
+    
+    #[msg("Transfer amount exceeds available balance")]
+    TransferAmountExceedsAvailable,
+    
+    #[msg("Array lengths do not match")]
+    MismatchedArrayLengths,
+    
+    #[msg("Batch size too large")]
+    BatchTooLarge,
+    
+    #[msg("Arithmetic overflow occurred")]
+    ArithmeticOverflow,
+    
+    #[msg("Arithmetic underflow occurred")]
+    ArithmeticUnderflow,
+    
+    #[msg("SOL amount cannot be negative")]
+    NegativeSolAmount,
+    
+    #[msg("Invalid SOL amount (not finite)")]
+    InvalidSolAmount,
+    
+    #[msg("SOL amount too large to convert")]
+    SolAmountTooLarge,
+    
+    #[msg("Invalid percentage (must be 0-10000 basis points)")]
+    InvalidPercentage,
+    
+    #[msg("Stake amount below minimum required")]
+    StakeAmountTooSmall,
+    
+    #[msg("Slippage tolerance exceeded")]
+    SlippageExceeded,
+    
+    #[msg("Invalid validator vote account")]
+    InvalidValidator,
+    
+    #[msg("Staking not available at this time")]
+    StakingUnavailable,
+    
+    #[msg("Rewards not yet available")]
+    RewardsNotAvailable,
+    
+    #[msg("Pool reserves too low")]
+    InsufficientLiquidity,
+    
+    #[msg("Invalid pool state")]
+    InvalidPoolState,
+}
+```
+
+## Best Practices Summary
+
+### Native SOL Operations
+- Always validate balances before transfers
+- Maintain rent exemption for accounts with data
+- Use batch operations for multiple transfers
+- Handle overflow/underflow in calculations
+
+### Wrapped SOL Management
+- Sync native after SOL deposits to WSOL accounts
+- Close WSOL accounts properly to unwrap
+- Consider rent exemption in wrapping calculations
+- Validate WSOL mint address matches native mint
+
+### Performance
+- Batch multiple SOL transfers in single transaction
+- Pre-calculate rent exemption requirements
+- Use efficient lamport arithmetic
+- Minimize account reads in loops
+
+### Security
+- Validate all transfer amounts are positive
+- Check sender has sufficient balance
+- Prevent rent exemption violations
+- Validate recipient accounts exist
+
+## References
+- [Solana System Program Documentation](mdc:https:/docs.solana.com/developing/runtime-facilities/programs#system-program)
+- [Native SOL and Wrapped SOL Guide](mdc:https:/spl.solana.com/token#wrapping-sol)
+- [Rent Exemption Documentation](mdc:https:/docs.solana.com/developing/programming-model/accounts#rent)
+- [Staking Documentation](mdc:https:/docs.solana.com/staking)

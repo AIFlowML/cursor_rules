@@ -1,0 +1,1217 @@
+---
+description: Solana error handling, debugging techniques, and production monitoring
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana error handling, debugging techniques, and production monitoring. You focus on creating robust error management systems with comprehensive logging and debugging capabilities.
+
+## Error Handling Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Custom Errors   │    │ Error Propagation│    │ Debug Logging   │
+│   Definition    │───▶│   & Mapping      │───▶│   & Monitoring  │
+│                 │    │                  │    │                 │
+│ - Enum design   │    │ - Result chains  │    │ - Structured    │
+│ - Error codes   │    │ - Transform map  │    │ - State inspect │
+│ - Context data  │    │ - Early return   │    │ - Simulation    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Error Recovery  │    │   Production     │    │   Analytics &   │
+│   Strategies    │    │   Monitoring     │    │   Reporting     │
+│                 │    │                  │    │                 │
+│ - Graceful fail │    │ - Alert systems │    │ - Error metrics │
+│ - Retry logic   │    │ - Health checks  │    │ - Trend analysis│
+│ - Circuit break │    │ - Log aggregation│    │ - Dashboard     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+error-handling/
+├── src/
+│   ├── errors/
+│   │   ├── mod.rs              # Error exports
+│   │   ├── program.rs          # Program-specific errors
+│   │   ├── validation.rs       # Validation errors
+│   │   ├── system.rs           # System errors
+│   │   └── custom.rs           # Custom error types
+│   ├── debug/
+│   │   ├── logging.rs          # Structured logging
+│   │   ├── inspection.rs       # State inspection
+│   │   ├── simulation.rs       # Transaction simulation
+│   │   └── profiling.rs        # Performance profiling
+│   ├── recovery/
+│   │   ├── retry.rs            # Retry strategies
+│   │   ├── circuit.rs          # Circuit breakers
+│   │   ├── fallback.rs         # Fallback mechanisms
+│   │   └── graceful.rs         # Graceful degradation
+│   ├── monitoring/
+│   │   ├── metrics.rs          # Error metrics collection
+│   │   ├── alerts.rs           # Alert management
+│   │   ├── health.rs           # Health checks
+│   │   └── reporting.rs        # Error reporting
+│   └── utils/
+│       ├── context.rs          # Error context helpers
+│       ├── formatting.rs       # Error formatting
+│       └── serialization.rs   # Error serialization
+```
+
+## Core Implementation Patterns
+
+### Custom Error Implementation
+
+```rust
+// ✅ DO: Comprehensive custom error system with rich context
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    msg,
+    decode_error::DecodeError,
+};
+use std::fmt;
+use thiserror::Error;
+
+/// Program-specific error codes with detailed context
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum CustomProgramError {
+    #[error("Invalid instruction data: {context}")]
+    InvalidInstruction { context: String },
+    
+    #[error("Insufficient funds: required {required}, available {available}")]
+    InsufficientFunds { required: u64, available: u64 },
+    
+    #[error("Account validation failed: {account} - {reason}")]
+    AccountValidation { account: Pubkey, reason: String },
+    
+    #[error("Mathematical overflow in operation: {operation}")]
+    MathematicalOverflow { operation: String },
+    
+    #[error("Access denied: user {user} lacks permission {permission}")]
+    AccessDenied { user: Pubkey, permission: String },
+    
+    #[error("State transition invalid: from {from_state} to {to_state}")]
+    InvalidStateTransition { from_state: String, to_state: String },
+    
+    #[error("External service error: {service} returned {error_code}")]
+    ExternalServiceError { service: String, error_code: u32 },
+    
+    #[error("Configuration error: {parameter} has invalid value {value}")]
+    ConfigurationError { parameter: String, value: String },
+    
+    #[error("Resource exhausted: {resource} limit {limit} exceeded")]
+    ResourceExhausted { resource: String, limit: u64 },
+    
+    #[error("Temporal constraint violated: operation not allowed until {allowed_time}")]
+    TemporalConstraint { allowed_time: i64 },
+}
+
+impl CustomProgramError {
+    /// Convert to program error with error code
+    pub fn to_program_error(&self) -> ProgramError {
+        match self {
+            CustomProgramError::InvalidInstruction { .. } => {
+                ProgramError::Custom(1001)
+            }
+            CustomProgramError::InsufficientFunds { .. } => {
+                ProgramError::Custom(1002)
+            }
+            CustomProgramError::AccountValidation { .. } => {
+                ProgramError::Custom(1003)
+            }
+            CustomProgramError::MathematicalOverflow { .. } => {
+                ProgramError::Custom(1004)
+            }
+            CustomProgramError::AccessDenied { .. } => {
+                ProgramError::Custom(1005)
+            }
+            CustomProgramError::InvalidStateTransition { .. } => {
+                ProgramError::Custom(1006)
+            }
+            CustomProgramError::ExternalServiceError { .. } => {
+                ProgramError::Custom(1007)
+            }
+            CustomProgramError::ConfigurationError { .. } => {
+                ProgramError::Custom(1008)
+            }
+            CustomProgramError::ResourceExhausted { .. } => {
+                ProgramError::Custom(1009)
+            }
+            CustomProgramError::TemporalConstraint { .. } => {
+                ProgramError::Custom(1010)
+            }
+        }
+    }
+    
+    /// Get error code for external consumption
+    pub fn error_code(&self) -> u32 {
+        match self.to_program_error() {
+            ProgramError::Custom(code) => code,
+            _ => 0,
+        }
+    }
+    
+    /// Create error with additional context
+    pub fn with_context(self, additional_context: &str) -> ErrorWithContext {
+        ErrorWithContext {
+            error: self,
+            context: additional_context.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        }
+    }
+    
+    /// Log error with structured data
+    pub fn log_error(&self) {
+        match self {
+            CustomProgramError::InsufficientFunds { required, available } => {
+                msg!("ERROR_INSUFFICIENT_FUNDS: required={}, available={}", required, available);
+            }
+            CustomProgramError::AccountValidation { account, reason } => {
+                msg!("ERROR_ACCOUNT_VALIDATION: account={}, reason={}", account, reason);
+            }
+            CustomProgramError::AccessDenied { user, permission } => {
+                msg!("ERROR_ACCESS_DENIED: user={}, permission={}", user, permission);
+            }
+            _ => {
+                msg!("ERROR: {}", self);
+            }
+        }
+    }
+}
+
+impl From<CustomProgramError> for ProgramError {
+    fn from(e: CustomProgramError) -> Self {
+        e.log_error();
+        e.to_program_error()
+    }
+}
+
+/// Error with additional context and metadata
+#[derive(Clone, Debug)]
+pub struct ErrorWithContext {
+    pub error: CustomProgramError,
+    pub context: String,
+    pub timestamp: u64,
+}
+
+impl fmt::Display for ErrorWithContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}] {} | Context: {}",
+            self.timestamp,
+            self.error,
+            self.context
+        )
+    }
+}
+
+/// Error metadata for debugging and monitoring
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
+pub struct ErrorMetadata {
+    pub error_code: u32,
+    pub error_type: String,
+    pub timestamp: i64,
+    pub instruction_index: Option<u8>,
+    pub account_involved: Option<Pubkey>,
+    pub additional_data: Vec<u8>,
+}
+
+impl ErrorMetadata {
+    pub fn new(error: &CustomProgramError) -> Self {
+        Self {
+            error_code: error.error_code(),
+            error_type: std::any::type_name::<CustomProgramError>().to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            instruction_index: None,
+            account_involved: None,
+            additional_data: Vec::new(),
+        }
+    }
+    
+    pub fn with_instruction(mut self, index: u8) -> Self {
+        self.instruction_index = Some(index);
+        self
+    }
+    
+    pub fn with_account(mut self, account: Pubkey) -> Self {
+        self.account_involved = Some(account);
+        self
+    }
+    
+    pub fn with_data<T: BorshSerialize>(mut self, data: &T) -> Self {
+        if let Ok(serialized) = data.try_to_vec() {
+            self.additional_data = serialized;
+        }
+        self
+    }
+}
+
+// ❌ DON'T: Generic or unclear error types
+#[derive(Error, Debug)]
+pub enum BadError {
+    #[error("Something went wrong")]
+    Generic,
+    #[error("Error: {0}")]
+    WithMessage(String), // Too generic, no structure
+}
+```
+
+### Error Propagation Strategies
+
+```rust
+// ✅ DO: Structured error propagation with transformation and mapping
+use std::result::Result as StdResult;
+
+/// Custom Result type for program operations
+pub type ProgramResult<T> = StdResult<T, CustomProgramError>;
+
+/// Error propagation utilities
+pub struct ErrorPropagation;
+
+impl ErrorPropagation {
+    /// Transform system errors into program errors
+    pub fn transform_system_error(
+        error: ProgramError,
+        context: &str,
+    ) -> CustomProgramError {
+        match error {
+            ProgramError::InvalidAccountData => {
+                CustomProgramError::AccountValidation {
+                    account: Pubkey::default(), // Should be filled by caller
+                    reason: context.to_string(),
+                }
+            }
+            ProgramError::InsufficientFunds => {
+                CustomProgramError::InsufficientFunds {
+                    required: 0, // Should be filled by caller
+                    available: 0,
+                }
+            }
+            ProgramError::Custom(code) => {
+                Self::decode_custom_error(code, context)
+            }
+            _ => CustomProgramError::ConfigurationError {
+                parameter: "system_error".to_string(),
+                value: format!("{:?}", error),
+            }
+        }
+    }
+    
+    /// Decode custom error codes back to typed errors
+    pub fn decode_custom_error(code: u32, context: &str) -> CustomProgramError {
+        match code {
+            1001 => CustomProgramError::InvalidInstruction {
+                context: context.to_string(),
+            },
+            1002 => CustomProgramError::InsufficientFunds {
+                required: 0,
+                available: 0,
+            },
+            1003 => CustomProgramError::AccountValidation {
+                account: Pubkey::default(),
+                reason: context.to_string(),
+            },
+            _ => CustomProgramError::ConfigurationError {
+                parameter: "unknown_error_code".to_string(),
+                value: code.to_string(),
+            }
+        }
+    }
+    
+    /// Chain errors with context preservation
+    pub fn chain_error<T, E>(
+        result: StdResult<T, E>,
+        context: &str,
+    ) -> ProgramResult<T>
+    where
+        E: Into<CustomProgramError>,
+    {
+        result.map_err(|e| {
+            let base_error = e.into();
+            base_error.with_context(context).error
+        })
+    }
+    
+    /// Early return with error logging
+    pub fn early_return_on_error<T>(
+        result: ProgramResult<T>,
+        operation: &str,
+    ) -> ProgramResult<T> {
+        match result {
+            Ok(value) => {
+                msg!("SUCCESS: {} completed successfully", operation);
+                Ok(value)
+            }
+            Err(error) => {
+                msg!("FAILURE: {} failed with error: {}", operation, error);
+                Err(error)
+            }
+        }
+    }
+    
+    /// Collect multiple errors for batch operations
+    pub fn collect_errors<T, I>(
+        results: I,
+        operation: &str,
+    ) -> ProgramResult<Vec<T>>
+    where
+        I: Iterator<Item = ProgramResult<T>>,
+    {
+        let mut successes = Vec::new();
+        let mut errors = Vec::new();
+        
+        for (index, result) in results.enumerate() {
+            match result {
+                Ok(value) => successes.push(value),
+                Err(error) => {
+                    msg!("Error in {} at index {}: {}", operation, index, error);
+                    errors.push(error);
+                }
+            }
+        }
+        
+        if !errors.is_empty() {
+            // Return first error with context about total failures
+            let first_error = errors.into_iter().next().unwrap();
+            return Err(first_error.with_context(&format!(
+                "Batch operation {} had multiple failures", operation
+            )).error);
+        }
+        
+        Ok(successes)
+    }
+}
+
+/// Macro for easy error context addition
+#[macro_export]
+macro_rules! with_context {
+    ($result:expr, $context:expr) => {
+        $result.map_err(|e| e.with_context($context).error)
+    };
+}
+
+/// Macro for conditional error propagation
+#[macro_export]
+macro_rules! ensure {
+    ($condition:expr, $error:expr) => {
+        if !($condition) {
+            return Err($error);
+        }
+    };
+}
+
+/// Example usage in instruction processing
+pub fn process_with_error_handling(
+    data: &[u8],
+    accounts: &[solana_program::account_info::AccountInfo],
+) -> ProgramResult<()> {
+    // Validate input with early return
+    ensure!(
+        !data.is_empty(),
+        CustomProgramError::InvalidInstruction {
+            context: "Instruction data cannot be empty".to_string()
+        }
+    );
+    
+    // Chain operations with context
+    let parsed_data = with_context!(
+        parse_instruction_data(data),
+        "Failed to parse instruction data"
+    )?;
+    
+    // Propagate with transformation
+    let account_state = ErrorPropagation::early_return_on_error(
+        validate_accounts(accounts),
+        "account_validation"
+    )?;
+    
+    // Execute with comprehensive error handling
+    execute_operation(parsed_data, account_state)
+        .map_err(|e| e.with_context("Failed to execute main operation").error)
+}
+
+// Helper functions for example
+fn parse_instruction_data(data: &[u8]) -> ProgramResult<InstructionData> {
+    // Implementation would go here
+    Ok(InstructionData::default())
+}
+
+fn validate_accounts(accounts: &[solana_program::account_info::AccountInfo]) -> ProgramResult<AccountState> {
+    // Implementation would go here
+    Ok(AccountState::default())
+}
+
+fn execute_operation(data: InstructionData, state: AccountState) -> ProgramResult<()> {
+    // Implementation would go here
+    Ok(())
+}
+
+#[derive(Default)]
+struct InstructionData {}
+#[derive(Default)]
+struct AccountState {}
+```
+
+### Debugging Techniques
+
+```rust
+// ✅ DO: Comprehensive debugging and logging strategies
+use solana_program::{
+    msg,
+    log::sol_log_compute_units,
+    account_info::AccountInfo,
+    pubkey::Pubkey,
+    program_error::ProgramError,
+};
+use std::fmt::Write;
+
+/// Structured logging utility for Solana programs
+pub struct DebugLogger {
+    program_name: String,
+    log_level: LogLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub enum LogLevel {
+    Error = 0,
+    Warn = 1,
+    Info = 2,
+    Debug = 3,
+    Trace = 4,
+}
+
+impl DebugLogger {
+    pub fn new(program_name: &str, log_level: LogLevel) -> Self {
+        Self {
+            program_name: program_name.to_string(),
+            log_level,
+        }
+    }
+    
+    /// Log with structured format
+    pub fn log(&self, level: LogLevel, module: &str, message: &str) {
+        if level <= self.log_level {
+            msg!(
+                "[{}][{}][{}] {}",
+                self.program_name,
+                Self::level_to_string(level),
+                module,
+                message
+            );
+        }
+    }
+    
+    /// Log with key-value pairs
+    pub fn log_with_data(&self, level: LogLevel, module: &str, message: &str, data: &[(&str, &str)]) {
+        if level <= self.log_level {
+            let mut formatted_data = String::new();
+            for (key, value) in data {
+                write!(&mut formatted_data, " {}={}", key, value).unwrap();
+            }
+            
+            msg!(
+                "[{}][{}][{}] {}{}",
+                self.program_name,
+                Self::level_to_string(level),
+                module,
+                message,
+                formatted_data
+            );
+        }
+    }
+    
+    /// Log account information for debugging
+    pub fn log_account_info(&self, account: &AccountInfo, label: &str) {
+        if self.log_level >= LogLevel::Debug {
+            msg!(
+                "[{}][DEBUG][ACCOUNT] {}: key={}, owner={}, lamports={}, data_len={}, executable={}, rent_epoch={}",
+                self.program_name,
+                label,
+                account.key,
+                account.owner,
+                account.lamports(),
+                account.data.borrow().len(),
+                account.executable,
+                account.rent_epoch
+            );
+        }
+    }
+    
+    /// Log compute units usage
+    pub fn log_compute_units(&self, operation: &str) {
+        if self.log_level >= LogLevel::Debug {
+            msg!("[{}][DEBUG][COMPUTE] Before {}", self.program_name, operation);
+            sol_log_compute_units();
+        }
+    }
+    
+    /// Log state transitions
+    pub fn log_state_transition<T: std::fmt::Debug>(
+        &self,
+        from_state: &T,
+        to_state: &T,
+        transition: &str,
+    ) {
+        if self.log_level >= LogLevel::Info {
+            msg!(
+                "[{}][INFO][STATE] {}: {:?} -> {:?}",
+                self.program_name,
+                transition,
+                from_state,
+                to_state
+            );
+        }
+    }
+    
+    /// Log performance metrics
+    pub fn log_performance(&self, operation: &str, duration_micros: u64, success: bool) {
+        if self.log_level >= LogLevel::Info {
+            msg!(
+                "[{}][INFO][PERF] {}: {}μs status={}",
+                self.program_name,
+                operation,
+                duration_micros,
+                if success { "SUCCESS" } else { "FAILURE" }
+            );
+        }
+    }
+    
+    fn level_to_string(level: LogLevel) -> &'static str {
+        match level {
+            LogLevel::Error => "ERROR",
+            LogLevel::Warn => "WARN",
+            LogLevel::Info => "INFO",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Trace => "TRACE",
+        }
+    }
+}
+
+/// State inspection utilities
+pub struct StateInspector;
+
+impl StateInspector {
+    /// Inspect and log account state
+    pub fn inspect_account_state<T: borsh::BorshDeserialize + std::fmt::Debug>(
+        account: &AccountInfo,
+        logger: &DebugLogger,
+        state_name: &str,
+    ) -> Result<T, ProgramError> {
+        logger.log_account_info(account, state_name);
+        
+        if account.data.borrow().is_empty() {
+            logger.log(LogLevel::Error, "STATE", &format!("{} account has no data", state_name));
+            return Err(ProgramError::UninitializedAccount);
+        }
+        
+        match T::try_from_slice(&account.data.borrow()) {
+            Ok(state) => {
+                logger.log(
+                    LogLevel::Debug,
+                    "STATE",
+                    &format!("{} state: {:?}", state_name, state)
+                );
+                Ok(state)
+            }
+            Err(e) => {
+                logger.log(
+                    LogLevel::Error,
+                    "STATE",
+                    &format!("Failed to deserialize {} state: {:?}", state_name, e)
+                );
+                Err(ProgramError::InvalidAccountData)
+            }
+        }
+    }
+    
+    /// Compare states for debugging
+    pub fn compare_states<T: std::fmt::Debug + PartialEq>(
+        old_state: &T,
+        new_state: &T,
+        logger: &DebugLogger,
+        operation: &str,
+    ) {
+        if old_state != new_state {
+            logger.log_state_transition(old_state, new_state, operation);
+        } else {
+            logger.log(
+                LogLevel::Debug,
+                "STATE",
+                &format!("{}: No state change detected", operation)
+            );
+        }
+    }
+    
+    /// Validate state invariants
+    pub fn validate_invariants<F>(
+        state: &dyn std::fmt::Debug,
+        invariant_check: F,
+        logger: &DebugLogger,
+        invariant_name: &str,
+    ) -> Result<(), ProgramError>
+    where
+        F: Fn() -> bool,
+    {
+        logger.log(
+            LogLevel::Trace,
+            "INVARIANT",
+            &format!("Checking invariant: {}", invariant_name)
+        );
+        
+        if invariant_check() {
+            logger.log(
+                LogLevel::Debug,
+                "INVARIANT",
+                &format!("✓ Invariant {} satisfied", invariant_name)
+            );
+            Ok(())
+        } else {
+            logger.log(
+                LogLevel::Error,
+                "INVARIANT",
+                &format!("✗ Invariant {} violated. State: {:?}", invariant_name, state)
+            );
+            Err(ProgramError::InvalidAccountData)
+        }
+    }
+}
+
+/// Transaction simulation utilities
+pub struct TransactionSimulator;
+
+impl TransactionSimulator {
+    /// Simulate operation without side effects
+    pub fn dry_run<F, T>(
+        operation: F,
+        logger: &DebugLogger,
+        operation_name: &str,
+    ) -> Result<T, ProgramError>
+    where
+        F: FnOnce() -> Result<T, ProgramError>,
+    {
+        logger.log(
+            LogLevel::Info,
+            "SIMULATION",
+            &format!("Starting dry run: {}", operation_name)
+        );
+        
+        let start_time = std::time::Instant::now();
+        let result = operation();
+        let duration = start_time.elapsed();
+        
+        match &result {
+            Ok(_) => {
+                logger.log_performance(
+                    &format!("DRY_RUN_{}", operation_name),
+                    duration.as_micros() as u64,
+                    true
+                );
+                logger.log(
+                    LogLevel::Info,
+                    "SIMULATION",
+                    &format!("Dry run {} completed successfully", operation_name)
+                );
+            }
+            Err(e) => {
+                logger.log_performance(
+                    &format!("DRY_RUN_{}", operation_name),
+                    duration.as_micros() as u64,
+                    false
+                );
+                logger.log(
+                    LogLevel::Error,
+                    "SIMULATION",
+                    &format!("Dry run {} failed: {:?}", operation_name, e)
+                );
+            }
+        }
+        
+        result
+    }
+    
+    /// Test account modifications
+    pub fn test_account_modification<F>(
+        account: &AccountInfo,
+        modification: F,
+        logger: &DebugLogger,
+    ) -> Result<(), ProgramError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ProgramError>,
+    {
+        logger.log(LogLevel::Debug, "TEST", "Creating account data snapshot");
+        
+        let original_data = account.data.borrow().to_vec();
+        let mut test_data = original_data.clone();
+        
+        // Test the modification
+        let result = modification(&mut test_data);
+        
+        match result {
+            Ok(_) => {
+                logger.log(LogLevel::Debug, "TEST", "Account modification test passed");
+                
+                // Log the changes
+                if original_data != test_data {
+                    logger.log(
+                        LogLevel::Debug,
+                        "TEST",
+                        &format!(
+                            "Data would change: {} bytes -> {} bytes",
+                            original_data.len(),
+                            test_data.len()
+                        )
+                    );
+                }
+            }
+            Err(e) => {
+                logger.log(
+                    LogLevel::Error,
+                    "TEST",
+                    &format!("Account modification test failed: {:?}", e)
+                );
+            }
+        }
+        
+        result
+    }
+}
+
+/// Performance profiler for program operations
+pub struct PerformanceProfiler {
+    logger: DebugLogger,
+}
+
+impl PerformanceProfiler {
+    pub fn new(program_name: &str) -> Self {
+        Self {
+            logger: DebugLogger::new(program_name, LogLevel::Info),
+        }
+    }
+    
+    /// Profile a function execution
+    pub fn profile<F, T>(&self, operation: F, name: &str) -> Result<T, ProgramError>
+    where
+        F: FnOnce() -> Result<T, ProgramError>,
+    {
+        self.logger.log_compute_units(&format!("START_{}", name));
+        let start_time = std::time::Instant::now();
+        
+        let result = operation();
+        
+        let duration = start_time.elapsed();
+        self.logger.log_compute_units(&format!("END_{}", name));
+        
+        let success = result.is_ok();
+        self.logger.log_performance(name, duration.as_micros() as u64, success);
+        
+        result
+    }
+}
+
+/// Debugging macros for common patterns
+#[macro_export]
+macro_rules! debug_log {
+    ($logger:expr, $level:expr, $module:expr, $($arg:tt)*) => {
+        $logger.log($level, $module, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_assert_state {
+    ($condition:expr, $logger:expr, $message:expr) => {
+        if !($condition) {
+            $logger.log(LogLevel::Error, "ASSERTION", $message);
+            return Err(ProgramError::InvalidAccountData);
+        }
+    };
+}
+```
+
+### Production Error Management
+
+```rust
+// ✅ DO: Production-ready error monitoring and recovery
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Error monitoring and metrics collection
+pub struct ErrorMonitor {
+    error_counts: HashMap<u32, AtomicU64>,
+    last_errors: HashMap<u32, (String, i64)>,
+    alert_thresholds: HashMap<u32, u64>,
+}
+
+impl ErrorMonitor {
+    pub fn new() -> Self {
+        Self {
+            error_counts: HashMap::new(),
+            last_errors: HashMap::new(),
+            alert_thresholds: HashMap::new(),
+        }
+    }
+    
+    /// Record error occurrence
+    pub fn record_error(&mut self, error: &CustomProgramError) {
+        let error_code = error.error_code();
+        
+        // Increment counter
+        let counter = self.error_counts
+            .entry(error_code)
+            .or_insert_with(|| AtomicU64::new(0));
+        counter.fetch_add(1, Ordering::Relaxed);
+        
+        // Update last occurrence
+        self.last_errors.insert(
+            error_code,
+            (error.to_string(), Self::current_timestamp())
+        );
+        
+        // Check alert thresholds
+        if let Some(&threshold) = self.alert_thresholds.get(&error_code) {
+            let current_count = counter.load(Ordering::Relaxed);
+            if current_count >= threshold {
+                self.trigger_alert(error_code, current_count, error);
+            }
+        }
+    }
+    
+    /// Set alert threshold for specific error type
+    pub fn set_alert_threshold(&mut self, error_code: u32, threshold: u64) {
+        self.alert_thresholds.insert(error_code, threshold);
+    }
+    
+    /// Get error statistics
+    pub fn get_error_stats(&self) -> HashMap<u32, (u64, Option<String>, Option<i64>)> {
+        let mut stats = HashMap::new();
+        
+        for (&error_code, counter) in &self.error_counts {
+            let count = counter.load(Ordering::Relaxed);
+            let (last_message, last_time) = self.last_errors
+                .get(&error_code)
+                .map(|(msg, time)| (Some(msg.clone()), Some(*time)))
+                .unwrap_or((None, None));
+            
+            stats.insert(error_code, (count, last_message, last_time));
+        }
+        
+        stats
+    }
+    
+    /// Check system health based on error rates
+    pub fn health_check(&self) -> HealthStatus {
+        let mut total_errors = 0u64;
+        let mut critical_errors = 0u64;
+        
+        for (&error_code, counter) in &self.error_counts {
+            let count = counter.load(Ordering::Relaxed);
+            total_errors += count;
+            
+            // Consider certain error types as critical
+            if Self::is_critical_error(error_code) {
+                critical_errors += count;
+            }
+        }
+        
+        if critical_errors > 10 {
+            HealthStatus::Critical
+        } else if total_errors > 100 {
+            HealthStatus::Degraded
+        } else if total_errors > 50 {
+            HealthStatus::Warning
+        } else {
+            HealthStatus::Healthy
+        }
+    }
+    
+    fn trigger_alert(&self, error_code: u32, count: u64, error: &CustomProgramError) {
+        msg!(
+            "ALERT: Error {} occurred {} times. Latest: {}",
+            error_code,
+            count,
+            error
+        );
+        
+        // In production, this would trigger external alerting systems
+        // e.g., PagerDuty, Slack, email notifications
+    }
+    
+    fn is_critical_error(error_code: u32) -> bool {
+        matches!(error_code, 1002 | 1004 | 1005) // InsufficientFunds, MathOverflow, AccessDenied
+    }
+    
+    fn current_timestamp() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HealthStatus {
+    Healthy,
+    Warning,
+    Degraded,
+    Critical,
+}
+
+/// Recovery strategies for different error types
+pub struct ErrorRecovery;
+
+impl ErrorRecovery {
+    /// Attempt recovery from specific error types
+    pub fn attempt_recovery(
+        error: &CustomProgramError,
+        context: &str,
+        retry_count: u32,
+    ) -> RecoveryAction {
+        match error {
+            CustomProgramError::ExternalServiceError { service, error_code } => {
+                if retry_count < 3 && Self::is_retryable_service_error(*error_code) {
+                    RecoveryAction::Retry {
+                        delay_ms: Self::calculate_backoff_delay(retry_count),
+                        max_retries: 3,
+                    }
+                } else {
+                    RecoveryAction::Fallback {
+                        alternative: format!("Use cached data for {}", service),
+                    }
+                }
+            }
+            CustomProgramError::ResourceExhausted { resource, .. } => {
+                RecoveryAction::Throttle {
+                    duration_ms: 5000,
+                    reduce_load: true,
+                }
+            }
+            CustomProgramError::TemporalConstraint { allowed_time } => {
+                let current_time = Self::current_timestamp();
+                if *allowed_time > current_time {
+                    RecoveryAction::Delay {
+                        until: *allowed_time,
+                        reason: "Waiting for temporal constraint".to_string(),
+                    }
+                } else {
+                    RecoveryAction::Fail {
+                        reason: "Temporal constraint cannot be satisfied".to_string(),
+                    }
+                }
+            }
+            CustomProgramError::InsufficientFunds { .. } => {
+                RecoveryAction::Fail {
+                    reason: "Cannot recover from insufficient funds automatically".to_string(),
+                }
+            }
+            _ => {
+                if retry_count < 1 {
+                    RecoveryAction::Retry {
+                        delay_ms: 1000,
+                        max_retries: 1,
+                    }
+                } else {
+                    RecoveryAction::Fail {
+                        reason: format!("No recovery strategy for error: {}", error),
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Execute recovery action
+    pub fn execute_recovery(
+        action: RecoveryAction,
+        logger: &DebugLogger,
+    ) -> Result<(), CustomProgramError> {
+        match action {
+            RecoveryAction::Retry { delay_ms, max_retries } => {
+                logger.log(
+                    LogLevel::Info,
+                    "RECOVERY",
+                    &format!("Retrying operation after {}ms delay (max {} retries)", delay_ms, max_retries)
+                );
+                // In practice, this would involve sleeping and retrying
+                Ok(())
+            }
+            RecoveryAction::Fallback { alternative } => {
+                logger.log(
+                    LogLevel::Info,
+                    "RECOVERY",
+                    &format!("Using fallback strategy: {}", alternative)
+                );
+                // Implement fallback logic
+                Ok(())
+            }
+            RecoveryAction::Throttle { duration_ms, reduce_load } => {
+                logger.log(
+                    LogLevel::Warn,
+                    "RECOVERY",
+                    &format!("Throttling for {}ms, reduce_load={}", duration_ms, reduce_load)
+                );
+                // Implement throttling logic
+                Ok(())
+            }
+            RecoveryAction::Delay { until, reason } => {
+                logger.log(
+                    LogLevel::Info,
+                    "RECOVERY",
+                    &format!("Delaying until {}: {}", until, reason)
+                );
+                // Implement delay logic
+                Ok(())
+            }
+            RecoveryAction::Fail { reason } => {
+                logger.log(
+                    LogLevel::Error,
+                    "RECOVERY",
+                    &format!("Recovery failed: {}", reason)
+                );
+                Err(CustomProgramError::ConfigurationError {
+                    parameter: "recovery".to_string(),
+                    value: reason,
+                })
+            }
+        }
+    }
+    
+    fn is_retryable_service_error(error_code: u32) -> bool {
+        // Service unavailable, timeout, rate limited
+        matches!(error_code, 503 | 504 | 429)
+    }
+    
+    fn calculate_backoff_delay(retry_count: u32) -> u64 {
+        // Exponential backoff: 1s, 2s, 4s
+        1000u64.saturating_mul(2u64.saturating_pow(retry_count))
+    }
+    
+    fn current_timestamp() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RecoveryAction {
+    Retry {
+        delay_ms: u64,
+        max_retries: u32,
+    },
+    Fallback {
+        alternative: String,
+    },
+    Throttle {
+        duration_ms: u64,
+        reduce_load: bool,
+    },
+    Delay {
+        until: i64,
+        reason: String,
+    },
+    Fail {
+        reason: String,
+    },
+}
+
+/// Graceful degradation strategies
+pub struct GracefulDegradation;
+
+impl GracefulDegradation {
+    /// Provide degraded service instead of complete failure
+    pub fn degrade_service<T, F>(
+        primary_operation: F,
+        fallback_operation: F,
+        logger: &DebugLogger,
+        service_name: &str,
+    ) -> Result<T, CustomProgramError>
+    where
+        F: FnOnce() -> Result<T, CustomProgramError>,
+    {
+        logger.log(
+            LogLevel::Debug,
+            "DEGRADATION",
+            &format!("Attempting primary operation for {}", service_name)
+        );
+        
+        match primary_operation() {
+            Ok(result) => {
+                logger.log(
+                    LogLevel::Info,
+                    "DEGRADATION",
+                    &format!("{} primary operation succeeded", service_name)
+                );
+                Ok(result)
+            }
+            Err(error) => {
+                logger.log(
+                    LogLevel::Warn,
+                    "DEGRADATION",
+                    &format!("{} primary operation failed: {}. Trying fallback.", service_name, error)
+                );
+                
+                match fallback_operation() {
+                    Ok(result) => {
+                        logger.log(
+                            LogLevel::Info,
+                            "DEGRADATION",
+                            &format!("{} fallback operation succeeded", service_name)
+                        );
+                        Ok(result)
+                    }
+                    Err(fallback_error) => {
+                        logger.log(
+                            LogLevel::Error,
+                            "DEGRADATION",
+                            &format!("{} both primary and fallback failed. Primary: {}, Fallback: {}", 
+                                    service_name, error, fallback_error)
+                        );
+                        Err(error) // Return original error
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Best Practices Summary
+
+### Custom Error Design
+- Create specific error types with rich context information
+- Use error codes for external API consumption
+- Include relevant data (amounts, accounts, etc.) in error messages
+- Implement error serialization for client debugging
+
+### Error Propagation
+- Use structured Result types for all fallible operations
+- Transform errors at API boundaries with proper context
+- Implement early return patterns for cleaner code
+- Collect and report multiple errors in batch operations
+
+### Debugging Techniques
+- Use structured logging with consistent format
+- Implement different log levels for development vs production
+- Profile compute usage and performance metrics
+- Inspect and validate state transitions
+
+### Production Management
+- Monitor error rates and set up alerting thresholds
+- Implement automatic recovery strategies where possible
+- Use graceful degradation instead of complete failures
+- Maintain error analytics for trend analysis
+
+## References
+- [Solana Program Error Handling](mdc:https:/docs.solana.com/developing/programming-model/overview#error-handling)
+- [Rust Error Handling Best Practices](mdc:https:/blog.burntsushi.net/rust-error-handling)
+- [thiserror Documentation](mdc:https:/docs.rs/thiserror)

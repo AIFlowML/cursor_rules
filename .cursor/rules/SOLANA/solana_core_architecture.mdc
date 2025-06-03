@@ -1,0 +1,955 @@
+---
+description: Solana Rust development
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana Rust development, Anchor framework, and blockchain programming. You focus on producing secure, efficient, and well-structured Solana programs using the latest stable versions and best practices.
+
+## Solana Program Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Entry Point   │    │  Instruction     │    │   Account       │
+│   lib.rs        │───▶│  Processing      │───▶│   Validation    │
+│                 │    │                  │    │                 │
+│ - entrypoint!   │    │ - Route dispatch │    │ - Owner checks  │
+│ - process_inst  │    │ - Deserialize    │    │ - Data validate │
+│ - Error defs    │    │ - Business logic │    │ - Constraints   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   PDA Manager   │    │   CPI Handler    │    │   State Mgmt    │
+│   Seed derive   │    │   Cross-program  │    │   Serialization │
+│   Bump cache    │    │   Account pass   │    │   Rent exempt   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+solana-program/
+├── Cargo.toml                 # Dependencies and metadata
+├── src/
+│   ├── lib.rs                 # Program entry point
+│   ├── instruction.rs         # Instruction definitions
+│   ├── processor.rs           # Business logic
+│   ├── state.rs              # Account state structures
+│   ├── error.rs              # Custom error definitions
+│   └── utils/
+│       ├── account.rs         # Account utilities
+│       ├── pda.rs            # PDA derivation helpers
+│       └── validation.rs     # Input validation
+├── tests/
+│   ├── integration/
+│   │   └── test_program.rs   # Integration tests
+│   └── units/
+│       └── test_instructions.rs # Unit tests
+└── examples/
+    └── client.rs             # Example client usage
+```
+
+## Core Implementation Patterns
+
+### Program Entry Point Setup
+
+```rust
+// ✅ DO: Comprehensive lib.rs structure
+use solana_program::{
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    pubkey::Pubkey,
+    msg,
+};
+
+// Declare program entry point
+entrypoint!(process_instruction);
+
+// Program entry point implementation
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    // Log program invocation
+    msg!("Program {} invoked", program_id);
+    
+    // Delegate to processor with proper error handling
+    processor::Processor::process(program_id, accounts, instruction_data)
+        .map_err(|e| {
+            msg!("Instruction processing failed: {}", e);
+            e
+        })
+}
+
+// Re-export public interfaces
+pub use processor::Processor;
+pub use instruction::ProgramInstruction;
+pub use state::*;
+pub use error::ProgramError;
+
+// ❌ DON'T: Minimal entry point without proper structure
+entrypoint!(process_instruction);
+pub fn process_instruction(
+    _program_id: &Pubkey,
+    _accounts: &[AccountInfo],
+    _instruction_data: &[u8],
+) -> ProgramResult {
+    Ok(()) // No actual processing
+}
+```
+
+### Instruction Definition and Routing
+
+```rust
+// ✅ DO: Structured instruction definitions
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    program_error::ProgramError,
+    pubkey::Pubkey,
+};
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
+pub enum ProgramInstruction {
+    /// Initialize a new account
+    /// 
+    /// Accounts expected:
+    /// 0. `[signer]` Authority account
+    /// 1. `[writable]` Account to initialize
+    /// 2. `[]` System program
+    Initialize {
+        /// Initial configuration data
+        data: InitializeData,
+    },
+    
+    /// Update existing account
+    /// 
+    /// Accounts expected:
+    /// 0. `[signer]` Authority account
+    /// 1. `[writable]` Account to update
+    Update {
+        /// Update parameters
+        params: UpdateParams,
+    },
+    
+    /// Close account and reclaim rent
+    /// 
+    /// Accounts expected:
+    /// 0. `[signer]` Authority account
+    /// 1. `[writable]` Account to close
+    /// 2. `[writable]` Destination for rent
+    Close,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct InitializeData {
+    pub name: String,
+    pub value: u64,
+    pub config_flags: u8,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct UpdateParams {
+    pub new_value: Option<u64>,
+    pub new_flags: Option<u8>,
+}
+
+impl ProgramInstruction {
+    /// Unpack instruction from bytes
+    pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
+        Self::try_from_slice(input).map_err(|_| ProgramError::InvalidInstructionData)
+    }
+    
+    /// Pack instruction to bytes
+    pub fn pack(&self) -> Result<Vec<u8>, ProgramError> {
+        self.try_to_vec().map_err(|_| ProgramError::InvalidInstructionData)
+    }
+}
+
+// ❌ DON'T: Unstructured instruction handling
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    match instruction_data[0] {
+        0 => { /* some logic */ },
+        1 => { /* other logic */ },
+        _ => return Err(ProgramError::InvalidInstructionData),
+    }
+    Ok(())
+}
+```
+
+### Account Model and Data Structures
+
+```rust
+// ✅ DO: Comprehensive account state management
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    program_pack::{IsInitialized, Pack, Sealed},
+    pubkey::Pubkey,
+};
+
+/// Account discriminator for type safety
+pub const ACCOUNT_DISCRIMINATOR: &[u8] = b"MYACCOUNT";
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
+pub struct MyAccount {
+    /// Account discriminator for type safety
+    pub discriminator: [u8; 9],
+    /// Whether the account has been initialized
+    pub is_initialized: bool,
+    /// Account authority
+    pub authority: Pubkey,
+    /// Primary data value
+    pub value: u64,
+    /// Configuration flags
+    pub config: AccountConfig,
+    /// Creation timestamp
+    pub created_at: i64,
+    /// Last update timestamp
+    pub updated_at: i64,
+    /// Reserved space for future upgrades
+    pub _reserved: [u8; 64],
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
+pub struct AccountConfig {
+    pub flags: u8,
+    pub max_value: u64,
+    pub min_value: u64,
+}
+
+impl MyAccount {
+    pub const LEN: usize = 9 + 1 + 32 + 8 + 17 + 8 + 8 + 64; // 147 bytes
+    
+    /// Create new account instance
+    pub fn new(authority: Pubkey, value: u64, config: AccountConfig) -> Self {
+        let now = solana_program::clock::Clock::get()
+            .map(|c| c.unix_timestamp)
+            .unwrap_or(0);
+            
+        Self {
+            discriminator: *ACCOUNT_DISCRIMINATOR,
+            is_initialized: true,
+            authority,
+            value,
+            config,
+            created_at: now,
+            updated_at: now,
+            _reserved: [0; 64],
+        }
+    }
+    
+    /// Validate account data integrity
+    pub fn validate(&self) -> Result<(), ProgramError> {
+        // Check discriminator
+        if self.discriminator != *ACCOUNT_DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Check initialization
+        if !self.is_initialized {
+            return Err(ProgramError::UninitializedAccount);
+        }
+        
+        // Validate value constraints
+        if self.value < self.config.min_value || self.value > self.config.max_value {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Update value with constraints
+    pub fn update_value(&mut self, new_value: u64) -> Result<(), ProgramError> {
+        if new_value < self.config.min_value || new_value > self.config.max_value {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        self.value = new_value;
+        self.updated_at = solana_program::clock::Clock::get()
+            .map(|c| c.unix_timestamp)
+            .unwrap_or(self.updated_at);
+            
+        Ok(())
+    }
+}
+
+impl IsInitialized for MyAccount {
+    fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+}
+
+impl Sealed for MyAccount {}
+
+impl Pack for MyAccount {
+    const LEN: usize = Self::LEN;
+    
+    fn pack_into_slice(&self, dst: &mut [u8]) {
+        let data = self.try_to_vec().unwrap();
+        dst[..data.len()].copy_from_slice(&data);
+    }
+    
+    fn unpack_from_slice(src: &[u8]) -> Result<Self, ProgramError> {
+        Self::try_from_slice(src).map_err(|_| ProgramError::InvalidAccountData)
+    }
+}
+
+// Account loading utilities
+pub fn load_account<T: Pack>(account_info: &AccountInfo) -> Result<T, ProgramError> {
+    if account_info.data_len() != T::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    
+    T::unpack(&account_info.data.borrow())
+}
+
+pub fn save_account<T: Pack>(account: &T, account_info: &AccountInfo) -> ProgramResult {
+    if account_info.data_len() != T::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    
+    account.pack_into_slice(&mut account_info.data.borrow_mut());
+    Ok(())
+}
+
+// ❌ DON'T: Unstructured account data
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct BadAccount {
+    pub data: Vec<u8>, // No structure
+    pub stuff: u64,    // No validation
+}
+```
+
+### Program Derived Addresses (PDAs)
+
+```rust
+// ✅ DO: Structured PDA derivation and management
+use solana_program::{
+    pubkey::Pubkey,
+    program_error::ProgramError,
+};
+
+pub struct PdaManager;
+
+impl PdaManager {
+    /// Account PDA seeds
+    pub const ACCOUNT_SEED: &'static [u8] = b"account";
+    pub const CONFIG_SEED: &'static [u8] = b"config";
+    pub const VAULT_SEED: &'static [u8] = b"vault";
+    
+    /// Derive account PDA
+    pub fn derive_account_pda(
+        authority: &Pubkey,
+        identifier: &[u8],
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let seeds = &[
+            Self::ACCOUNT_SEED,
+            authority.as_ref(),
+            identifier,
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Derive config PDA (global singleton)
+    pub fn derive_config_pda(program_id: &Pubkey) -> Result<(Pubkey, u8), ProgramError> {
+        let seeds = &[Self::CONFIG_SEED];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Derive vault PDA with authority
+    pub fn derive_vault_pda(
+        authority: &Pubkey,
+        vault_id: u64,
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let seeds = &[
+            Self::VAULT_SEED,
+            authority.as_ref(),
+            &vault_id.to_le_bytes(),
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Verify PDA derivation
+    pub fn verify_pda(
+        derived_pubkey: &Pubkey,
+        seeds: &[&[u8]],
+        bump: u8,
+        program_id: &Pubkey,
+    ) -> Result<(), ProgramError> {
+        let mut seeds_with_bump = seeds.to_vec();
+        seeds_with_bump.push(&[bump]);
+        
+        let expected_pubkey = Pubkey::create_program_address(&seeds_with_bump, program_id)
+            .map_err(|_| ProgramError::InvalidSeeds)?;
+            
+        if expected_pubkey != *derived_pubkey {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        
+        Ok(())
+    }
+}
+
+/// PDA signer seeds helper
+pub struct PdaSignerSeeds<'a> {
+    pub seeds: Vec<Vec<u8>>,
+    pub bump: &'a [u8],
+}
+
+impl<'a> PdaSignerSeeds<'a> {
+    pub fn new(seeds: Vec<Vec<u8>>, bump: &'a [u8]) -> Self {
+        Self { seeds, bump }
+    }
+    
+    pub fn as_signer_seeds(&self) -> Vec<&[u8]> {
+        let mut signer_seeds: Vec<&[u8]> = self.seeds.iter().map(|s| s.as_slice()).collect();
+        signer_seeds.push(self.bump);
+        signer_seeds
+    }
+}
+
+// ❌ DON'T: Hardcoded or unsafe PDA derivation
+pub fn bad_derive_pda(program_id: &Pubkey) -> Pubkey {
+    let seeds = &[b"hardcoded"]; // No flexibility
+    Pubkey::find_program_address(seeds, program_id).0 // Ignoring bump
+}
+```
+
+### Cross-Program Invocation (CPI) Foundations
+
+```rust
+// ✅ DO: Secure and structured CPI implementation
+use solana_program::{
+    account_info::{next_account_info, AccountInfo},
+    entrypoint::ProgramResult,
+    instruction::{AccountMeta, Instruction},
+    program::{invoke, invoke_signed},
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_instruction,
+    sysvar::{rent::Rent, Sysvar},
+};
+
+pub struct CpiManager;
+
+impl CpiManager {
+    /// Create account via CPI to System Program
+    pub fn create_account(
+        funding_account: &AccountInfo,
+        new_account: &AccountInfo,
+        system_program: &AccountInfo,
+        program_id: &Pubkey,
+        signer_seeds: Option<&[&[&[u8]]]>,
+        space: usize,
+    ) -> ProgramResult {
+        // Verify System Program ID
+        if system_program.key != &solana_program::system_program::id() {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // Calculate rent exemption
+        let rent = Rent::get()?;
+        let lamports = rent.minimum_balance(space);
+        
+        // Create instruction
+        let create_instruction = system_instruction::create_account(
+            funding_account.key,
+            new_account.key,
+            lamports,
+            space as u64,
+            program_id,
+        );
+        
+        // Prepare accounts for CPI
+        let account_infos = &[
+            funding_account.clone(),
+            new_account.clone(),
+            system_program.clone(),
+        ];
+        
+        // Execute CPI
+        match signer_seeds {
+            Some(seeds) => invoke_signed(&create_instruction, account_infos, seeds),
+            None => invoke(&create_instruction, account_infos),
+        }
+    }
+    
+    /// Transfer SOL via CPI
+    pub fn transfer_sol(
+        from_account: &AccountInfo,
+        to_account: &AccountInfo,
+        system_program: &AccountInfo,
+        amount: u64,
+        signer_seeds: Option<&[&[&[u8]]]>,
+    ) -> ProgramResult {
+        // Verify System Program ID
+        if system_program.key != &solana_program::system_program::id() {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // Create transfer instruction
+        let transfer_instruction = system_instruction::transfer(
+            from_account.key,
+            to_account.key,
+            amount,
+        );
+        
+        // Prepare accounts
+        let account_infos = &[
+            from_account.clone(),
+            to_account.clone(),
+            system_program.clone(),
+        ];
+        
+        // Execute transfer
+        match signer_seeds {
+            Some(seeds) => invoke_signed(&transfer_instruction, account_infos, seeds),
+            None => invoke(&transfer_instruction, account_infos),
+        }
+    }
+    
+    /// Generic CPI with validation
+    pub fn invoke_instruction(
+        instruction: &Instruction,
+        account_infos: &[AccountInfo],
+        signer_seeds: Option<&[&[&[u8]]]>,
+    ) -> ProgramResult {
+        // Validate instruction accounts match provided accounts
+        if instruction.accounts.len() != account_infos.len() {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        }
+        
+        // Verify account keys match
+        for (i, account_meta) in instruction.accounts.iter().enumerate() {
+            if account_meta.pubkey != *account_infos[i].key {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        // Execute CPI
+        match signer_seeds {
+            Some(seeds) => invoke_signed(instruction, account_infos, seeds),
+            None => invoke(instruction, account_infos),
+        }
+    }
+}
+
+/// CPI context builder for type safety
+pub struct CpiContext<'a> {
+    pub accounts: Vec<&'a AccountInfo<'a>>,
+    pub remaining_accounts: Vec<&'a AccountInfo<'a>>,
+    pub signer_seeds: Option<&'a [&'a [&'a [u8]]]>,
+}
+
+impl<'a> CpiContext<'a> {
+    pub fn new(accounts: Vec<&'a AccountInfo<'a>>) -> Self {
+        Self {
+            accounts,
+            remaining_accounts: Vec::new(),
+            signer_seeds: None,
+        }
+    }
+    
+    pub fn with_signer(mut self, signer_seeds: &'a [&'a [&'a [u8]]]) -> Self {
+        self.signer_seeds = Some(signer_seeds);
+        self
+    }
+    
+    pub fn with_remaining_accounts(mut self, accounts: Vec<&'a AccountInfo<'a>>) -> Self {
+        self.remaining_accounts = accounts;
+        self
+    }
+}
+
+// ❌ DON'T: Unsafe CPI without validation
+pub fn bad_cpi(account_infos: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {
+    let instruction = Instruction {
+        program_id: account_infos[0].key.clone(), // No verification
+        accounts: vec![], // No account setup
+        data: instruction_data.to_vec(),
+    };
+    
+    invoke(&instruction, account_infos) // No validation
+}
+```
+
+## Advanced Patterns
+
+### Account Validation Framework
+
+```rust
+// ✅ DO: Comprehensive account validation
+use solana_program::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    rent::Rent,
+    sysvar::Sysvar,
+};
+
+pub struct AccountValidator;
+
+impl AccountValidator {
+    /// Validate account ownership
+    pub fn validate_owner(account: &AccountInfo, expected_owner: &Pubkey) -> ProgramResult {
+        if account.owner != expected_owner {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        Ok(())
+    }
+    
+    /// Validate account is signer
+    pub fn validate_signer(account: &AccountInfo) -> ProgramResult {
+        if !account.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        Ok(())
+    }
+    
+    /// Validate account is writable
+    pub fn validate_writable(account: &AccountInfo) -> ProgramResult {
+        if !account.is_writable {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(())
+    }
+    
+    /// Validate account is rent exempt
+    pub fn validate_rent_exempt(account: &AccountInfo) -> ProgramResult {
+        let rent = Rent::get()?;
+        if !rent.is_exempt(account.lamports(), account.data_len()) {
+            return Err(ProgramError::AccountNotRentExempt);
+        }
+        Ok(())
+    }
+    
+    /// Validate account data length
+    pub fn validate_data_length(account: &AccountInfo, expected_len: usize) -> ProgramResult {
+        if account.data_len() != expected_len {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(())
+    }
+    
+    /// Validate account minimum balance
+    pub fn validate_minimum_balance(account: &AccountInfo, minimum: u64) -> ProgramResult {
+        if account.lamports() < minimum {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        Ok(())
+    }
+    
+    /// Comprehensive account validation
+    pub fn validate_account_full(
+        account: &AccountInfo,
+        expected_owner: &Pubkey,
+        expected_data_len: Option<usize>,
+        require_signer: bool,
+        require_writable: bool,
+        require_rent_exempt: bool,
+    ) -> ProgramResult {
+        // Owner validation
+        Self::validate_owner(account, expected_owner)?;
+        
+        // Signer validation
+        if require_signer {
+            Self::validate_signer(account)?;
+        }
+        
+        // Writable validation
+        if require_writable {
+            Self::validate_writable(account)?;
+        }
+        
+        // Data length validation
+        if let Some(len) = expected_data_len {
+            Self::validate_data_length(account, len)?;
+        }
+        
+        // Rent exemption validation
+        if require_rent_exempt {
+            Self::validate_rent_exempt(account)?;
+        }
+        
+        Ok(())
+    }
+}
+
+/// Account constraints macro for declarative validation
+macro_rules! validate_account {
+    ($account:expr, {
+        owner: $owner:expr,
+        $(signer: $signer:expr,)?
+        $(writable: $writable:expr,)?
+        $(data_len: $data_len:expr,)?
+        $(rent_exempt: $rent_exempt:expr,)?
+    }) => {
+        AccountValidator::validate_account_full(
+            $account,
+            $owner,
+            None $(.or(Some($data_len)))?,
+            false $(|| $signer)?,
+            false $(|| $writable)?,
+            false $(|| $rent_exempt)?,
+        )?;
+    };
+}
+
+// Usage example
+pub fn validate_instruction_accounts(
+    accounts: &[AccountInfo],
+    program_id: &Pubkey,
+) -> ProgramResult {
+    let account_iter = &mut accounts.iter();
+    
+    let authority = next_account_info(account_iter)?;
+    validate_account!(authority, {
+        owner: &solana_program::system_program::id(),
+        signer: true,
+    });
+    
+    let data_account = next_account_info(account_iter)?;
+    validate_account!(data_account, {
+        owner: program_id,
+        writable: true,
+        data_len: MyAccount::LEN,
+        rent_exempt: true,
+    });
+    
+    Ok(())
+}
+```
+
+### Error Handling and Logging
+
+```rust
+// ✅ DO: Comprehensive error handling
+use solana_program::{
+    program_error::ProgramError,
+    msg,
+};
+use thiserror::Error;
+
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum CustomProgramError {
+    #[error("Invalid instruction data provided")]
+    InvalidInstruction,
+    
+    #[error("Account not properly initialized")]
+    NotInitialized,
+    
+    #[error("Account already initialized")]
+    AlreadyInitialized,
+    
+    #[error("Insufficient permissions for this operation")]
+    InsufficientPermissions,
+    
+    #[error("Numeric overflow in calculation")]
+    Overflow,
+    
+    #[error("Invalid account state for operation")]
+    InvalidState,
+    
+    #[error("Unauthorized access attempt")]
+    Unauthorized,
+}
+
+impl From<CustomProgramError> for ProgramError {
+    fn from(e: CustomProgramError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
+}
+
+/// Logging utilities with context
+pub struct Logger;
+
+impl Logger {
+    pub fn log_instruction_start(instruction_name: &str, accounts_len: usize) {
+        msg!("=== {} START ===", instruction_name);
+        msg!("Accounts provided: {}", accounts_len);
+    }
+    
+    pub fn log_instruction_end(instruction_name: &str) {
+        msg!("=== {} SUCCESS ===", instruction_name);
+    }
+    
+    pub fn log_error(context: &str, error: &ProgramError) {
+        msg!("ERROR in {}: {:?}", context, error);
+    }
+    
+    pub fn log_account_info(name: &str, account: &AccountInfo) {
+        msg!("Account {}: {}", name, account.key);
+        msg!("  Owner: {}", account.owner);
+        msg!("  Lamports: {}", account.lamports());
+        msg!("  Data length: {}", account.data_len());
+        msg!("  Executable: {}", account.executable);
+    }
+    
+    pub fn log_pda_derivation(seeds: &[&[u8]], bump: u8, derived: &Pubkey) {
+        msg!("PDA derived:");
+        msg!("  Seeds: {:?}", seeds);
+        msg!("  Bump: {}", bump);
+        msg!("  Address: {}", derived);
+    }
+}
+
+/// Result wrapper with context
+pub type ProgramResultWithContext<T> = Result<T, ProgramErrorWithContext>;
+
+#[derive(Debug)]
+pub struct ProgramErrorWithContext {
+    pub error: ProgramError,
+    pub context: String,
+}
+
+impl From<ProgramErrorWithContext> for ProgramError {
+    fn from(e: ProgramErrorWithContext) -> Self {
+        Logger::log_error(&e.context, &e.error);
+        e.error
+    }
+}
+
+/// Context helper trait
+pub trait WithContext<T> {
+    fn with_context(self, context: &str) -> ProgramResultWithContext<T>;
+}
+
+impl<T> WithContext<T> for Result<T, ProgramError> {
+    fn with_context(self, context: &str) -> ProgramResultWithContext<T> {
+        self.map_err(|e| ProgramErrorWithContext {
+            error: e,
+            context: context.to_string(),
+        })
+    }
+}
+```
+
+## Security Patterns
+
+### Input Validation and Sanitization
+
+```rust
+// ✅ DO: Comprehensive input validation
+use solana_program::program_error::ProgramError;
+
+pub struct InputValidator;
+
+impl InputValidator {
+    /// Validate string input
+    pub fn validate_string(input: &str, max_len: usize, allow_empty: bool) -> Result<(), ProgramError> {
+        if !allow_empty && input.is_empty() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        if input.len() > max_len {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        // Check for null bytes
+        if input.contains('\0') {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate numeric ranges
+    pub fn validate_u64_range(value: u64, min: u64, max: u64) -> Result<(), ProgramError> {
+        if value < min || value > max {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        Ok(())
+    }
+    
+    /// Validate pubkey is not default/zero
+    pub fn validate_pubkey_not_default(pubkey: &Pubkey) -> Result<(), ProgramError> {
+        if pubkey == &Pubkey::default() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        Ok(())
+    }
+    
+    /// Safe math operations
+    pub fn safe_add(a: u64, b: u64) -> Result<u64, ProgramError> {
+        a.checked_add(b).ok_or(ProgramError::InvalidInstructionData)
+    }
+    
+    pub fn safe_sub(a: u64, b: u64) -> Result<u64, ProgramError> {
+        a.checked_sub(b).ok_or(ProgramError::InvalidInstructionData)
+    }
+    
+    pub fn safe_mul(a: u64, b: u64) -> Result<u64, ProgramError> {
+        a.checked_mul(b).ok_or(ProgramError::InvalidInstructionData)
+    }
+    
+    pub fn safe_div(a: u64, b: u64) -> Result<u64, ProgramError> {
+        if b == 0 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        Ok(a / b)
+    }
+}
+```
+
+## Best Practices Summary
+
+### Program Structure
+- Use clear entry point with proper error handling
+- Implement structured instruction routing
+- Define comprehensive account state with validation
+- Organize code into logical modules
+
+### Account Management
+- Always validate account ownership and constraints
+- Use proper serialization with Borsh
+- Implement rent exemption checks
+- Include account discriminators for type safety
+
+### PDA Management
+- Use consistent seed patterns
+- Cache bump seeds where appropriate
+- Implement PDA verification functions
+- Use helper functions for common derivations
+
+### Error Handling
+- Create specific error types for different conditions
+- Log errors with context for debugging
+- Use proper error propagation patterns
+- Implement comprehensive input validation
+
+### Security
+- Validate all inputs and account constraints
+- Use safe math operations to prevent overflows
+- Implement proper authorization checks
+- Log security-relevant events
+
+### Performance
+- Use efficient serialization formats
+- Minimize compute unit usage
+- Cache frequently used calculations
+- Optimize account access patterns
+
+## References
+- [Solana Program Library](mdc:https:/spl.solana.com)
+- [Solana Cookbook](mdc:https:/solanacookbook.com)
+- [Anchor Framework](mdc:https:/anchor-lang.com)
+- [Solana Developer Resources](mdc:https:/solana.com/developers)
+- [Program Architecture Guide](mdc:https:/docs.solana.com/developing/programming-model/overview)

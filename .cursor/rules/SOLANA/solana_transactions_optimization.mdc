@@ -1,0 +1,1071 @@
+---
+description: Solana transaction optimization
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana transaction optimization, compute unit management, and performance engineering. You focus on building efficient, cost-effective transactions with optimal resource utilization.
+
+## Transaction Optimization Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Instruction   │    │   Compute Unit   │    │   Priority Fee  │
+│   Construction  │───▶│   Management     │───▶│   Optimization  │
+│                 │    │                  │    │                 │
+│ - Batch build   │    │ - Budget calc    │    │ - Dynamic fees  │
+│ - Size optimize │    │ - CU estimate    │    │ - Congestion    │
+│ - Account order │    │ - Profile tools  │    │ - Fee strategy  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Address Lookup  │    │   Transaction    │    │   Retry Logic   │
+│ Tables (ALTs)   │    │   Broadcasting   │    │   Error Handle  │
+│ Deduplication   │    │   Confirmation   │    │   Backoff       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+transaction-optimization/
+├── src/
+│   ├── builder/
+│   │   ├── mod.rs              # Transaction builder exports
+│   │   ├── instruction.rs      # Instruction optimization
+│   │   ├── batching.rs         # Batch transaction patterns
+│   │   └── sizing.rs          # Size optimization
+│   ├── compute/
+│   │   ├── budget.rs          # Compute budget management
+│   │   ├── estimation.rs      # CU estimation algorithms
+│   │   ├── profiling.rs       # Performance profiling
+│   │   └── optimization.rs    # Compute optimizations
+│   ├── fees/
+│   │   ├── priority.rs        # Priority fee strategies
+│   │   ├── estimation.rs      # Fee estimation
+│   │   ├── monitoring.rs      # Network monitoring
+│   │   └── optimization.rs    # Fee optimization
+│   ├── alt/
+│   │   ├── creation.rs        # ALT creation patterns
+│   │   ├── management.rs      # ALT lifecycle
+│   │   └── deduplication.rs   # Address deduplication
+│   └── retry/
+│       ├── strategies.rs      # Retry strategies
+│       ├── backoff.rs        # Backoff algorithms
+│       └── confirmation.rs   # Confirmation tracking
+```
+
+## Core Implementation Patterns
+
+### Transaction Construction & Optimization
+
+```rust
+// ✅ DO: Comprehensive transaction building with optimization
+use solana_sdk::{
+    instruction::Instruction,
+    message::Message,
+    pubkey::Pubkey,
+    signature::Signature,
+    signer::Signer,
+    transaction::Transaction,
+    compute_budget::ComputeBudgetInstruction,
+    address_lookup_table_account::AddressLookupTableAccount,
+};
+use std::collections::{HashMap, HashSet};
+
+pub struct OptimizedTransactionBuilder {
+    instructions: Vec<Instruction>,
+    signers: Vec<Box<dyn Signer>>,
+    payer: Option<Pubkey>,
+    recent_blockhash: Option<solana_sdk::hash::Hash>,
+    compute_budget: Option<u32>,
+    priority_fee: Option<u64>,
+    alt_accounts: Vec<AddressLookupTableAccount>,
+}
+
+impl OptimizedTransactionBuilder {
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            signers: Vec::new(),
+            payer: None,
+            recent_blockhash: None,
+            compute_budget: None,
+            priority_fee: None,
+            alt_accounts: Vec::new(),
+        }
+    }
+    
+    /// Add instruction with automatic optimization
+    pub fn add_instruction(mut self, instruction: Instruction) -> Self {
+        self.instructions.push(instruction);
+        self
+    }
+    
+    /// Add multiple instructions with batching optimization
+    pub fn add_instructions(mut self, instructions: Vec<Instruction>) -> Self {
+        self.instructions.extend(instructions);
+        self
+    }
+    
+    /// Set compute budget for transaction
+    pub fn compute_budget(mut self, units: u32) -> Self {
+        self.compute_budget = Some(units);
+        self
+    }
+    
+    /// Set priority fee for transaction
+    pub fn priority_fee(mut self, fee_lamports: u64) -> Self {
+        self.priority_fee = Some(fee_lamports);
+        self
+    }
+    
+    /// Add Address Lookup Table for compression
+    pub fn add_lookup_table(mut self, alt: AddressLookupTableAccount) -> Self {
+        self.alt_accounts.push(alt);
+        self
+    }
+    
+    /// Optimize instruction ordering for better performance
+    pub fn optimize_instruction_order(&mut self) {
+        // Sort instructions by:
+        // 1. Compute budget instructions first
+        // 2. Account creation instructions
+        // 3. Data modification instructions
+        // 4. Transfer instructions last
+        
+        self.instructions.sort_by(|a, b| {
+            let priority_a = Self::get_instruction_priority(a);
+            let priority_b = Self::get_instruction_priority(b);
+            priority_a.cmp(&priority_b)
+        });
+    }
+    
+    fn get_instruction_priority(instruction: &Instruction) -> u8 {
+        // Priority: 0 = highest, 255 = lowest
+        if instruction.program_id == solana_sdk::compute_budget::id() {
+            return 0; // Compute budget first
+        }
+        
+        if instruction.program_id == solana_sdk::system_program::id() {
+            // Check if it's account creation
+            if instruction.data.len() >= 4 {
+                let instruction_type = u32::from_le_bytes([
+                    instruction.data[0],
+                    instruction.data[1], 
+                    instruction.data[2],
+                    instruction.data[3],
+                ]);
+                if instruction_type == 0 { // CreateAccount
+                    return 1;
+                }
+                if instruction_type == 2 { // Transfer
+                    return 200;
+                }
+            }
+        }
+        
+        100 // Default priority for other instructions
+    }
+    
+    /// Minimize required signers through account analysis
+    pub fn minimize_signers(&mut self) -> Result<(), TransactionError> {
+        let mut required_signers = HashSet::new();
+        let mut signer_accounts = HashMap::new();
+        
+        // Analyze all instructions to find required signers
+        for instruction in &self.instructions {
+            for (i, account_meta) in instruction.accounts.iter().enumerate() {
+                if account_meta.is_signer {
+                    required_signers.insert(account_meta.pubkey);
+                    signer_accounts.insert(account_meta.pubkey, i);
+                }
+            }
+        }
+        
+        // Remove duplicate signers and validate
+        self.signers.retain(|signer| {
+            required_signers.contains(&signer.pubkey())
+        });
+        
+        // Ensure all required signers are present
+        for required_signer in &required_signers {
+            if !self.signers.iter().any(|s| s.pubkey() == *required_signer) {
+                return Err(TransactionError::MissingSigner(*required_signer));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Optimize transaction size by deduplicating accounts
+    pub fn optimize_account_usage(&mut self) {
+        let mut account_map = HashMap::new();
+        let mut deduplicated_accounts = Vec::new();
+        
+        // Build account deduplication map
+        for instruction in &mut self.instructions {
+            for account_meta in &mut instruction.accounts {
+                if let Some(&index) = account_map.get(&account_meta.pubkey) {
+                    // Account already exists, merge permissions
+                    let existing = &mut deduplicated_accounts[index];
+                    existing.is_writable |= account_meta.is_writable;
+                    existing.is_signer |= account_meta.is_signer;
+                } else {
+                    // New account
+                    account_map.insert(account_meta.pubkey, deduplicated_accounts.len());
+                    deduplicated_accounts.push(account_meta.clone());
+                }
+            }
+        }
+        
+        // Update instruction account references
+        for instruction in &mut self.instructions {
+            for account_meta in &mut instruction.accounts {
+                if let Some(&index) = account_map.get(&account_meta.pubkey) {
+                    *account_meta = deduplicated_accounts[index].clone();
+                }
+            }
+        }
+    }
+    
+    /// Build optimized transaction
+    pub fn build(mut self) -> Result<Transaction, TransactionError> {
+        // Apply optimizations
+        self.optimize_instruction_order();
+        self.minimize_signers()?;
+        self.optimize_account_usage();
+        
+        let mut final_instructions = Vec::new();
+        
+        // Add compute budget instruction if specified
+        if let Some(compute_units) = self.compute_budget {
+            final_instructions.push(
+                ComputeBudgetInstruction::set_compute_unit_limit(compute_units)
+            );
+        }
+        
+        // Add priority fee instruction if specified
+        if let Some(priority_fee) = self.priority_fee {
+            final_instructions.push(
+                ComputeBudgetInstruction::set_compute_unit_price(priority_fee)
+            );
+        }
+        
+        // Add main instructions
+        final_instructions.extend(self.instructions);
+        
+        // Create message
+        let message = if self.alt_accounts.is_empty() {
+            // Legacy message
+            Message::new(&final_instructions, self.payer.as_ref())
+        } else {
+            // V0 message with lookup tables
+            solana_sdk::message::v0::Message::try_compile(
+                &self.payer.unwrap(),
+                &final_instructions,
+                &self.alt_accounts,
+                self.recent_blockhash.unwrap(),
+            ).map_err(|e| TransactionError::MessageCompilation(e.to_string()))?
+            .into()
+        };
+        
+        // Create and sign transaction
+        let mut transaction = Transaction::new_unsigned(message);
+        if let Some(blockhash) = self.recent_blockhash {
+            transaction.message.recent_blockhash = blockhash;
+        }
+        
+        // Sign transaction
+        let signer_refs: Vec<&dyn Signer> = self.signers.iter().map(|s| s.as_ref()).collect();
+        transaction.sign(&signer_refs, transaction.message.recent_blockhash);
+        
+        Ok(transaction)
+    }
+}
+
+#[derive(Debug)]
+pub enum TransactionError {
+    MissingSigner(Pubkey),
+    MessageCompilation(String),
+    InvalidInstruction(String),
+    SizeExceeded(usize),
+}
+
+// ❌ DON'T: Manual transaction building without optimization
+pub fn bad_build_transaction(
+    instructions: Vec<Instruction>,
+    signers: Vec<&dyn Signer>,
+    recent_blockhash: solana_sdk::hash::Hash,
+) -> Transaction {
+    let message = Message::new(&instructions, Some(&signers[0].pubkey()));
+    let mut transaction = Transaction::new_unsigned(message);
+    transaction.sign(signers, recent_blockhash);
+    transaction // No optimization, no error handling
+}
+```
+
+### Compute Unit Management
+
+```rust
+// ✅ DO: Comprehensive compute unit management and estimation
+use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
+    pubkey::Pubkey,
+};
+use std::collections::HashMap;
+
+pub struct ComputeUnitManager {
+    base_costs: HashMap<Pubkey, u32>,
+    instruction_costs: HashMap<String, u32>,
+    historical_usage: Vec<ComputeUsageRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComputeUsageRecord {
+    pub instruction_type: String,
+    pub accounts_count: usize,
+    pub data_size: usize,
+    pub compute_units_used: u32,
+    pub timestamp: i64,
+}
+
+impl ComputeUnitManager {
+    pub fn new() -> Self {
+        let mut manager = Self {
+            base_costs: HashMap::new(),
+            instruction_costs: HashMap::new(),
+            historical_usage: Vec::new(),
+        };
+        
+        // Initialize with known program costs
+        manager.initialize_base_costs();
+        manager
+    }
+    
+    fn initialize_base_costs(&mut self) {
+        // System program costs
+        self.base_costs.insert(solana_sdk::system_program::id(), 150);
+        
+        // SPL Token program costs
+        self.base_costs.insert(
+            spl_token::id(),
+            2000, // Base cost for token operations
+        );
+        
+        // Add other known program costs
+        self.instruction_costs.insert("transfer".to_string(), 450);
+        self.instruction_costs.insert("create_account".to_string(), 2500);
+        self.instruction_costs.insert("mint_to".to_string(), 3000);
+    }
+    
+    /// Estimate compute units for a single instruction
+    pub fn estimate_instruction_compute_units(
+        &self,
+        instruction: &Instruction,
+    ) -> Result<u32, ComputeEstimationError> {
+        let base_cost = self.base_costs.get(&instruction.program_id)
+            .copied()
+            .unwrap_or(5000); // Default cost for unknown programs
+        
+        // Account for instruction complexity
+        let account_cost = instruction.accounts.len() as u32 * 100;
+        let data_cost = instruction.data.len() as u32 * 10;
+        
+        // Add costs for writable accounts (higher cost)
+        let writable_cost = instruction.accounts.iter()
+            .filter(|meta| meta.is_writable)
+            .count() as u32 * 200;
+        
+        // Add costs for signer accounts
+        let signer_cost = instruction.accounts.iter()
+            .filter(|meta| meta.is_signer)
+            .count() as u32 * 100;
+        
+        let total_estimate = base_cost + account_cost + data_cost + writable_cost + signer_cost;
+        
+        Ok(total_estimate)
+    }
+    
+    /// Estimate compute units for multiple instructions
+    pub fn estimate_transaction_compute_units(
+        &self,
+        instructions: &[Instruction],
+    ) -> Result<u32, ComputeEstimationError> {
+        let mut total_units = 0;
+        
+        for instruction in instructions {
+            total_units += self.estimate_instruction_compute_units(instruction)?;
+        }
+        
+        // Add overhead for transaction processing
+        total_units += 5000;
+        
+        // Apply safety margin (20%)
+        total_units = (total_units as f64 * 1.2) as u32;
+        
+        // Ensure within Solana limits
+        if total_units > 1_400_000 {
+            return Err(ComputeEstimationError::ExceedsLimit(total_units));
+        }
+        
+        Ok(total_units)
+    }
+    
+    /// Create optimized compute budget instruction
+    pub fn create_compute_budget_instruction(
+        &self,
+        instructions: &[Instruction],
+        safety_margin: f64,
+    ) -> Result<Instruction, ComputeEstimationError> {
+        let estimated_units = self.estimate_transaction_compute_units(instructions)?;
+        let adjusted_units = (estimated_units as f64 * (1.0 + safety_margin)) as u32;
+        
+        Ok(ComputeBudgetInstruction::set_compute_unit_limit(adjusted_units))
+    }
+    
+    /// Record actual compute usage for learning
+    pub fn record_usage(&mut self, record: ComputeUsageRecord) {
+        self.historical_usage.push(record);
+        
+        // Keep only recent records (last 1000)
+        if self.historical_usage.len() > 1000 {
+            self.historical_usage.remove(0);
+        }
+        
+        // Update cost estimates based on historical data
+        self.update_cost_estimates();
+    }
+    
+    fn update_cost_estimates(&mut self) {
+        let mut instruction_totals: HashMap<String, (u32, u32)> = HashMap::new();
+        
+        // Aggregate historical usage
+        for record in &self.historical_usage {
+            let entry = instruction_totals.entry(record.instruction_type.clone())
+                .or_insert((0, 0));
+            entry.0 += record.compute_units_used;
+            entry.1 += 1;
+        }
+        
+        // Update estimates with averages
+        for (instruction_type, (total_units, count)) in instruction_totals {
+            if count > 5 { // Only update with sufficient data
+                let average = total_units / count;
+                self.instruction_costs.insert(instruction_type, average);
+            }
+        }
+    }
+    
+    /// Get dynamic compute unit recommendation
+    pub fn get_dynamic_compute_recommendation(
+        &self,
+        instructions: &[Instruction],
+        network_congestion: NetworkCongestion,
+    ) -> Result<u32, ComputeEstimationError> {
+        let base_estimate = self.estimate_transaction_compute_units(instructions)?;
+        
+        let multiplier = match network_congestion {
+            NetworkCongestion::Low => 1.1,
+            NetworkCongestion::Medium => 1.3,
+            NetworkCongestion::High => 1.5,
+            NetworkCongestion::Critical => 1.8,
+        };
+        
+        let adjusted_units = (base_estimate as f64 * multiplier) as u32;
+        
+        Ok(adjusted_units.min(1_400_000))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NetworkCongestion {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug)]
+pub enum ComputeEstimationError {
+    ExceedsLimit(u32),
+    InvalidInstruction(String),
+    InsufficientData,
+}
+```
+
+### Priority Fee Strategies
+
+```rust
+// ✅ DO: Dynamic priority fee management with network monitoring
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
+    commitment_config::CommitmentConfig,
+};
+use std::time::{Duration, Instant};
+
+pub struct PriorityFeeManager {
+    rpc_client: RpcClient,
+    fee_history: Vec<FeeRecord>,
+    base_fee_lamports: u64,
+    max_fee_lamports: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FeeRecord {
+    pub fee_lamports: u64,
+    pub confirmation_time: Duration,
+    pub network_congestion: f64,
+    pub timestamp: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct FeeRecommendation {
+    pub fee_lamports: u64,
+    pub confidence: f64,
+    pub estimated_confirmation_time: Duration,
+    pub rationale: String,
+}
+
+impl PriorityFeeManager {
+    pub fn new(rpc_client: RpcClient) -> Self {
+        Self {
+            rpc_client,
+            fee_history: Vec::new(),
+            base_fee_lamports: 1000,
+            max_fee_lamports: 100_000,
+        }
+    }
+    
+    /// Get current network fee recommendations
+    pub async fn get_fee_recommendation(
+        &mut self,
+        urgency: TransactionUrgency,
+    ) -> Result<FeeRecommendation, FeeEstimationError> {
+        // Get recent prioritization fees
+        let recent_fees = self.fetch_recent_prioritization_fees().await?;
+        
+        // Analyze network congestion
+        let congestion = self.analyze_network_congestion().await?;
+        
+        // Calculate base recommendation
+        let base_fee = self.calculate_base_fee(&recent_fees, congestion)?;
+        
+        // Adjust for urgency
+        let adjusted_fee = self.adjust_fee_for_urgency(base_fee, urgency);
+        
+        // Ensure within bounds
+        let final_fee = adjusted_fee.max(self.base_fee_lamports).min(self.max_fee_lamports);
+        
+        let recommendation = FeeRecommendation {
+            fee_lamports: final_fee,
+            confidence: self.calculate_confidence(&recent_fees),
+            estimated_confirmation_time: self.estimate_confirmation_time(final_fee, congestion),
+            rationale: self.generate_rationale(base_fee, adjusted_fee, final_fee, urgency),
+        };
+        
+        Ok(recommendation)
+    }
+    
+    async fn fetch_recent_prioritization_fees(&self) -> Result<Vec<u64>, FeeEstimationError> {
+        // Get recent blocks and analyze fees
+        let recent_blocks = self.rpc_client
+            .get_blocks_with_commitment(
+                self.rpc_client.get_slot().map_err(|e| 
+                    FeeEstimationError::RpcError(e.to_string()))?.saturating_sub(20),
+                Some(self.rpc_client.get_slot().map_err(|e| 
+                    FeeEstimationError::RpcError(e.to_string()))?),
+                CommitmentConfig::finalized(),
+            )
+            .map_err(|e| FeeEstimationError::RpcError(e.to_string()))?;
+        
+        let mut fees = Vec::new();
+        
+        for slot in recent_blocks.iter().take(10) {
+            if let Ok(block) = self.rpc_client.get_block_with_config(
+                *slot,
+                solana_client::rpc_config::RpcBlockConfig {
+                    encoding: Some(solana_transaction_status::UiTransactionEncoding::Json),
+                    transaction_details: Some(
+                        solana_transaction_status::TransactionDetails::Full
+                    ),
+                    rewards: Some(false),
+                    commitment: Some(CommitmentConfig::finalized()),
+                    max_supported_transaction_version: Some(0),
+                }
+            ) {
+                // Extract prioritization fees from transactions
+                if let Some(transactions) = block.transactions {
+                    for tx in transactions {
+                        if let Some(meta) = tx.meta {
+                            if let Some(fee) = meta.fee {
+                                fees.push(fee);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(fees)
+    }
+    
+    async fn analyze_network_congestion(&self) -> Result<f64, FeeEstimationError> {
+        // Get current slot and recent performance
+        let current_slot = self.rpc_client.get_slot()
+            .map_err(|e| FeeEstimationError::RpcError(e.to_string()))?;
+        
+        // Analyze slot progression speed
+        let slot_progression = self.measure_slot_progression().await?;
+        
+        // Get transaction volume indicators
+        let tx_volume = self.estimate_transaction_volume().await?;
+        
+        // Calculate congestion score (0.0 = no congestion, 1.0 = maximum congestion)
+        let congestion_score = (slot_progression * 0.4 + tx_volume * 0.6).min(1.0);
+        
+        Ok(congestion_score)
+    }
+    
+    async fn measure_slot_progression(&self) -> Result<f64, FeeEstimationError> {
+        let start_slot = self.rpc_client.get_slot()
+            .map_err(|e| FeeEstimationError::RpcError(e.to_string()))?;
+        
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        
+        let end_slot = self.rpc_client.get_slot()
+            .map_err(|e| FeeEstimationError::RpcError(e.to_string()))?;
+        
+        let slots_per_second = (end_slot - start_slot) as f64 / 2.0;
+        
+        // Normal progression is about 2-2.5 slots per second
+        // Higher values indicate faster progression (lower congestion)
+        let normalized = (2.5 - slots_per_second.min(2.5)) / 2.5;
+        
+        Ok(normalized.max(0.0))
+    }
+    
+    async fn estimate_transaction_volume(&self) -> Result<f64, FeeEstimationError> {
+        // Get recent block and count transactions
+        let recent_blocks = self.rpc_client.get_blocks_with_commitment(
+            self.rpc_client.get_slot()
+                .map_err(|e| FeeEstimationError::RpcError(e.to_string()))?
+                .saturating_sub(5),
+            None,
+            CommitmentConfig::finalized(),
+        ).map_err(|e| FeeEstimationError::RpcError(e.to_string()))?;
+        
+        let mut total_transactions = 0;
+        let mut blocks_analyzed = 0;
+        
+        for slot in recent_blocks.iter().take(5) {
+            if let Ok(block) = self.rpc_client.get_block(*slot) {
+                total_transactions += block.transactions.map(|txs| txs.len()).unwrap_or(0);
+                blocks_analyzed += 1;
+            }
+        }
+        
+        if blocks_analyzed == 0 {
+            return Ok(0.5); // Default moderate congestion
+        }
+        
+        let avg_tx_per_block = total_transactions as f64 / blocks_analyzed as f64;
+        
+        // Normalize based on typical block capacity
+        let normalized = (avg_tx_per_block / 3000.0).min(1.0);
+        
+        Ok(normalized)
+    }
+    
+    fn calculate_base_fee(&self, recent_fees: &[u64], congestion: f64) -> Result<u64, FeeEstimationError> {
+        if recent_fees.is_empty() {
+            return Ok(self.base_fee_lamports);
+        }
+        
+        // Calculate percentiles
+        let mut sorted_fees = recent_fees.to_vec();
+        sorted_fees.sort_unstable();
+        
+        let len = sorted_fees.len();
+        let p50 = sorted_fees[len / 2];
+        let p75 = sorted_fees[len * 3 / 4];
+        let p90 = sorted_fees[len * 9 / 10];
+        
+        // Base fee selection based on congestion
+        let base_fee = if congestion < 0.3 {
+            p50
+        } else if congestion < 0.7 {
+            p75
+        } else {
+            p90
+        };
+        
+        Ok(base_fee.max(self.base_fee_lamports))
+    }
+    
+    fn adjust_fee_for_urgency(&self, base_fee: u64, urgency: TransactionUrgency) -> u64 {
+        let multiplier = match urgency {
+            TransactionUrgency::Low => 0.8,
+            TransactionUrgency::Normal => 1.0,
+            TransactionUrgency::High => 1.5,
+            TransactionUrgency::Critical => 2.0,
+        };
+        
+        (base_fee as f64 * multiplier) as u64
+    }
+    
+    fn calculate_confidence(&self, recent_fees: &[u64]) -> f64 {
+        if recent_fees.len() < 5 {
+            return 0.3; // Low confidence with insufficient data
+        }
+        
+        // Calculate coefficient of variation
+        let mean = recent_fees.iter().sum::<u64>() as f64 / recent_fees.len() as f64;
+        let variance = recent_fees.iter()
+            .map(|&fee| {
+                let diff = fee as f64 - mean;
+                diff * diff
+            })
+            .sum::<f64>() / recent_fees.len() as f64;
+        
+        let std_dev = variance.sqrt();
+        let cv = std_dev / mean;
+        
+        // Higher coefficient of variation = lower confidence
+        (1.0 - cv.min(1.0)).max(0.1)
+    }
+    
+    fn estimate_confirmation_time(&self, fee: u64, congestion: f64) -> Duration {
+        // Base confirmation time
+        let base_time_ms = 400; // 400ms base
+        
+        // Adjust for network congestion
+        let congestion_multiplier = 1.0 + (congestion * 3.0);
+        
+        // Adjust for fee level
+        let fee_factor = if fee > self.base_fee_lamports * 2 {
+            0.7 // Faster with higher fees
+        } else if fee > self.base_fee_lamports {
+            0.9
+        } else {
+            1.2 // Slower with lower fees
+        };
+        
+        let estimated_ms = (base_time_ms as f64 * congestion_multiplier * fee_factor) as u64;
+        
+        Duration::from_millis(estimated_ms)
+    }
+    
+    fn generate_rationale(&self, base_fee: u64, adjusted_fee: u64, final_fee: u64, urgency: TransactionUrgency) -> String {
+        format!(
+            "Base fee: {} lamports, adjusted for {:?} urgency: {} lamports, final: {} lamports",
+            base_fee, urgency, adjusted_fee, final_fee
+        )
+    }
+    
+    /// Create priority fee instruction
+    pub fn create_priority_fee_instruction(&self, fee_lamports: u64) -> Instruction {
+        ComputeBudgetInstruction::set_compute_unit_price(fee_lamports)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TransactionUrgency {
+    Low,
+    Normal,
+    High,
+    Critical,
+}
+
+#[derive(Debug)]
+pub enum FeeEstimationError {
+    RpcError(String),
+    InsufficientData,
+    NetworkError(String),
+}
+```
+
+### Address Lookup Tables (ALTs)
+
+```rust
+// ✅ DO: Comprehensive ALT management with deduplication
+use solana_sdk::{
+    address_lookup_table_account::AddressLookupTableAccount,
+    instruction::Instruction,
+    pubkey::Pubkey,
+    address_lookup_table::instruction as alt_instruction,
+    system_instruction,
+};
+use std::collections::{HashMap, HashSet};
+
+pub struct AddressLookupTableManager {
+    tables: HashMap<Pubkey, AddressLookupTableAccount>,
+    address_to_table: HashMap<Pubkey, Vec<(Pubkey, u8)>>, // address -> (table_pubkey, index)
+}
+
+impl AddressLookupTableManager {
+    pub fn new() -> Self {
+        Self {
+            tables: HashMap::new(),
+            address_to_table: HashMap::new(),
+        }
+    }
+    
+    /// Create new ALT with optimized address selection
+    pub fn create_optimized_lookup_table(
+        &mut self,
+        authority: &Pubkey,
+        payer: &Pubkey,
+        addresses: &[Pubkey],
+        slot: u64,
+    ) -> Result<Vec<Instruction>, AltError> {
+        // Deduplicate addresses
+        let unique_addresses: Vec<Pubkey> = addresses.iter()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .cloned()
+            .collect();
+        
+        // Create ALT
+        let (alt_address, create_ix) = alt_instruction::create_lookup_table(
+            *authority,
+            *payer,
+            slot,
+        );
+        
+        let mut instructions = vec![create_ix];
+        
+        // Add addresses in batches (max 30 per instruction)
+        for chunk in unique_addresses.chunks(30) {
+            let extend_ix = alt_instruction::extend_lookup_table(
+                alt_address,
+                *authority,
+                Some(*payer),
+                chunk.to_vec(),
+            );
+            instructions.push(extend_ix);
+        }
+        
+        Ok(instructions)
+    }
+    
+    /// Add ALT to manager for optimization
+    pub fn add_lookup_table(&mut self, table: AddressLookupTableAccount) {
+        let table_pubkey = table.key;
+        
+        // Index addresses for quick lookup
+        for (index, &address) in table.addresses.iter().enumerate() {
+            self.address_to_table
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push((table_pubkey, index as u8));
+        }
+        
+        self.tables.insert(table_pubkey, table);
+    }
+    
+    /// Optimize transaction by finding best ALT combination
+    pub fn optimize_transaction_with_alts(
+        &self,
+        instructions: &[Instruction],
+    ) -> Result<AltOptimizationResult, AltError> {
+        // Collect all unique accounts from instructions
+        let mut all_accounts = HashSet::new();
+        let mut account_usage_count = HashMap::new();
+        
+        for instruction in instructions {
+            for account_meta in &instruction.accounts {
+                all_accounts.insert(account_meta.pubkey);
+                *account_usage_count.entry(account_meta.pubkey).or_insert(0) += 1;
+            }
+        }
+        
+        // Find accounts that can be optimized with ALTs
+        let mut optimizable_accounts = Vec::new();
+        let mut suggested_tables = HashSet::new();
+        
+        for account in &all_accounts {
+            if let Some(table_refs) = self.address_to_table.get(account) {
+                // Prefer tables that cover more accounts
+                for &(table_pubkey, index) in table_refs {
+                    if let Some(table) = self.tables.get(&table_pubkey) {
+                        let coverage = self.calculate_table_coverage(table, &all_accounts);
+                        if coverage > 0.3 { // Only use tables with good coverage
+                            optimizable_accounts.push((*account, table_pubkey, index));
+                            suggested_tables.insert(table_pubkey);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Calculate potential savings
+        let original_accounts = all_accounts.len();
+        let optimizable_count = optimizable_accounts.len();
+        let alt_overhead = suggested_tables.len(); // Each ALT adds overhead
+        
+        let net_savings = optimizable_count.saturating_sub(alt_overhead);
+        
+        let result = AltOptimizationResult {
+            suggested_tables: suggested_tables.into_iter().collect(),
+            optimizable_accounts,
+            original_account_count: original_accounts,
+            optimized_account_count: original_accounts - net_savings,
+            estimated_savings_bytes: net_savings * 32, // Each account is 32 bytes
+            is_beneficial: net_savings > 0,
+        };
+        
+        Ok(result)
+    }
+    
+    fn calculate_table_coverage(&self, table: &AddressLookupTableAccount, target_accounts: &HashSet<Pubkey>) -> f64 {
+        let covered_accounts = table.addresses.iter()
+            .filter(|addr| target_accounts.contains(addr))
+            .count();
+        
+        covered_accounts as f64 / target_accounts.len() as f64
+    }
+    
+    /// Create instructions to extend existing ALT
+    pub fn extend_lookup_table(
+        &self,
+        table_address: Pubkey,
+        authority: Pubkey,
+        payer: Option<Pubkey>,
+        new_addresses: Vec<Pubkey>,
+    ) -> Result<Vec<Instruction>, AltError> {
+        // Check if table exists
+        if !self.tables.contains_key(&table_address) {
+            return Err(AltError::TableNotFound(table_address));
+        }
+        
+        let mut instructions = Vec::new();
+        
+        // Add addresses in batches
+        for chunk in new_addresses.chunks(30) {
+            let extend_ix = alt_instruction::extend_lookup_table(
+                table_address,
+                authority,
+                payer,
+                chunk.to_vec(),
+            );
+            instructions.push(extend_ix);
+        }
+        
+        Ok(instructions)
+    }
+    
+    /// Close ALT and reclaim rent
+    pub fn close_lookup_table(
+        &mut self,
+        table_address: Pubkey,
+        authority: Pubkey,
+        recipient: Pubkey,
+    ) -> Result<Instruction, AltError> {
+        // Remove from internal tracking
+        if let Some(table) = self.tables.remove(&table_address) {
+            // Remove address mappings
+            for address in &table.addresses {
+                if let Some(refs) = self.address_to_table.get_mut(address) {
+                    refs.retain(|(table_key, _)| *table_key != table_address);
+                    if refs.is_empty() {
+                        self.address_to_table.remove(address);
+                    }
+                }
+            }
+        }
+        
+        Ok(alt_instruction::close_lookup_table(
+            table_address,
+            authority,
+            recipient,
+        ))
+    }
+    
+    /// Get optimal ALT combination for specific accounts
+    pub fn get_optimal_alt_combination(
+        &self,
+        required_accounts: &[Pubkey],
+        max_tables: usize,
+    ) -> Vec<Pubkey> {
+        let mut table_scores = HashMap::new();
+        
+        // Score tables by coverage of required accounts
+        for &account in required_accounts {
+            if let Some(table_refs) = self.address_to_table.get(&account) {
+                for &(table_pubkey, _) in table_refs {
+                    *table_scores.entry(table_pubkey).or_insert(0) += 1;
+                }
+            }
+        }
+        
+        // Sort tables by score and return top N
+        let mut scored_tables: Vec<_> = table_scores.into_iter().collect();
+        scored_tables.sort_by(|a, b| b.1.cmp(&a.1));
+        
+        scored_tables.into_iter()
+            .take(max_tables)
+            .map(|(table_pubkey, _)| table_pubkey)
+            .collect()
+    }
+}
+
+#[derive(Debug)]
+pub struct AltOptimizationResult {
+    pub suggested_tables: Vec<Pubkey>,
+    pub optimizable_accounts: Vec<(Pubkey, Pubkey, u8)>, // (account, table, index)
+    pub original_account_count: usize,
+    pub optimized_account_count: usize,
+    pub estimated_savings_bytes: usize,
+    pub is_beneficial: bool,
+}
+
+#[derive(Debug)]
+pub enum AltError {
+    TableNotFound(Pubkey),
+    InvalidAddress(Pubkey),
+    TooManyAddresses(usize),
+    InsufficientPermissions,
+}
+```
+
+## Best Practices Summary
+
+### Transaction Construction
+- Use batching strategies to combine related operations
+- Optimize instruction ordering for better performance
+- Minimize required signers through careful analysis
+- Implement account deduplication for size optimization
+
+### Compute Unit Management
+- Estimate compute units based on instruction complexity
+- Use historical data to improve estimates
+- Apply safety margins for reliable execution
+- Monitor and adjust based on network conditions
+
+### Priority Fee Optimization
+- Implement dynamic fee calculation based on network state
+- Monitor network congestion indicators
+- Adjust fees based on transaction urgency
+- Track confirmation times for fee optimization
+
+### Address Lookup Tables
+- Use ALTs for transactions with many repeated accounts
+- Implement intelligent address deduplication
+- Optimize ALT combinations for maximum benefit
+- Manage ALT lifecycle efficiently
+
+### Performance Optimization
+- Profile transaction performance regularly
+- Cache frequently used calculations
+- Use parallel processing where possible
+- Implement retry strategies with exponential backoff
+
+## References
+- [Solana Transaction Structure](mdc:https:/docs.solana.com/developing/programming-model/transactions)
+- [Compute Budget](mdc:https:/docs.solana.com/developing/programming-model/runtime#compute-budget)
+- [Address Lookup Tables](mdc:https:/docs.solana.com/developing/lookup-tables)
+- [Priority Fees](mdc:https:/docs.solana.com/developing/intro/transaction_fees#prioritization-fees)

@@ -1,0 +1,1357 @@
+---
+description: Solana blockchain development, production monitoring, analytics, and observability
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana blockchain development, production monitoring, analytics, and observability. You focus on implementing comprehensive monitoring systems, error tracking, performance analytics, and business intelligence for Solana applications.
+
+## Solana Monitoring & Analytics Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Data Sources  │    │   Collection     │    │   Processing    │
+│   - RPC Nodes   │───▶│   - Metrics      │───▶│   - Analytics   │
+│   - Programs    │    │   - Logs         │    │   - Aggregation │
+│   - Wallets     │    │   - Events       │    │   - Filtering   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Storage       │    │   Alerting       │    │   Visualization │
+│   - Time Series │    │   - Thresholds   │    │   - Dashboards  │
+│   - Logs        │    │   - Notifications│    │   - Reports     │
+│   - Events      │    │   - Escalation   │    │   - Analytics   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+monitoring-system/
+├── src/
+│   ├── collectors/
+│   │   ├── transaction_monitor.rs    # Transaction tracking
+│   │   ├── performance_collector.rs  # Performance metrics
+│   │   ├── error_tracker.rs          # Error classification
+│   │   └── business_analytics.rs     # Business metrics
+│   ├── processors/
+│   │   ├── metric_processor.rs       # Data processing
+│   │   ├── alert_engine.rs           # Alert logic
+│   │   └── analytics_engine.rs       # Analytics processing
+│   ├── storage/
+│   │   ├── timeseries.rs            # Time series storage
+│   │   ├── logs.rs                  # Log storage
+│   │   └── events.rs                # Event storage
+│   ├── alerts/
+│   │   ├── threshold_manager.rs     # Alert thresholds
+│   │   ├── notification_service.rs  # Notifications
+│   │   └── escalation_engine.rs     # Incident escalation
+│   └── dashboard/
+│       ├── metrics_api.rs           # API endpoints
+│       ├── realtime_feed.rs         # Real-time updates
+│       └── reporting.rs             # Report generation
+├── frontend/
+│   ├── components/
+│   │   ├── MonitoringDashboard.tsx  # Main dashboard
+│   │   ├── TransactionMetrics.tsx   # Transaction analytics
+│   │   ├── PerformanceCharts.tsx    # Performance visualization
+│   │   ├── ErrorAnalytics.tsx       # Error tracking UI
+│   │   └── BusinessIntelligence.tsx # Business metrics
+│   ├── hooks/
+│   │   ├── useMetrics.ts            # Metrics data hooks
+│   │   ├── useAlerts.ts             # Alert management
+│   │   └── useAnalytics.ts          # Analytics hooks
+│   └── utils/
+│       ├── chartHelpers.ts          # Chart utilities
+│       ├── metricsFormatters.ts     # Data formatting
+│       └── alertUtils.ts            # Alert utilities
+└── config/
+    ├── monitoring.yaml              # Monitoring configuration
+    ├── alerts.yaml                  # Alert rules
+    └── dashboards.yaml              # Dashboard configs
+```
+
+## Core Implementation Patterns
+
+### Transaction Monitoring System
+
+```rust
+// ✅ DO: Comprehensive transaction monitoring
+use serde::{Deserialize, Serialize};
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::{
+    signature::Signature,
+    commitment_config::CommitmentConfig,
+    transaction::Transaction,
+};
+use std::collections::HashMap;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::time;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionMetrics {
+    pub signature: String,
+    pub submitted_at: u64,
+    pub confirmed_at: Option<u64>,
+    pub finalized_at: Option<u64>,
+    pub status: TransactionStatus,
+    pub confirmation_time_ms: Option<u64>,
+    pub finalization_time_ms: Option<u64>,
+    pub compute_units_consumed: Option<u64>,
+    pub fee_paid: Option<u64>,
+    pub slot: Option<u64>,
+    pub block_height: Option<u64>,
+    pub error_code: Option<String>,
+    pub retry_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransactionStatus {
+    Submitted,
+    Confirmed,
+    Finalized,
+    Failed,
+    Dropped,
+    Timeout,
+}
+
+pub struct TransactionMonitor {
+    rpc_client: RpcClient,
+    pending_transactions: HashMap<Signature, TransactionMetrics>,
+    metrics_collector: MetricsCollector,
+    config: MonitoringConfig,
+}
+
+impl TransactionMonitor {
+    pub fn new(
+        rpc_endpoint: &str,
+        metrics_collector: MetricsCollector,
+        config: MonitoringConfig,
+    ) -> Self {
+        Self {
+            rpc_client: RpcClient::new(rpc_endpoint.to_string()),
+            pending_transactions: HashMap::new(),
+            metrics_collector,
+            config,
+        }
+    }
+
+    pub async fn track_transaction(&mut self, signature: Signature) -> Result<(), MonitoringError> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+        
+        let metrics = TransactionMetrics {
+            signature: signature.to_string(),
+            submitted_at: now,
+            confirmed_at: None,
+            finalized_at: None,
+            status: TransactionStatus::Submitted,
+            confirmation_time_ms: None,
+            finalization_time_ms: None,
+            compute_units_consumed: None,
+            fee_paid: None,
+            slot: None,
+            block_height: None,
+            error_code: None,
+            retry_count: 0,
+        };
+        
+        self.pending_transactions.insert(signature, metrics);
+        self.start_monitoring_transaction(signature).await?;
+        
+        Ok(())
+    }
+
+    async fn start_monitoring_transaction(&self, signature: Signature) -> Result<(), MonitoringError> {
+        let rpc_client = self.rpc_client.clone();
+        let metrics_collector = self.metrics_collector.clone();
+        let timeout = self.config.transaction_timeout;
+        
+        tokio::spawn(async move {
+            let start_time = Instant::now();
+            let mut check_interval = time::interval(Duration::from_millis(500));
+            
+            loop {
+                check_interval.tick().await;
+                
+                // Check for timeout
+                if start_time.elapsed() > timeout {
+                    metrics_collector.record_transaction_timeout(signature).await;
+                    break;
+                }
+                
+                // Check transaction status
+                match rpc_client.get_signature_status_with_commitment(
+                    &signature,
+                    CommitmentConfig::confirmed(),
+                ).await {
+                    Ok(Some(status)) => {
+                        let confirmation_time = start_time.elapsed().as_millis() as u64;
+                        
+                        if let Some(result) = &status {
+                            if result.is_ok() {
+                                metrics_collector.record_transaction_confirmed(
+                                    signature,
+                                    confirmation_time,
+                                ).await;
+                                
+                                // Continue monitoring for finalization
+                                Self::monitor_finalization(
+                                    rpc_client.clone(),
+                                    signature,
+                                    start_time,
+                                    metrics_collector.clone(),
+                                ).await;
+                            } else {
+                                metrics_collector.record_transaction_failed(
+                                    signature,
+                                    result.clone().unwrap_err(),
+                                ).await;
+                            }
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        // Transaction not found yet, continue monitoring
+                        continue;
+                    }
+                    Err(e) => {
+                        metrics_collector.record_monitoring_error(signature, e).await;
+                        break;
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+
+    async fn monitor_finalization(
+        rpc_client: RpcClient,
+        signature: Signature,
+        start_time: Instant,
+        metrics_collector: MetricsCollector,
+    ) {
+        let mut check_interval = time::interval(Duration::from_millis(1000));
+        
+        loop {
+            check_interval.tick().await;
+            
+            // Check finalization status
+            match rpc_client.get_signature_status_with_commitment(
+                &signature,
+                CommitmentConfig::finalized(),
+            ).await {
+                Ok(Some(status)) => {
+                    if status.is_some() {
+                        let finalization_time = start_time.elapsed().as_millis() as u64;
+                        metrics_collector.record_transaction_finalized(
+                            signature,
+                            finalization_time,
+                        ).await;
+                        break;
+                    }
+                }
+                Ok(None) => continue,
+                Err(_) => break,
+            }
+            
+            // Timeout for finalization monitoring
+            if start_time.elapsed() > Duration::from_secs(150) {
+                break;
+            }
+        }
+    }
+
+    pub async fn get_transaction_metrics(&self) -> HashMap<String, TransactionAnalytics> {
+        self.metrics_collector.get_transaction_analytics().await
+    }
+}
+
+// ❌ DON'T: Basic monitoring without comprehensive metrics
+pub struct BasicTransactionMonitor {
+    transactions: Vec<String>,
+}
+
+impl BasicTransactionMonitor {
+    pub fn track(&mut self, signature: String) {
+        self.transactions.push(signature); // No metrics, timing, or status tracking
+    }
+}
+```
+
+### Performance Analytics Engine
+
+```rust
+// ✅ DO: Comprehensive performance monitoring
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceMetrics {
+    pub timestamp: u64,
+    pub compute_units_used: u64,
+    pub compute_units_available: u64,
+    pub compute_efficiency: f64,
+    pub transaction_count: u64,
+    pub success_rate: f64,
+    pub average_confirmation_time: f64,
+    pub fee_statistics: FeeStatistics,
+    pub throughput_tps: f64,
+    pub error_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeStatistics {
+    pub min_fee: u64,
+    pub max_fee: u64,
+    pub average_fee: f64,
+    pub median_fee: u64,
+    pub total_fees: u64,
+}
+
+pub struct PerformanceAnalytics {
+    metrics_buffer: Arc<RwLock<VecDeque<PerformanceMetrics>>>,
+    config: AnalyticsConfig,
+    aggregators: Vec<Box<dyn MetricAggregator>>,
+}
+
+impl PerformanceAnalytics {
+    pub fn new(config: AnalyticsConfig) -> Self {
+        let mut aggregators: Vec<Box<dyn MetricAggregator>> = vec![
+            Box::new(ComputeUnitAggregator::new()),
+            Box::new(TransactionThroughputAggregator::new()),
+            Box::new(ConfirmationTimeAggregator::new()),
+            Box::new(FeeAnalysisAggregator::new()),
+            Box::new(ErrorRateAggregator::new()),
+        ];
+        
+        Self {
+            metrics_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(config.buffer_size))),
+            config,
+            aggregators,
+        }
+    }
+
+    pub async fn record_transaction_metrics(&self, metrics: TransactionMetrics) {
+        // Update real-time aggregators
+        for aggregator in &self.aggregators {
+            aggregator.process_transaction(&metrics).await;
+        }
+        
+        // Update metrics buffer
+        let current_metrics = self.calculate_current_metrics().await;
+        let mut buffer = self.metrics_buffer.write().await;
+        
+        if buffer.len() >= self.config.buffer_size {
+            buffer.pop_front();
+        }
+        buffer.push_back(current_metrics);
+    }
+
+    async fn calculate_current_metrics(&self) -> PerformanceMetrics {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap().as_secs();
+        
+        let compute_stats = self.aggregators[0].get_current_stats().await;
+        let throughput_stats = self.aggregators[1].get_current_stats().await;
+        let confirmation_stats = self.aggregators[2].get_current_stats().await;
+        let fee_stats = self.aggregators[3].get_current_stats().await;
+        let error_stats = self.aggregators[4].get_current_stats().await;
+        
+        PerformanceMetrics {
+            timestamp,
+            compute_units_used: compute_stats.total_used,
+            compute_units_available: compute_stats.total_available,
+            compute_efficiency: compute_stats.efficiency_ratio,
+            transaction_count: throughput_stats.total_transactions,
+            success_rate: 1.0 - error_stats.error_rate,
+            average_confirmation_time: confirmation_stats.average_time,
+            fee_statistics: FeeStatistics {
+                min_fee: fee_stats.min_fee,
+                max_fee: fee_stats.max_fee,
+                average_fee: fee_stats.average_fee,
+                median_fee: fee_stats.median_fee,
+                total_fees: fee_stats.total_fees,
+            },
+            throughput_tps: throughput_stats.transactions_per_second,
+            error_rate: error_stats.error_rate,
+        }
+    }
+
+    pub async fn get_performance_trends(&self, duration: Duration) -> PerformanceTrends {
+        let buffer = self.metrics_buffer.read().await;
+        let cutoff_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH).unwrap().as_secs() - duration.as_secs();
+        
+        let recent_metrics: Vec<_> = buffer
+            .iter()
+            .filter(|m| m.timestamp >= cutoff_time)
+            .cloned()
+            .collect();
+        
+        PerformanceTrends::calculate(&recent_metrics)
+    }
+
+    pub async fn generate_performance_report(&self) -> PerformanceReport {
+        let current_metrics = self.calculate_current_metrics().await;
+        let hourly_trends = self.get_performance_trends(Duration::from_secs(3600)).await;
+        let daily_trends = self.get_performance_trends(Duration::from_secs(86400)).await;
+        
+        PerformanceReport {
+            current: current_metrics,
+            hourly_trends,
+            daily_trends,
+            recommendations: self.generate_recommendations().await,
+            cost_analysis: self.calculate_cost_analysis().await,
+        }
+    }
+
+    async fn generate_recommendations(&self) -> Vec<PerformanceRecommendation> {
+        let mut recommendations = Vec::new();
+        
+        // Analyze compute efficiency
+        let compute_stats = self.aggregators[0].get_current_stats().await;
+        if compute_stats.efficiency_ratio < 0.7 {
+            recommendations.push(PerformanceRecommendation {
+                category: RecommendationCategory::ComputeOptimization,
+                priority: Priority::High,
+                description: "Low compute unit efficiency detected. Consider optimizing instruction complexity.".to_string(),
+                impact: "Reduce transaction costs by up to 30%".to_string(),
+                action_items: vec![
+                    "Review instruction implementations for optimization opportunities".to_string(),
+                    "Consider batching operations to reduce instruction count".to_string(),
+                    "Implement compute unit budgeting".to_string(),
+                ],
+            });
+        }
+        
+        // Analyze confirmation times
+        let confirmation_stats = self.aggregators[2].get_current_stats().await;
+        if confirmation_stats.average_time > 30000.0 { // 30 seconds
+            recommendations.push(PerformanceRecommendation {
+                category: RecommendationCategory::NetworkOptimization,
+                priority: Priority::Medium,
+                description: "High confirmation times detected. Consider RPC optimization.".to_string(),
+                impact: "Improve user experience with faster confirmations".to_string(),
+                action_items: vec![
+                    "Review RPC endpoint performance".to_string(),
+                    "Implement priority fee strategies".to_string(),
+                    "Consider using dedicated RPC services".to_string(),
+                ],
+            });
+        }
+        
+        recommendations
+    }
+}
+
+trait MetricAggregator: Send + Sync {
+    async fn process_transaction(&self, metrics: &TransactionMetrics);
+    async fn get_current_stats(&self) -> AggregatorStats;
+    async fn reset(&self);
+}
+
+// ❌ DON'T: Simple performance tracking without analytics
+pub struct BasicPerformanceTracker {
+    transaction_count: u64,
+    total_time: u64,
+}
+
+impl BasicPerformanceTracker {
+    pub fn record(&mut self, time_ms: u64) {
+        self.transaction_count += 1;
+        self.total_time += time_ms;
+    }
+    
+    pub fn average_time(&self) -> f64 {
+        self.total_time as f64 / self.transaction_count as f64
+    }
+}
+```
+
+### Error Tracking & Classification System
+
+```rust
+// ✅ DO: Comprehensive error tracking and classification
+use std::collections::HashMap;
+use regex::Regex;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorMetrics {
+    pub error_id: String,
+    pub error_type: ErrorType,
+    pub error_category: ErrorCategory,
+    pub severity: ErrorSeverity,
+    pub count: u64,
+    pub first_occurrence: u64,
+    pub last_occurrence: u64,
+    pub transaction_signature: Option<String>,
+    pub program_id: Option<String>,
+    pub instruction_index: Option<u8>,
+    pub error_message: String,
+    pub context: HashMap<String, String>,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ErrorType {
+    InstructionError,
+    TransactionError,
+    AccountError,
+    NetworkError,
+    TimeoutError,
+    ComputeBudgetExceeded,
+    InsufficientFunds,
+    InvalidAccountData,
+    Custom(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ErrorCategory {
+    UserError,
+    ProgramError,
+    NetworkError,
+    SystemError,
+    ValidationError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ErrorSeverity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+pub struct ErrorTracker {
+    error_patterns: HashMap<Regex, ErrorClassification>,
+    error_metrics: Arc<RwLock<HashMap<String, ErrorMetrics>>>,
+    alert_engine: AlertEngine,
+    config: ErrorTrackingConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorClassification {
+    pub error_type: ErrorType,
+    pub category: ErrorCategory,
+    pub severity: ErrorSeverity,
+    pub auto_resolve: bool,
+}
+
+impl ErrorTracker {
+    pub fn new(config: ErrorTrackingConfig, alert_engine: AlertEngine) -> Self {
+        let mut error_patterns = HashMap::new();
+        
+        // Common Solana error patterns
+        error_patterns.insert(
+            Regex::new(r"InstructionError.*Custom\((\d+)\)").unwrap(),
+            ErrorClassification {
+                error_type: ErrorType::InstructionError,
+                category: ErrorCategory::ProgramError,
+                severity: ErrorSeverity::Medium,
+                auto_resolve: false,
+            }
+        );
+        
+        error_patterns.insert(
+            Regex::new(r"insufficient funds").unwrap(),
+            ErrorClassification {
+                error_type: ErrorType::InsufficientFunds,
+                category: ErrorCategory::UserError,
+                severity: ErrorSeverity::Low,
+                auto_resolve: true,
+            }
+        );
+        
+        error_patterns.insert(
+            Regex::new(r"exceeded maximum compute units").unwrap(),
+            ErrorClassification {
+                error_type: ErrorType::ComputeBudgetExceeded,
+                category: ErrorCategory::ProgramError,
+                severity: ErrorSeverity::High,
+                auto_resolve: false,
+            }
+        );
+        
+        Self {
+            error_patterns,
+            error_metrics: Arc::new(RwLock::new(HashMap::new())),
+            alert_engine,
+            config,
+        }
+    }
+
+    pub async fn track_error(
+        &self,
+        error_message: &str,
+        transaction_signature: Option<String>,
+        program_id: Option<String>,
+        context: HashMap<String, String>,
+    ) -> Result<String, MonitoringError> {
+        let classification = self.classify_error(error_message);
+        let error_id = self.generate_error_id(error_message, &classification);
+        
+        let mut metrics = self.error_metrics.write().await;
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        
+        if let Some(existing_metrics) = metrics.get_mut(&error_id) {
+            existing_metrics.count += 1;
+            existing_metrics.last_occurrence = current_time;
+            existing_metrics.context.extend(context);
+            
+            if self.should_alert(existing_metrics).await {
+                self.alert_engine.trigger_error_alert(existing_metrics.clone()).await?;
+            }
+        } else {
+            let error_metrics = ErrorMetrics {
+                error_id: error_id.clone(),
+                error_type: classification.error_type,
+                error_category: classification.category,
+                severity: classification.severity,
+                count: 1,
+                first_occurrence: current_time,
+                last_occurrence: current_time,
+                transaction_signature,
+                program_id,
+                instruction_index: None,
+                error_message: error_message.to_string(),
+                context,
+                resolved: false,
+            };
+            
+            metrics.insert(error_id.clone(), error_metrics.clone());
+            
+            if matches!(classification.severity, ErrorSeverity::Critical) {
+                self.alert_engine.trigger_critical_error_alert(error_metrics).await?;
+            }
+        }
+        
+        Ok(error_id)
+    }
+
+    fn classify_error(&self, error_message: &str) -> ErrorClassification {
+        for (pattern, classification) in &self.error_patterns {
+            if pattern.is_match(error_message) {
+                return classification.clone();
+            }
+        }
+        
+        ErrorClassification {
+            error_type: ErrorType::Custom("Unknown".to_string()),
+            category: ErrorCategory::SystemError,
+            severity: ErrorSeverity::Medium,
+            auto_resolve: false,
+        }
+    }
+
+    async fn should_alert(&self, metrics: &ErrorMetrics) -> bool {
+        let time_window = Duration::from_secs(self.config.alert_time_window);
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        
+        if current_time - metrics.first_occurrence <= time_window.as_secs() {
+            return metrics.count >= self.config.error_count_threshold;
+        }
+        
+        let error_rate = metrics.count as f64 / (current_time - metrics.first_occurrence) as f64;
+        error_rate >= self.config.error_rate_threshold
+    }
+
+    pub async fn generate_error_report(&self) -> ErrorAnalyticsReport {
+        let metrics = self.error_metrics.read().await;
+        
+        let mut report = ErrorAnalyticsReport {
+            total_errors: metrics.len() as u64,
+            critical_errors: 0,
+            high_priority_errors: 0,
+            resolved_errors: 0,
+            error_categories: HashMap::new(),
+            top_errors: Vec::new(),
+            trending_errors: Vec::new(),
+            resolution_suggestions: Vec::new(),
+        };
+        
+        for (_, error_metrics) in metrics.iter() {
+            match error_metrics.severity {
+                ErrorSeverity::Critical => report.critical_errors += 1,
+                ErrorSeverity::High => report.high_priority_errors += 1,
+                _ => {}
+            }
+            
+            if error_metrics.resolved {
+                report.resolved_errors += 1;
+            }
+            
+            let category_count = report.error_categories
+                .entry(error_metrics.error_category.clone())
+                .or_insert(0);
+            *category_count += error_metrics.count;
+        }
+        
+        let mut sorted_errors: Vec<_> = metrics.values().collect();
+        sorted_errors.sort_by(|a, b| b.count.cmp(&a.count));
+        report.top_errors = sorted_errors.into_iter().take(10).cloned().collect();
+        
+        report.resolution_suggestions = self.generate_resolution_suggestions(&report).await;
+        
+        report
+    }
+}
+
+// ❌ DON'T: Simple error counting without classification
+pub struct BasicErrorTracker {
+    error_count: u64,
+    errors: Vec<String>,
+}
+```
+
+### Alert Engine & Notification System
+
+```rust
+// ✅ DO: Comprehensive alerting with escalation
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alert {
+    pub id: String,
+    pub alert_type: AlertType,
+    pub severity: AlertSeverity,
+    pub title: String,
+    pub description: String,
+    pub metrics: AlertMetrics,
+    pub created_at: u64,
+    pub resolved_at: Option<u64>,
+    pub acknowledged_at: Option<u64>,
+    pub assignee: Option<String>,
+    pub escalation_level: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AlertType {
+    ErrorRate,
+    PerformanceDegradation,
+    ResourceUtilization,
+    TransactionFailure,
+    NetworkIssue,
+    SecurityThreat,
+    BusinessMetric,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AlertSeverity {
+    P0, // Critical - immediate action required
+    P1, // High - action required within 1 hour
+    P2, // Medium - action required within 4 hours
+    P3, // Low - action required within 24 hours
+    P4, // Info - no immediate action required
+}
+
+pub struct AlertEngine {
+    active_alerts: Arc<RwLock<HashMap<String, Alert>>>,
+    notification_channels: Vec<Box<dyn NotificationChannel>>,
+    escalation_rules: Vec<EscalationRule>,
+    alert_sender: mpsc::UnboundedSender<Alert>,
+    config: AlertConfig,
+}
+
+impl AlertEngine {
+    pub fn new(config: AlertConfig) -> (Self, mpsc::UnboundedReceiver<Alert>) {
+        let (alert_sender, alert_receiver) = mpsc::unbounded_channel();
+        
+        let notification_channels: Vec<Box<dyn NotificationChannel>> = vec![
+            Box::new(SlackNotificationChannel::new(&config.slack_webhook_url)),
+            Box::new(EmailNotificationChannel::new(&config.smtp_config)),
+            Box::new(PagerDutyNotificationChannel::new(&config.pagerduty_config)),
+        ];
+        
+        let escalation_rules = vec![
+            EscalationRule {
+                severity: AlertSeverity::P0,
+                initial_delay: Duration::from_minutes(0),
+                escalation_delay: Duration::from_minutes(5),
+                max_escalations: 3,
+                channels: vec!["pagerduty", "slack", "email"],
+            },
+            EscalationRule {
+                severity: AlertSeverity::P1,
+                initial_delay: Duration::from_minutes(5),
+                escalation_delay: Duration::from_minutes(15),
+                max_escalations: 2,
+                channels: vec!["slack", "email"],
+            },
+        ];
+        
+        (Self {
+            active_alerts: Arc::new(RwLock::new(HashMap::new())),
+            notification_channels,
+            escalation_rules,
+            alert_sender,
+            config,
+        }, alert_receiver)
+    }
+
+    pub async fn trigger_alert(&self, alert: Alert) -> Result<(), AlertError> {
+        let alert_id = alert.id.clone();
+        
+        {
+            let mut alerts = self.active_alerts.write().await;
+            alerts.insert(alert_id.clone(), alert.clone());
+        }
+        
+        self.alert_sender.send(alert)?;
+        Ok(())
+    }
+
+    pub async fn process_alerts(&self, mut alert_receiver: mpsc::UnboundedReceiver<Alert>) {
+        while let Some(alert) = alert_receiver.recv().await {
+            self.handle_alert(alert).await;
+        }
+    }
+
+    async fn handle_alert(&self, alert: Alert) {
+        let escalation_rule = self.escalation_rules
+            .iter()
+            .find(|rule| rule.severity == alert.severity)
+            .cloned()
+            .unwrap_or_default();
+        
+        tokio::spawn(self.schedule_notifications(alert.clone(), escalation_rule));
+    }
+
+    async fn schedule_notifications(&self, alert: Alert, escalation_rule: EscalationRule) {
+        time::sleep(escalation_rule.initial_delay).await;
+        
+        if !self.is_alert_resolved(&alert.id).await {
+            self.send_notifications(&alert, 0).await;
+        }
+        
+        for escalation_level in 1..=escalation_rule.max_escalations {
+            time::sleep(escalation_rule.escalation_delay).await;
+            
+            if !self.is_alert_resolved(&alert.id).await {
+                self.send_notifications(&alert, escalation_level).await;
+            } else {
+                break;
+            }
+        }
+    }
+
+    async fn send_notifications(&self, alert: &Alert, escalation_level: u8) {
+        let escalation_rule = self.escalation_rules
+            .iter()
+            .find(|rule| rule.severity == alert.severity)
+            .unwrap();
+        
+        for channel_name in &escalation_rule.channels {
+            if let Some(channel) = self.notification_channels
+                .iter()
+                .find(|ch| ch.name() == *channel_name) {
+                
+                let notification = AlertNotification {
+                    alert: alert.clone(),
+                    escalation_level,
+                    urgency: self.calculate_urgency(alert, escalation_level),
+                };
+                
+                if let Err(e) = channel.send_notification(notification).await {
+                    eprintln!("Failed to send notification via {}: {}", channel_name, e);
+                }
+            }
+        }
+    }
+
+    async fn is_alert_resolved(&self, alert_id: &str) -> bool {
+        let alerts = self.active_alerts.read().await;
+        alerts.get(alert_id)
+            .map(|alert| alert.resolved_at.is_some())
+            .unwrap_or(true)
+    }
+
+    pub async fn resolve_alert(&self, alert_id: &str, resolver: &str) -> Result<(), AlertError> {
+        let mut alerts = self.active_alerts.write().await;
+        
+        if let Some(alert) = alerts.get_mut(alert_id) {
+            alert.resolved_at = Some(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+            
+            for channel in &self.notification_channels {
+                let resolution_notification = ResolutionNotification {
+                    alert_id: alert_id.to_string(),
+                    resolver: resolver.to_string(),
+                    resolved_at: alert.resolved_at.unwrap(),
+                };
+                
+                let _ = channel.send_resolution_notification(resolution_notification).await;
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+trait NotificationChannel: Send + Sync {
+    fn name(&self) -> &str;
+    async fn send_notification(&self, notification: AlertNotification) -> Result<(), NotificationError>;
+    async fn send_resolution_notification(&self, notification: ResolutionNotification) -> Result<(), NotificationError>;
+}
+
+// ❌ DON'T: Simple alerting without escalation
+pub struct BasicAlerter {
+    alerts: Vec<String>,
+}
+```
+
+### Business Intelligence & Analytics
+
+```rust
+// ✅ DO: Comprehensive business metrics tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusinessMetrics {
+    pub timestamp: u64,
+    pub daily_active_users: u64,
+    pub transaction_volume: f64,
+    pub revenue_metrics: RevenueMetrics,
+    pub user_engagement: UserEngagementMetrics,
+    pub growth_metrics: GrowthMetrics,
+    pub cost_metrics: CostMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevenueMetrics {
+    pub total_fees_collected: f64,
+    pub average_fee_per_transaction: f64,
+    pub revenue_by_program: HashMap<String, f64>,
+    pub projected_monthly_revenue: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserEngagementMetrics {
+    pub new_users: u64,
+    pub returning_users: u64,
+    pub user_retention_rate: f64,
+    pub average_transactions_per_user: f64,
+    pub session_duration_avg: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrowthMetrics {
+    pub user_growth_rate: f64,
+    pub transaction_growth_rate: f64,
+    pub revenue_growth_rate: f64,
+    pub market_penetration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostMetrics {
+    pub total_compute_costs: f64,
+    pub infrastructure_costs: f64,
+    pub cost_per_transaction: f64,
+    pub cost_efficiency_ratio: f64,
+}
+
+pub struct BusinessAnalytics {
+    metrics_store: Arc<RwLock<VecDeque<BusinessMetrics>>>,
+    user_tracker: UserActivityTracker,
+    revenue_calculator: RevenueCalculator,
+    cost_analyzer: CostAnalyzer,
+    config: BusinessAnalyticsConfig,
+}
+
+impl BusinessAnalytics {
+    pub fn new(config: BusinessAnalyticsConfig) -> Self {
+        Self {
+            metrics_store: Arc::new(RwLock::new(VecDeque::with_capacity(config.retention_days as usize))),
+            user_tracker: UserActivityTracker::new(),
+            revenue_calculator: RevenueCalculator::new(),
+            cost_analyzer: CostAnalyzer::new(),
+            config,
+        }
+    }
+
+    pub async fn record_business_event(&self, event: BusinessEvent) -> Result<(), AnalyticsError> {
+        match event {
+            BusinessEvent::UserTransaction { user_id, transaction_data } => {
+                self.user_tracker.record_activity(&user_id, &transaction_data).await?;
+                self.revenue_calculator.add_transaction(&transaction_data).await?;
+                self.cost_analyzer.add_cost_data(&transaction_data).await?;
+            }
+            BusinessEvent::NewUser { user_id, registration_data } => {
+                self.user_tracker.register_new_user(&user_id, &registration_data).await?;
+            }
+            BusinessEvent::UserSession { user_id, session_data } => {
+                self.user_tracker.record_session(&user_id, &session_data).await?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    pub async fn generate_business_report(&self, period: ReportPeriod) -> BusinessIntelligenceReport {
+        let current_metrics = self.calculate_current_metrics().await;
+        let historical_data = self.get_historical_data(period).await;
+        let trends = self.analyze_trends(&historical_data).await;
+        let predictions = self.generate_predictions(&historical_data).await;
+        
+        BusinessIntelligenceReport {
+            period,
+            current_metrics,
+            historical_trends: trends,
+            predictions,
+            key_insights: self.generate_insights(&current_metrics, &trends).await,
+            recommended_actions: self.generate_recommendations(&current_metrics, &trends).await,
+        }
+    }
+
+    async fn calculate_current_metrics(&self) -> BusinessMetrics {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let user_metrics = self.user_tracker.get_current_metrics().await;
+        let revenue_metrics = self.revenue_calculator.get_current_metrics().await;
+        let cost_metrics = self.cost_analyzer.get_current_metrics().await;
+        
+        BusinessMetrics {
+            timestamp,
+            daily_active_users: user_metrics.daily_active_users,
+            transaction_volume: revenue_metrics.total_volume,
+            revenue_metrics: RevenueMetrics {
+                total_fees_collected: revenue_metrics.total_fees,
+                average_fee_per_transaction: revenue_metrics.average_fee,
+                revenue_by_program: revenue_metrics.program_breakdown,
+                projected_monthly_revenue: revenue_metrics.monthly_projection,
+            },
+            user_engagement: UserEngagementMetrics {
+                new_users: user_metrics.new_users,
+                returning_users: user_metrics.returning_users,
+                user_retention_rate: user_metrics.retention_rate,
+                average_transactions_per_user: user_metrics.avg_transactions_per_user,
+                session_duration_avg: user_metrics.avg_session_duration,
+            },
+            growth_metrics: self.calculate_growth_metrics().await,
+            cost_metrics: CostMetrics {
+                total_compute_costs: cost_metrics.compute_costs,
+                infrastructure_costs: cost_metrics.infrastructure_costs,
+                cost_per_transaction: cost_metrics.cost_per_transaction,
+                cost_efficiency_ratio: cost_metrics.efficiency_ratio,
+            },
+        }
+    }
+
+    async fn generate_insights(&self, current: &BusinessMetrics, trends: &TrendAnalysis) -> Vec<BusinessInsight> {
+        let mut insights = Vec::new();
+        
+        // User growth insights
+        if trends.user_growth_trend > 0.2 {
+            insights.push(BusinessInsight {
+                category: InsightCategory::Growth,
+                priority: InsightPriority::High,
+                title: "Strong User Growth Detected".to_string(),
+                description: format!("User base growing at {}% rate", trends.user_growth_trend * 100.0),
+                impact: "Positive revenue and engagement impact expected".to_string(),
+                recommendation: "Scale infrastructure to handle increased load".to_string(),
+            });
+        }
+        
+        // Cost efficiency insights
+        if current.cost_metrics.cost_efficiency_ratio < 0.7 {
+            insights.push(BusinessInsight {
+                category: InsightCategory::Optimization,
+                priority: InsightPriority::Medium,
+                title: "Cost Efficiency Below Target".to_string(),
+                description: "Current cost efficiency ratio indicates optimization opportunities".to_string(),
+                impact: "Potential 20-30% cost reduction available".to_string(),
+                recommendation: "Review compute unit usage and optimize expensive operations".to_string(),
+            });
+        }
+        
+        insights
+    }
+}
+
+// ❌ DON'T: Basic metrics without business context
+pub struct BasicMetricsTracker {
+    transaction_count: u64,
+    user_count: u64,
+}
+```
+
+## Advanced Patterns
+
+### Dashboard API & Real-time Updates
+
+```typescript
+// ✅ DO: Comprehensive dashboard with real-time updates
+import { WebSocket } from 'ws';
+import { EventEmitter } from 'events';
+
+interface DashboardMetrics {
+  timestamp: number;
+  transactionMetrics: TransactionSummary;
+  performanceMetrics: PerformanceSummary;
+  errorMetrics: ErrorSummary;
+  businessMetrics: BusinessSummary;
+  alerts: ActiveAlert[];
+}
+
+interface RealTimeUpdate {
+  type: 'metrics' | 'alert' | 'error' | 'performance';
+  data: any;
+  timestamp: number;
+}
+
+export class DashboardAPI extends EventEmitter {
+  private wsServer: WebSocket.Server;
+  private connectedClients: Set<WebSocket> = new Set();
+  private metricsCache: Map<string, any> = new Map();
+  private updateInterval: NodeJS.Timeout;
+
+  constructor(port: number) {
+    super();
+    this.wsServer = new WebSocket.Server({ port });
+    this.setupWebSocketServer();
+    this.startMetricsCollection();
+  }
+
+  private setupWebSocketServer(): void {
+    this.wsServer.on('connection', (ws: WebSocket) => {
+      this.connectedClients.add(ws);
+      
+      // Send initial dashboard state
+      this.sendInitialState(ws);
+      
+      ws.on('message', (message: string) => {
+        try {
+          const request = JSON.parse(message);
+          this.handleClientRequest(ws, request);
+        } catch (error) {
+          console.error('Invalid message from client:', error);
+        }
+      });
+      
+      ws.on('close', () => {
+        this.connectedClients.delete(ws);
+      });
+    });
+  }
+
+  private async sendInitialState(ws: WebSocket): Promise<void> {
+    const metrics = await this.getCurrentMetrics();
+    const alerts = await this.getActiveAlerts();
+    
+    const initialState = {
+      type: 'initial_state',
+      data: {
+        metrics,
+        alerts,
+        timestamp: Date.now(),
+      },
+    };
+    
+    ws.send(JSON.stringify(initialState));
+  }
+
+  private async handleClientRequest(ws: WebSocket, request: any): Promise<void> {
+    switch (request.type) {
+      case 'get_historical_data':
+        const historicalData = await this.getHistoricalData(
+          request.startTime,
+          request.endTime,
+          request.granularity
+        );
+        ws.send(JSON.stringify({
+          type: 'historical_data',
+          requestId: request.id,
+          data: historicalData,
+        }));
+        break;
+        
+      case 'get_error_details':
+        const errorDetails = await this.getErrorDetails(request.errorId);
+        ws.send(JSON.stringify({
+          type: 'error_details',
+          requestId: request.id,
+          data: errorDetails,
+        }));
+        break;
+        
+      case 'acknowledge_alert':
+        await this.acknowledgeAlert(request.alertId, request.userId);
+        this.broadcastUpdate({
+          type: 'alert',
+          data: { action: 'acknowledged', alertId: request.alertId },
+          timestamp: Date.now(),
+        });
+        break;
+    }
+  }
+
+  private startMetricsCollection(): void {
+    this.updateInterval = setInterval(async () => {
+      try {
+        const metrics = await this.getCurrentMetrics();
+        this.metricsCache.set('current', metrics);
+        
+        // Broadcast real-time updates
+        this.broadcastUpdate({
+          type: 'metrics',
+          data: metrics,
+          timestamp: Date.now(),
+        });
+        
+        // Check for anomalies and trigger alerts if needed
+        await this.checkForAnomalies(metrics);
+      } catch (error) {
+        console.error('Error collecting metrics:', error);
+      }
+    }, 1000); // Update every second
+  }
+
+  private broadcastUpdate(update: RealTimeUpdate): void {
+    const message = JSON.stringify(update);
+    
+    this.connectedClients.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    });
+  }
+
+  private async getCurrentMetrics(): Promise<DashboardMetrics> {
+    // Aggregate metrics from various collectors
+    const [transactionMetrics, performanceMetrics, errorMetrics, businessMetrics] = 
+      await Promise.all([
+        this.getTransactionMetrics(),
+        this.getPerformanceMetrics(),
+        this.getErrorMetrics(),
+        this.getBusinessMetrics(),
+      ]);
+    
+    return {
+      timestamp: Date.now(),
+      transactionMetrics,
+      performanceMetrics,
+      errorMetrics,
+      businessMetrics,
+      alerts: await this.getActiveAlerts(),
+    };
+  }
+
+  private async checkForAnomalies(metrics: DashboardMetrics): Promise<void> {
+    // Anomaly detection logic
+    const anomalies = await this.detectAnomalies(metrics);
+    
+    for (const anomaly of anomalies) {
+      this.emit('anomaly_detected', anomaly);
+      
+      // Broadcast anomaly alert
+      this.broadcastUpdate({
+        type: 'alert',
+        data: {
+          type: 'anomaly',
+          severity: anomaly.severity,
+          description: anomaly.description,
+          metrics: anomaly.affectedMetrics,
+        },
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  public async getHealthCheck(): Promise<HealthStatus> {
+    const metrics = this.metricsCache.get('current');
+    
+    return {
+      status: this.determineOverallHealth(metrics),
+      components: {
+        transactions: this.assessTransactionHealth(metrics?.transactionMetrics),
+        performance: this.assessPerformanceHealth(metrics?.performanceMetrics),
+        errors: this.assessErrorHealth(metrics?.errorMetrics),
+        business: this.assessBusinessHealth(metrics?.businessMetrics),
+      },
+      timestamp: Date.now(),
+    };
+  }
+}
+
+// React Dashboard Components
+export const MonitoringDashboard: React.FC = () => {
+  const { metrics, alerts, isConnected } = useMetrics();
+  const { activeAlerts, acknowledgeAlert } = useAlerts();
+  
+  return (
+    <div className="dashboard-container">
+      <DashboardHeader 
+        connectionStatus={isConnected}
+        lastUpdate={metrics?.timestamp}
+      />
+      
+      <div className="dashboard-grid">
+        <TransactionMetricsPanel metrics={metrics?.transactionMetrics} />
+        <PerformancePanel metrics={metrics?.performanceMetrics} />
+        <ErrorAnalyticsPanel 
+          errors={metrics?.errorMetrics}
+          onErrorClick={handleErrorDetails}
+        />
+        <AlertsPanel 
+          alerts={activeAlerts}
+          onAcknowledge={acknowledgeAlert}
+        />
+        <BusinessIntelligencePanel metrics={metrics?.businessMetrics} />
+      </div>
+      
+      <RealtimeChartsSection metrics={metrics} />
+    </div>
+  );
+};
+
+// ❌ DON'T: Static dashboard without real-time updates
+export const BasicDashboard: React.FC = () => {
+  const [data, setData] = useState(null);
+  
+  useEffect(() => {
+    // Only loads data once, no real-time updates
+    fetchData().then(setData);
+  }, []);
+  
+  return <div>{data && <MetricsDisplay data={data} />}</div>;
+};
+```
+
+## Best Practices Summary
+
+### Monitoring Architecture
+- Implement comprehensive metric collection across all system components
+- Use time-series databases for efficient metric storage and querying
+- Design alerting systems with proper escalation and notification channels
+- Create real-time dashboards with WebSocket-based updates
+
+### Error Handling & Tracking
+- Classify errors by type, severity, and category for better analysis
+- Implement automated error pattern recognition and classification
+- Track error trends and provide resolution suggestions
+- Integrate error tracking with business impact analysis
+
+### Performance Optimization
+- Monitor compute unit usage and transaction efficiency continuously
+- Track confirmation and finalization times for user experience insights
+- Implement cost analysis and optimization recommendations
+- Use predictive analytics for capacity planning
+
+### Business Intelligence
+- Track user engagement and retention metrics alongside technical metrics
+- Calculate revenue and cost metrics for business decision support
+- Implement growth tracking and trend analysis
+- Generate actionable insights and recommendations
+
+### Security & Compliance
+- Monitor for suspicious transaction patterns and potential security threats
+- Implement audit trails for all monitoring and alerting activities
+- Use secure communication channels for sensitive monitoring data
+- Ensure compliance with data privacy and retention requirements
+
+## References
+- [Solana RPC API Documentation](mdc:https:/docs.solana.com/api)
+- [Solana Transaction Confirmation Guide](mdc:https:/docs.solana.com/advanced/confirmation)
+- [Prometheus Monitoring Best Practices](mdc:https:/prometheus.io/docs/practices)
+- [Grafana Dashboard Design Guidelines](mdc:https:/grafana.com/docs/grafana/latest/best-practices)
+- [PagerDuty Incident Response](mdc:https:/response.pagerduty.com)
+- [OpenTelemetry Specification](mdc:https:/opentelemetry.io/docs/specs/otel)
+</rewritten_file>

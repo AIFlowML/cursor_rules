@@ -1,0 +1,1182 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana wallet integration, cryptographic key management, and secure transaction signing. You focus on producing secure, user-friendly wallet solutions with proper key handling and multi-wallet support.
+
+## Solana Wallet Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Keypair Gen   │    │  Wallet Adapter  │    │  Transaction    │
+│   - Ed25519     │───▶│   - Connection   │───▶│   - Signing     │
+│   - Mnemonic    │    │   - Multi-wallet │    │   - Verification│
+│   - HD Wallets  │    │   - Events       │    │   - Multi-sig   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Storage       │    │   Security       │    │   Hardware      │
+│   - Encrypted   │    │   - Key Derivation│    │   - Ledger      │
+│   - Local Store │    │   - Message Sign │    │   - Hardware    │
+│   - Recovery    │    │   - Phishing     │    │   - Cold Storage│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+wallet-integration/
+├── src/
+│   ├── wallets/
+│   │   ├── mod.rs                   # Wallet module exports
+│   │   ├── keypair.rs               # Keypair generation & management
+│   │   ├── adapters/
+│   │   │   ├── mod.rs               # Adapter exports
+│   │   │   ├── phantom.rs           # Phantom wallet integration
+│   │   │   ├── solflare.rs          # Solflare wallet integration
+│   │   │   ├── ledger.rs            # Hardware wallet support
+│   │   │   └── universal.rs         # Universal wallet adapter
+│   │   ├── storage/
+│   │   │   ├── mod.rs               # Storage exports
+│   │   │   ├── encrypted_store.rs   # Encrypted key storage
+│   │   │   ├── browser_storage.rs   # Browser storage utilities
+│   │   │   └── recovery.rs          # Key recovery mechanisms
+│   │   └── security/
+│   │       ├── mod.rs               # Security exports
+│   │       ├── derivation.rs        # Key derivation functions
+│   │       ├── signing.rs           # Transaction signing
+│   │       ├── verification.rs      # Signature verification
+│   │       └── phishing_protection.rs # Anti-phishing measures
+│   ├── types/
+│   │   ├── mod.rs                   # Type exports
+│   │   ├── wallet.rs                # Wallet types
+│   │   ├── keypair.rs               # Keypair types
+│   │   └── connection.rs            # Connection types
+│   ├── utils/
+│   │   ├── mod.rs                   # Utility exports
+│   │   ├── mnemonic.rs              # Mnemonic utilities
+│   │   ├── encoding.rs              # Base58/hex encoding
+│   │   └── validation.rs            # Input validation
+│   └── errors.rs                    # Wallet-specific errors
+├── tests/
+│   ├── keypair_tests.rs             # Keypair generation tests
+│   ├── adapter_tests.rs             # Wallet adapter tests
+│   ├── signing_tests.rs             # Transaction signing tests
+│   └── security_tests.rs            # Security feature tests
+└── examples/
+    ├── basic_wallet.rs              # Basic wallet usage
+    ├── multi_wallet.rs              # Multi-wallet support
+    └── hardware_wallet.rs           # Hardware wallet example
+```
+
+## Core Implementation Patterns
+
+### Keypair Generation & Management
+
+```rust
+// ✅ DO: Implement secure keypair generation
+use {
+    solana_sdk::{
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+        derivation_path::DerivationPath,
+    },
+    bip39::{Mnemonic, MnemonicType, Language, Seed},
+    ed25519_dalek::SecretKey,
+    rand::rngs::OsRng,
+};
+
+pub struct KeypairManager;
+
+impl KeypairManager {
+    /// Generate a new random keypair using secure random number generation
+    pub fn generate_keypair() -> Result<Keypair, WalletError> {
+        // Use OS-provided secure random number generator
+        let mut rng = OsRng;
+        let keypair = Keypair::generate(&mut rng);
+        
+        // Validate the generated keypair
+        Self::validate_keypair(&keypair)?;
+        
+        Ok(keypair)
+    }
+    
+    /// Generate keypair from mnemonic seed phrase
+    pub fn from_mnemonic(
+        mnemonic: &str,
+        passphrase: Option<&str>,
+        derivation_path: Option<DerivationPath>,
+    ) -> Result<Keypair, WalletError> {
+        // Parse and validate mnemonic
+        let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English)
+            .map_err(|_| WalletError::InvalidMnemonic)?;
+        
+        // Generate seed from mnemonic
+        let seed = Seed::new(&mnemonic, passphrase.unwrap_or(""));
+        
+        // Use derivation path or default Solana path
+        let path = derivation_path.unwrap_or_else(|| {
+            DerivationPath::from_absolute_path_str("m/44'/501'/0'/0'")
+                .expect("Valid derivation path")
+        });
+        
+        // Derive keypair from seed and path
+        let keypair = Self::derive_keypair_from_seed(seed.as_bytes(), &path)?;
+        
+        // Clear sensitive data from memory
+        // Note: In production, use secure memory clearing
+        
+        Ok(keypair)
+    }
+    
+    /// Generate a new mnemonic seed phrase
+    pub fn generate_mnemonic(word_count: MnemonicType) -> Result<String, WalletError> {
+        let mut rng = OsRng;
+        let mnemonic = Mnemonic::new(word_count, Language::English, &mut rng);
+        
+        Ok(mnemonic.phrase().to_string())
+    }
+    
+    /// Derive keypair from seed using hierarchical deterministic derivation
+    fn derive_keypair_from_seed(
+        seed: &[u8],
+        derivation_path: &DerivationPath,
+    ) -> Result<Keypair, WalletError> {
+        use solana_sdk::derivation_path::derive_key_from_path;
+        
+        let derived_key = derive_key_from_path(seed, Some(derivation_path))
+            .map_err(|_| WalletError::KeyDerivationFailed)?;
+        
+        Ok(derived_key)
+    }
+    
+    /// Validate keypair integrity
+    fn validate_keypair(keypair: &Keypair) -> Result<(), WalletError> {
+        // Check if public key is valid
+        let pubkey = keypair.pubkey();
+        if pubkey == Pubkey::default() {
+            return Err(WalletError::InvalidKeypair);
+        }
+        
+        // Test signing capability
+        let test_message = b"test_message";
+        let signature = keypair.sign_message(test_message);
+        
+        // Verify signature
+        if !signature.verify(&pubkey.to_bytes(), test_message) {
+            return Err(WalletError::InvalidKeypair);
+        }
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement HD wallet derivation
+pub struct HDWallet {
+    seed: Vec<u8>,
+    master_key: Keypair,
+}
+
+impl HDWallet {
+    pub fn from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Result<Self, WalletError> {
+        let mnemonic = Mnemonic::from_phrase(mnemonic, Language::English)
+            .map_err(|_| WalletError::InvalidMnemonic)?;
+        
+        let seed = Seed::new(&mnemonic, passphrase.unwrap_or(""));
+        let seed_bytes = seed.as_bytes().to_vec();
+        
+        // Derive master key
+        let master_path = DerivationPath::from_absolute_path_str("m/44'/501'")
+            .map_err(|_| WalletError::InvalidDerivationPath)?;
+        
+        let master_key = KeypairManager::derive_keypair_from_seed(&seed_bytes, &master_path)?;
+        
+        Ok(HDWallet {
+            seed: seed_bytes,
+            master_key,
+        })
+    }
+    
+    pub fn derive_account(&self, account_index: u32) -> Result<Keypair, WalletError> {
+        let path = DerivationPath::from_absolute_path_str(&format!(
+            "m/44'/501'/{}'", account_index
+        )).map_err(|_| WalletError::InvalidDerivationPath)?;
+        
+        KeypairManager::derive_keypair_from_seed(&self.seed, &path)
+    }
+    
+    pub fn derive_change_account(&self, account_index: u32, change_index: u32) -> Result<Keypair, WalletError> {
+        let path = DerivationPath::from_absolute_path_str(&format!(
+            "m/44'/501'/{}'/{}'", account_index, change_index
+        )).map_err(|_| WalletError::InvalidDerivationPath)?;
+        
+        KeypairManager::derive_keypair_from_seed(&self.seed, &path)
+    }
+}
+```
+
+### Wallet Adapter Integration (TypeScript)
+
+```typescript
+// ✅ DO: Implement comprehensive wallet adapter
+import {
+    WalletAdapter,
+    WalletAdapterEvents,
+    WalletError,
+    WalletNotConnectedError,
+    WalletConnectionError,
+} from '@solana/wallet-adapter-base';
+import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
+
+interface WalletAdapterConfig {
+    autoConnect?: boolean;
+    timeout?: number;
+    supportedWallets?: string[];
+}
+
+export class UniversalWalletAdapter implements WalletAdapter {
+    private _connecting = false;
+    private _connected = false;
+    private _readyState = WalletReadyState.NotDetected;
+    private _publicKey: PublicKey | null = null;
+    private _wallet: any = null;
+    
+    constructor(private config: WalletAdapterConfig = {}) {
+        this.detectWallets();
+    }
+    
+    get name(): string {
+        return 'Universal Wallet';
+    }
+    
+    get url(): string {
+        return 'https://example.com';
+    }
+    
+    get icon(): string {
+        return 'data:image/svg+xml;base64,...';
+    }
+    
+    get readyState(): WalletReadyState {
+        return this._readyState;
+    }
+    
+    get publicKey(): PublicKey | null {
+        return this._publicKey;
+    }
+    
+    get connecting(): boolean {
+        return this._connecting;
+    }
+    
+    get connected(): boolean {
+        return this._connected;
+    }
+    
+    async connect(): Promise<void> {
+        try {
+            if (this.connected || this.connecting) return;
+            
+            this._connecting = true;
+            this.emit('connecting');
+            
+            const wallet = await this.detectAndSelectWallet();
+            if (!wallet) {
+                throw new WalletConnectionError('No wallet detected');
+            }
+            
+            const response = await wallet.connect();
+            this._publicKey = new PublicKey(response.publicKey);
+            this._wallet = wallet;
+            this._connected = true;
+            
+            this.emit('connect', this._publicKey);
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        } finally {
+            this._connecting = false;
+        }
+    }
+    
+    async disconnect(): Promise<void> {
+        try {
+            if (this._wallet?.disconnect) {
+                await this._wallet.disconnect();
+            }
+        } catch (error) {
+            this.emit('error', error);
+        } finally {
+            this._wallet = null;
+            this._publicKey = null;
+            this._connected = false;
+            this.emit('disconnect');
+        }
+    }
+    
+    async signTransaction<T extends Transaction | VersionedTransaction>(
+        transaction: T
+    ): Promise<T> {
+        if (!this.connected || !this._wallet) {
+            throw new WalletNotConnectedError();
+        }
+        
+        try {
+            const signedTransaction = await this._wallet.signTransaction(transaction);
+            return signedTransaction;
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        }
+    }
+    
+    async signAllTransactions<T extends Transaction | VersionedTransaction>(
+        transactions: T[]
+    ): Promise<T[]> {
+        if (!this.connected || !this._wallet) {
+            throw new WalletNotConnectedError();
+        }
+        
+        try {
+            const signedTransactions = await this._wallet.signAllTransactions(transactions);
+            return signedTransactions;
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        }
+    }
+    
+    async signMessage(message: Uint8Array): Promise<Uint8Array> {
+        if (!this.connected || !this._wallet) {
+            throw new WalletNotConnectedError();
+        }
+        
+        try {
+            const signature = await this._wallet.signMessage(message);
+            return signature;
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        }
+    }
+    
+    private async detectAndSelectWallet(): Promise<any> {
+        const wallets = this.getAvailableWallets();
+        
+        if (wallets.length === 0) {
+            throw new WalletError('No wallets detected');
+        }
+        
+        // Auto-select first available wallet or show selection UI
+        if (wallets.length === 1) {
+            return wallets[0];
+        }
+        
+        // For multiple wallets, implement selection logic
+        return this.selectWallet(wallets);
+    }
+    
+    private getAvailableWallets(): any[] {
+        const wallets = [];
+        
+        // Check for Phantom
+        if ((window as any).solana?.isPhantom) {
+            wallets.push({
+                name: 'Phantom',
+                adapter: (window as any).solana,
+                connect: () => (window as any).solana.connect(),
+                disconnect: () => (window as any).solana.disconnect(),
+                signTransaction: (tx: any) => (window as any).solana.signTransaction(tx),
+                signAllTransactions: (txs: any[]) => (window as any).solana.signAllTransactions(txs),
+                signMessage: (msg: Uint8Array) => (window as any).solana.signMessage(msg),
+            });
+        }
+        
+        // Check for Solflare
+        if ((window as any).solflare?.isSolflare) {
+            wallets.push({
+                name: 'Solflare',
+                adapter: (window as any).solflare,
+                connect: () => (window as any).solflare.connect(),
+                disconnect: () => (window as any).solflare.disconnect(),
+                signTransaction: (tx: any) => (window as any).solflare.signTransaction(tx),
+                signAllTransactions: (txs: any[]) => (window as any).solflare.signAllTransactions(txs),
+                signMessage: (msg: Uint8Array) => (window as any).solflare.signMessage(msg),
+            });
+        }
+        
+        // Add more wallet checks as needed
+        
+        return wallets;
+    }
+    
+    private async selectWallet(wallets: any[]): Promise<any> {
+        // Implement wallet selection UI
+        // For now, return the first one
+        return wallets[0];
+    }
+    
+    private detectWallets(): void {
+        // Check if wallets are already available
+        const checkWallets = () => {
+            const wallets = this.getAvailableWallets();
+            if (wallets.length > 0) {
+                this._readyState = WalletReadyState.Installed;
+                this.emit('readyStateChange', this._readyState);
+                
+                if (this.config.autoConnect) {
+                    this.connect().catch(() => {
+                        // Ignore auto-connect failures
+                    });
+                }
+            }
+        };
+        
+        // Check immediately
+        checkWallets();
+        
+        // Also check when window loads
+        if (document.readyState === 'loading') {
+            window.addEventListener('load', checkWallets);
+        }
+        
+        // Listen for wallet installation
+        window.addEventListener('wallet-standard:register-wallet', checkWallets);
+    }
+}
+
+// ✅ DO: Implement multi-wallet support
+export class WalletManager {
+    private adapters: Map<string, WalletAdapter> = new Map();
+    private currentWallet: WalletAdapter | null = null;
+    
+    constructor() {
+        this.initializeAdapters();
+    }
+    
+    private initializeAdapters(): void {
+        // Initialize supported wallet adapters
+        const adapters = [
+            new PhantomWalletAdapter(),
+            new SolflareWalletAdapter(),
+            new LedgerWalletAdapter(),
+            // Add more adapters
+        ];
+        
+        adapters.forEach(adapter => {
+            this.adapters.set(adapter.name, adapter);
+            this.setupAdapterListeners(adapter);
+        });
+    }
+    
+    getAvailableWallets(): WalletAdapter[] {
+        return Array.from(this.adapters.values()).filter(
+            adapter => adapter.readyState === WalletReadyState.Installed
+        );
+    }
+    
+    async selectWallet(walletName: string): Promise<void> {
+        const adapter = this.adapters.get(walletName);
+        if (!adapter) {
+            throw new WalletError(`Wallet ${walletName} not found`);
+        }
+        
+        if (this.currentWallet && this.currentWallet.connected) {
+            await this.currentWallet.disconnect();
+        }
+        
+        this.currentWallet = adapter;
+        await adapter.connect();
+    }
+    
+    getCurrentWallet(): WalletAdapter | null {
+        return this.currentWallet;
+    }
+    
+    async disconnect(): Promise<void> {
+        if (this.currentWallet) {
+            await this.currentWallet.disconnect();
+            this.currentWallet = null;
+        }
+    }
+    
+    private setupAdapterListeners(adapter: WalletAdapter): void {
+        adapter.on('connect', (publicKey) => {
+            console.log(`${adapter.name} connected:`, publicKey);
+        });
+        
+        adapter.on('disconnect', () => {
+            console.log(`${adapter.name} disconnected`);
+            if (this.currentWallet === adapter) {
+                this.currentWallet = null;
+            }
+        });
+        
+        adapter.on('error', (error) => {
+            console.error(`${adapter.name} error:`, error);
+        });
+    }
+}
+```
+
+### Transaction Signing & Security
+
+```rust
+// ✅ DO: Implement secure transaction signing
+use {
+    solana_sdk::{
+        signature::{Signature, Signer},
+        transaction::{Transaction, VersionedTransaction},
+        message::{Message, VersionedMessage},
+        hash::Hash,
+    },
+    ed25519_dalek::{Verifier, PublicKey as Ed25519PublicKey},
+};
+
+pub struct TransactionSigner;
+
+impl TransactionSigner {
+    /// Sign a transaction with comprehensive validation
+    pub fn sign_transaction(
+        transaction: &mut Transaction,
+        signers: &[&dyn Signer],
+    ) -> Result<(), WalletError> {
+        // Validate transaction before signing
+        Self::validate_transaction(transaction)?;
+        
+        // Sign the transaction
+        transaction.sign(signers, transaction.message.recent_blockhash);
+        
+        // Verify all signatures
+        Self::verify_transaction_signatures(transaction)?;
+        
+        Ok(())
+    }
+    
+    /// Sign a versioned transaction
+    pub fn sign_versioned_transaction(
+        transaction: &mut VersionedTransaction,
+        signers: &[&dyn Signer],
+    ) -> Result<(), WalletError> {
+        // Validate versioned transaction
+        Self::validate_versioned_transaction(transaction)?;
+        
+        // Sign the transaction
+        transaction.sign(signers);
+        
+        // Verify signatures
+        Self::verify_versioned_transaction_signatures(transaction)?;
+        
+        Ok(())
+    }
+    
+    /// Implement partial signing for multi-signature transactions
+    pub fn partial_sign_transaction(
+        transaction: &mut Transaction,
+        signer: &dyn Signer,
+        signer_index: usize,
+    ) -> Result<(), WalletError> {
+        // Validate signer index
+        if signer_index >= transaction.message.header.num_required_signatures as usize {
+            return Err(WalletError::InvalidSignerIndex);
+        }
+        
+        // Get the message to sign
+        let message_data = transaction.message_data();
+        let signature = signer.sign_message(&message_data);
+        
+        // Verify the signature
+        let pubkey = signer.pubkey();
+        if !signature.verify(&pubkey.to_bytes(), &message_data) {
+            return Err(WalletError::SignatureVerificationFailed);
+        }
+        
+        // Add signature to transaction
+        transaction.signatures[signer_index] = signature;
+        
+        Ok(())
+    }
+    
+    /// Sign arbitrary message for authentication
+    pub fn sign_message(
+        message: &[u8],
+        signer: &dyn Signer,
+    ) -> Result<Signature, WalletError> {
+        // Add message prefix for safety
+        let prefixed_message = format!("Solana Signed Message:\n{}", 
+            String::from_utf8_lossy(message));
+        
+        let signature = signer.sign_message(prefixed_message.as_bytes());
+        
+        // Verify signature
+        let pubkey = signer.pubkey();
+        if !signature.verify(&pubkey.to_bytes(), prefixed_message.as_bytes()) {
+            return Err(WalletError::SignatureVerificationFailed);
+        }
+        
+        Ok(signature)
+    }
+    
+    /// Verify message signature
+    pub fn verify_message_signature(
+        message: &[u8],
+        signature: &Signature,
+        public_key: &Pubkey,
+    ) -> Result<bool, WalletError> {
+        let prefixed_message = format!("Solana Signed Message:\n{}", 
+            String::from_utf8_lossy(message));
+        
+        Ok(signature.verify(&public_key.to_bytes(), prefixed_message.as_bytes()))
+    }
+    
+    fn validate_transaction(transaction: &Transaction) -> Result<(), WalletError> {
+        // Check if transaction has instructions
+        if transaction.message.instructions.is_empty() {
+            return Err(WalletError::EmptyTransaction);
+        }
+        
+        // Validate recent blockhash
+        if transaction.message.recent_blockhash == Hash::default() {
+            return Err(WalletError::InvalidBlockhash);
+        }
+        
+        // Check signature count
+        let required_signatures = transaction.message.header.num_required_signatures as usize;
+        if transaction.signatures.len() != required_signatures {
+            return Err(WalletError::InvalidSignatureCount);
+        }
+        
+        Ok(())
+    }
+    
+    fn verify_transaction_signatures(transaction: &Transaction) -> Result<(), WalletError> {
+        let message_data = transaction.message_data();
+        
+        for (i, signature) in transaction.signatures.iter().enumerate() {
+            if i < transaction.message.account_keys.len() {
+                let pubkey = &transaction.message.account_keys[i];
+                if !signature.verify(&pubkey.to_bytes(), &message_data) {
+                    return Err(WalletError::SignatureVerificationFailed);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement multi-signature support
+pub struct MultiSigManager {
+    threshold: u8,
+    signers: Vec<Pubkey>,
+}
+
+impl MultiSigManager {
+    pub fn new(threshold: u8, signers: Vec<Pubkey>) -> Result<Self, WalletError> {
+        if threshold == 0 || threshold as usize > signers.len() {
+            return Err(WalletError::InvalidThreshold);
+        }
+        
+        if signers.is_empty() || signers.len() > 11 {
+            return Err(WalletError::InvalidSignerCount);
+        }
+        
+        Ok(MultiSigManager { threshold, signers })
+    }
+    
+    pub fn create_multisig_transaction(
+        &self,
+        instructions: Vec<Instruction>,
+        recent_blockhash: Hash,
+    ) -> Result<Transaction, WalletError> {
+        let message = Message::new(&instructions, Some(&self.signers[0]));
+        let mut transaction = Transaction::new_unsigned(message);
+        transaction.message.recent_blockhash = recent_blockhash;
+        
+        // Initialize signatures vector
+        transaction.signatures = vec![Signature::default(); self.signers.len()];
+        
+        Ok(transaction)
+    }
+    
+    pub fn add_signature(
+        &self,
+        transaction: &mut Transaction,
+        signer: &dyn Signer,
+    ) -> Result<(), WalletError> {
+        // Find signer index
+        let signer_pubkey = signer.pubkey();
+        let signer_index = self.signers.iter()
+            .position(|&pubkey| pubkey == signer_pubkey)
+            .ok_or(WalletError::UnauthorizedSigner)?;
+        
+        // Sign transaction
+        TransactionSigner::partial_sign_transaction(transaction, signer, signer_index)?;
+        
+        Ok(())
+    }
+    
+    pub fn is_fully_signed(&self, transaction: &Transaction) -> bool {
+        let valid_signatures = transaction.signatures.iter()
+            .enumerate()
+            .take(self.signers.len())
+            .filter(|(i, sig)| {
+                if let Some(pubkey) = self.signers.get(*i) {
+                    let message_data = transaction.message_data();
+                    sig.verify(&pubkey.to_bytes(), &message_data)
+                } else {
+                    false
+                }
+            })
+            .count();
+        
+        valid_signatures >= self.threshold as usize
+    }
+}
+```
+
+## Advanced Patterns
+
+### Encrypted Key Storage
+
+```rust
+// ✅ DO: Implement secure key storage
+use {
+    aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, NewAead}},
+    argon2::{Argon2, Config, ThreadMode, Variant, Version},
+    rand::{RngCore, rngs::OsRng},
+    serde::{Serialize, Deserialize},
+};
+
+#[derive(Serialize, Deserialize)]
+pub struct EncryptedKeystore {
+    pub version: u32,
+    pub crypto: CryptoParams,
+    pub id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CryptoParams {
+    pub cipher: String,
+    pub ciphertext: Vec<u8>,
+    pub cipherparams: CipherParams,
+    pub kdf: String,
+    pub kdfparams: KdfParams,
+    pub mac: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CipherParams {
+    pub iv: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KdfParams {
+    pub dklen: u32,
+    pub salt: Vec<u8>,
+    pub m_cost: u32,
+    pub t_cost: u32,
+    pub p_cost: u32,
+}
+
+pub struct KeystoreManager;
+
+impl KeystoreManager {
+    pub fn encrypt_keypair(
+        keypair: &Keypair,
+        password: &str,
+    ) -> Result<EncryptedKeystore, WalletError> {
+        let mut rng = OsRng;
+        
+        // Generate salt for key derivation
+        let mut salt = vec![0u8; 32];
+        rng.fill_bytes(&mut salt);
+        
+        // Derive encryption key from password
+        let config = Config {
+            variant: Variant::Argon2id,
+            version: Version::Version13,
+            mem_cost: 4096,
+            time_cost: 3,
+            lanes: 1,
+            thread_mode: ThreadMode::Parallel,
+            secret: &[],
+            ad: &[],
+            hash_length: 32,
+        };
+        
+        let derived_key = argon2::hash_raw(password.as_bytes(), &salt, &config)
+            .map_err(|_| WalletError::KeyDerivationFailed)?;
+        
+        // Generate IV for encryption
+        let mut iv = vec![0u8; 12];
+        rng.fill_bytes(&mut iv);
+        
+        // Encrypt keypair
+        let key = Key::from_slice(&derived_key);
+        let cipher = Aes256Gcm::new(key);
+        let nonce = Nonce::from_slice(&iv);
+        
+        let keypair_bytes = keypair.to_bytes();
+        let ciphertext = cipher.encrypt(nonce, keypair_bytes.as_ref())
+            .map_err(|_| WalletError::EncryptionFailed)?;
+        
+        // Generate MAC for integrity verification
+        let mac = Self::generate_mac(&derived_key, &ciphertext)?;
+        
+        Ok(EncryptedKeystore {
+            version: 1,
+            crypto: CryptoParams {
+                cipher: "aes-256-gcm".to_string(),
+                ciphertext,
+                cipherparams: CipherParams { iv },
+                kdf: "argon2id".to_string(),
+                kdfparams: KdfParams {
+                    dklen: 32,
+                    salt,
+                    m_cost: 4096,
+                    t_cost: 3,
+                    p_cost: 1,
+                },
+                mac,
+            },
+            id: uuid::Uuid::new_v4().to_string(),
+        })
+    }
+    
+    pub fn decrypt_keypair(
+        keystore: &EncryptedKeystore,
+        password: &str,
+    ) -> Result<Keypair, WalletError> {
+        // Derive key from password
+        let config = Config {
+            variant: Variant::Argon2id,
+            version: Version::Version13,
+            mem_cost: keystore.crypto.kdfparams.m_cost,
+            time_cost: keystore.crypto.kdfparams.t_cost,
+            lanes: keystore.crypto.kdfparams.p_cost,
+            thread_mode: ThreadMode::Parallel,
+            secret: &[],
+            ad: &[],
+            hash_length: keystore.crypto.kdfparams.dklen,
+        };
+        
+        let derived_key = argon2::hash_raw(
+            password.as_bytes(),
+            &keystore.crypto.kdfparams.salt,
+            &config,
+        ).map_err(|_| WalletError::KeyDerivationFailed)?;
+        
+        // Verify MAC
+        let expected_mac = Self::generate_mac(&derived_key, &keystore.crypto.ciphertext)?;
+        if expected_mac != keystore.crypto.mac {
+            return Err(WalletError::InvalidPassword);
+        }
+        
+        // Decrypt keypair
+        let key = Key::from_slice(&derived_key);
+        let cipher = Aes256Gcm::new(key);
+        let nonce = Nonce::from_slice(&keystore.crypto.cipherparams.iv);
+        
+        let decrypted_bytes = cipher.decrypt(nonce, keystore.crypto.ciphertext.as_ref())
+            .map_err(|_| WalletError::DecryptionFailed)?;
+        
+        // Reconstruct keypair
+        if decrypted_bytes.len() != 64 {
+            return Err(WalletError::InvalidKeypairData);
+        }
+        
+        let keypair = Keypair::from_bytes(&decrypted_bytes)
+            .map_err(|_| WalletError::InvalidKeypairData)?;
+        
+        Ok(keypair)
+    }
+    
+    fn generate_mac(key: &[u8], data: &[u8]) -> Result<Vec<u8>, WalletError> {
+        use hmac::{Hmac, Mac, NewMac};
+        use sha2::Sha256;
+        
+        type HmacSha256 = Hmac<Sha256>;
+        
+        let mut mac = HmacSha256::new_varkey(key)
+            .map_err(|_| WalletError::MacGenerationFailed)?;
+        mac.update(data);
+        
+        Ok(mac.finalize().into_bytes().to_vec())
+    }
+}
+```
+
+### Hardware Wallet Integration
+
+```typescript
+// ✅ DO: Implement hardware wallet support
+import Transport from '@ledgerhq/hw-transport';
+import TransportWebUSB from '@ledgerhq/hw-transport-webusb';
+import { PublicKey, Transaction } from '@solana/web3.js';
+
+export class LedgerWalletAdapter implements WalletAdapter {
+    private transport: Transport | null = null;
+    private _publicKey: PublicKey | null = null;
+    private _connected = false;
+    
+    get name(): string {
+        return 'Ledger';
+    }
+    
+    get connected(): boolean {
+        return this._connected;
+    }
+    
+    get publicKey(): PublicKey | null {
+        return this._publicKey;
+    }
+    
+    async connect(): Promise<void> {
+        try {
+            // Connect to Ledger device
+            this.transport = await TransportWebUSB.create();
+            
+            // Get public key from device
+            const derivationPath = "44'/501'/0'/0'"; // Solana derivation path
+            const publicKeyResponse = await this.getPublicKey(derivationPath);
+            
+            this._publicKey = new PublicKey(publicKeyResponse.address);
+            this._connected = true;
+            
+            this.emit('connect', this._publicKey);
+        } catch (error) {
+            this.emit('error', new WalletConnectionError(error.message));
+            throw error;
+        }
+    }
+    
+    async disconnect(): Promise<void> {
+        if (this.transport) {
+            await this.transport.close();
+            this.transport = null;
+        }
+        
+        this._publicKey = null;
+        this._connected = false;
+        this.emit('disconnect');
+    }
+    
+    async signTransaction<T extends Transaction>(transaction: T): Promise<T> {
+        if (!this.connected || !this.transport) {
+            throw new WalletNotConnectedError();
+        }
+        
+        try {
+            // Serialize transaction for Ledger
+            const message = transaction.serializeMessage();
+            
+            // Sign with Ledger device
+            const derivationPath = "44'/501'/0'/0'";
+            const signature = await this.signMessage(message, derivationPath);
+            
+            // Add signature to transaction
+            transaction.addSignature(this._publicKey!, signature);
+            
+            return transaction;
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        }
+    }
+    
+    async signMessage(message: Uint8Array): Promise<Uint8Array> {
+        if (!this.connected || !this.transport) {
+            throw new WalletNotConnectedError();
+        }
+        
+        try {
+            const derivationPath = "44'/501'/0'/0'";
+            const signature = await this.signMessage(message, derivationPath);
+            return signature;
+        } catch (error) {
+            this.emit('error', error);
+            throw error;
+        }
+    }
+    
+    private async getPublicKey(derivationPath: string): Promise<any> {
+        if (!this.transport) {
+            throw new Error('Transport not available');
+        }
+        
+        // Implement Ledger APDU commands for Solana
+        const pathBuffer = this.serializeDerivationPath(derivationPath);
+        const response = await this.transport.send(
+            0xe0, // CLA
+            0x05, // INS (GET_PUBLIC_KEY)
+            0x00, // P1
+            0x00, // P2
+            pathBuffer
+        );
+        
+        return this.parsePublicKeyResponse(response);
+    }
+    
+    private async signMessage(message: Uint8Array, derivationPath: string): Promise<Uint8Array> {
+        if (!this.transport) {
+            throw new Error('Transport not available');
+        }
+        
+        const pathBuffer = this.serializeDerivationPath(derivationPath);
+        
+        // Send signing command to Ledger
+        const response = await this.transport.send(
+            0xe0, // CLA
+            0x06, // INS (SIGN)
+            0x00, // P1
+            0x00, // P2
+            Buffer.concat([pathBuffer, Buffer.from(message)])
+        );
+        
+        return this.parseSignatureResponse(response);
+    }
+    
+    private serializeDerivationPath(path: string): Buffer {
+        const elements = path.split('/').slice(1); // Remove 'm'
+        const buffer = Buffer.alloc(1 + elements.length * 4);
+        
+        buffer.writeUInt8(elements.length, 0);
+        
+        for (let i = 0; i < elements.length; i++) {
+            let element = parseInt(elements[i], 10);
+            if (elements[i].endsWith("'")) {
+                element += 0x80000000; // Hardened derivation
+            }
+            buffer.writeUInt32BE(element, 1 + i * 4);
+        }
+        
+        return buffer;
+    }
+    
+    private parsePublicKeyResponse(response: Buffer): any {
+        // Parse Ledger response format
+        const addressLength = response[0];
+        const address = response.slice(1, 1 + addressLength);
+        
+        return {
+            address: address.toString('hex'),
+            publicKey: address,
+        };
+    }
+    
+    private parseSignatureResponse(response: Buffer): Uint8Array {
+        // Parse signature from Ledger response
+        // Ledger returns DER-encoded signature, convert to raw format
+        return new Uint8Array(response.slice(0, 64));
+    }
+}
+```
+
+## Error Handling
+
+```rust
+// ✅ DO: Define comprehensive wallet errors
+#[derive(Debug, thiserror::Error)]
+pub enum WalletError {
+    #[error("Invalid mnemonic phrase")]
+    InvalidMnemonic,
+    
+    #[error("Key derivation failed")]
+    KeyDerivationFailed,
+    
+    #[error("Invalid keypair")]
+    InvalidKeypair,
+    
+    #[error("Invalid derivation path")]
+    InvalidDerivationPath,
+    
+    #[error("Encryption failed")]
+    EncryptionFailed,
+    
+    #[error("Decryption failed")]
+    DecryptionFailed,
+    
+    #[error("Invalid password")]
+    InvalidPassword,
+    
+    #[error("Invalid keypair data")]
+    InvalidKeypairData,
+    
+    #[error("MAC generation failed")]
+    MacGenerationFailed,
+    
+    #[error("Signature verification failed")]
+    SignatureVerificationFailed,
+    
+    #[error("Invalid signer index")]
+    InvalidSignerIndex,
+    
+    #[error("Empty transaction")]
+    EmptyTransaction,
+    
+    #[error("Invalid blockhash")]
+    InvalidBlockhash,
+    
+    #[error("Invalid signature count")]
+    InvalidSignatureCount,
+    
+    #[error("Invalid threshold for multi-signature")]
+    InvalidThreshold,
+    
+    #[error("Invalid signer count")]
+    InvalidSignerCount,
+    
+    #[error("Unauthorized signer")]
+    UnauthorizedSigner,
+    
+    #[error("Wallet not connected")]
+    WalletNotConnected,
+    
+    #[error("Wallet connection failed: {0}")]
+    ConnectionFailed(String),
+    
+    #[error("Hardware wallet error: {0}")]
+    HardwareWalletError(String),
+    
+    #[error("Phishing attempt detected")]
+    PhishingDetected,
+    
+    #[error("Invalid domain")]
+    InvalidDomain,
+}
+```
+
+## Best Practices Summary
+
+### Key Management Security
+- Use secure random number generation for keypair creation
+- Implement proper key derivation with strong parameters
+- Store encrypted keys with industry-standard encryption
+- Clear sensitive data from memory after use
+
+### Wallet Integration
+- Support multiple wallet adapters for user choice
+- Implement proper connection state management
+- Handle wallet disconnection gracefully
+- Provide clear error messages to users
+
+### Transaction Signing
+- Validate transactions before signing
+- Implement signature verification
+- Support partial signing for multi-signature workflows
+- Use proper message formatting for authentication
+
+### Hardware Wallet Support
+- Implement proper USB transport handling
+- Follow hardware wallet security protocols
+- Provide clear user instructions
+- Handle device connection errors gracefully
+
+## References
+- [Solana Web3.js Documentation](mdc:https:/solana-labs.github.io/solana-web3.js)
+- [Wallet Adapter Documentation](mdc:https:/github.com/solana-labs/wallet-adapter)
+- [Ledger Solana Integration](mdc:https:/github.com/LedgerHQ/app-solana)
+- [BIP39 Mnemonic Standard](mdc:https:/github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)

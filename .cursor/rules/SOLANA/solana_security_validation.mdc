@@ -1,0 +1,1041 @@
+---
+description: Solana security, input validation, and attack prevention
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana security, input validation, and attack prevention. You focus on building secure, battle-tested programs with comprehensive validation and protection against common blockchain vulnerabilities.
+
+## Security Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Input Validation│    │  Account Security│    │ Access Control  │
+│   Sanitization  │───▶│   Verification   │───▶│  Authorization  │
+│                 │    │                  │    │                 │
+│ - Data checks   │    │ - Owner verify   │    │ - RBAC patterns │
+│ - Overflow safe │    │ - Signer valid   │    │ - Multi-sig     │
+│ - Buffer bounds │    │ - Relations      │    │ - Time controls │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Attack Prevention│    │   Reentrancy    │    │   MEV & Flash   │
+│   Strategies    │    │   Protection     │    │   Loan Defense  │
+│                 │    │                  │    │                 │
+│ - State guards  │    │ - Lock patterns  │    │ - Price oracle  │
+│ - Circuit break │    │ - Check effects  │    │ - Slippage      │
+│ - Rate limiting │    │ - Atomic ops     │    │ - Time delays   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+security-validation/
+├── src/
+│   ├── validation/
+│   │   ├── mod.rs              # Validation exports
+│   │   ├── input.rs            # Input sanitization
+│   │   ├── numeric.rs          # Overflow protection
+│   │   ├── buffer.rs           # Buffer validation
+│   │   └── enum_checks.rs      # Enum validation
+│   ├── account/
+│   │   ├── ownership.rs        # Owner verification
+│   │   ├── signer.rs          # Signer validation
+│   │   ├── relations.rs       # Account relationships
+│   │   └── program_owned.rs   # Program account checks
+│   ├── access/
+│   │   ├── rbac.rs            # Role-based access
+│   │   ├── multisig.rs        # Multi-signature
+│   │   ├── temporal.rs        # Time-based controls
+│   │   └── conditional.rs     # Conditional logic
+│   ├── attacks/
+│   │   ├── reentrancy.rs      # Reentrancy guards
+│   │   ├── sandwich.rs        # Sandwich protection
+│   │   ├── flash_loan.rs      # Flash loan defense
+│   │   └── mev.rs            # MEV protection
+│   └── guards/
+│       ├── state.rs          # State guards
+│       ├── circuit.rs        # Circuit breakers
+│       └── rate_limit.rs     # Rate limiting
+```
+
+## Core Implementation Patterns
+
+### Input Validation & Sanitization
+
+```rust
+// ✅ DO: Comprehensive input validation with security focus
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    msg,
+};
+use std::mem::size_of;
+
+#[derive(Debug)]
+pub enum ValidationError {
+    InvalidDataLength,
+    NumericOverflow,
+    InvalidEnum(u8),
+    BufferOverflow,
+    InvalidString,
+    DataCorruption,
+}
+
+impl From<ValidationError> for ProgramError {
+    fn from(e: ValidationError) -> Self {
+        msg!("Validation error: {:?}", e);
+        ProgramError::InvalidInstructionData
+    }
+}
+
+pub struct SecureValidator;
+
+impl SecureValidator {
+    /// Validate and deserialize account data with security checks
+    pub fn validate_account_data<T: BorshDeserialize>(
+        account: &AccountInfo,
+        expected_size: usize,
+    ) -> Result<T, ValidationError> {
+        // Check account data length
+        if account.data.borrow().len() < expected_size {
+            return Err(ValidationError::InvalidDataLength);
+        }
+        
+        // Check for exact size match (prevents buffer overflow)
+        if account.data.borrow().len() != expected_size {
+            return Err(ValidationError::InvalidDataLength);
+        }
+        
+        // Deserialize with error handling
+        let data = T::try_from_slice(&account.data.borrow())
+            .map_err(|_| ValidationError::DataCorruption)?;
+        
+        Ok(data)
+    }
+    
+    /// Safe numeric operations with overflow protection
+    pub fn safe_add(a: u64, b: u64) -> Result<u64, ValidationError> {
+        a.checked_add(b).ok_or(ValidationError::NumericOverflow)
+    }
+    
+    pub fn safe_sub(a: u64, b: u64) -> Result<u64, ValidationError> {
+        a.checked_sub(b).ok_or(ValidationError::NumericOverflow)
+    }
+    
+    pub fn safe_mul(a: u64, b: u64) -> Result<u64, ValidationError> {
+        a.checked_mul(b).ok_or(ValidationError::NumericOverflow)
+    }
+    
+    pub fn safe_div(a: u64, b: u64) -> Result<u64, ValidationError> {
+        if b == 0 {
+            return Err(ValidationError::NumericOverflow);
+        }
+        Ok(a / b)
+    }
+    
+    /// Validate string input with length and content checks
+    pub fn validate_string(
+        input: &str,
+        max_length: usize,
+        allow_special_chars: bool,
+    ) -> Result<(), ValidationError> {
+        // Length check
+        if input.len() > max_length {
+            return Err(ValidationError::BufferOverflow);
+        }
+        
+        // Empty string check
+        if input.is_empty() {
+            return Err(ValidationError::InvalidString);
+        }
+        
+        // Character validation
+        if !allow_special_chars {
+            for char in input.chars() {
+                if !char.is_alphanumeric() && char != ' ' && char != '_' && char != '-' {
+                    return Err(ValidationError::InvalidString);
+                }
+            }
+        }
+        
+        // Check for null bytes
+        if input.contains('\0') {
+            return Err(ValidationError::InvalidString);
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate enum variants with explicit bounds checking
+    pub fn validate_enum<T>(discriminant: u8, max_variant: u8) -> Result<(), ValidationError> {
+        if discriminant > max_variant {
+            return Err(ValidationError::InvalidEnum(discriminant));
+        }
+        Ok(())
+    }
+    
+    /// Validate buffer operations with bounds checking
+    pub fn validate_buffer_write(
+        buffer: &[u8],
+        offset: usize,
+        length: usize,
+    ) -> Result<(), ValidationError> {
+        if offset.saturating_add(length) > buffer.len() {
+            return Err(ValidationError::BufferOverflow);
+        }
+        Ok(())
+    }
+    
+    /// Secure percentage calculation (0-10000 basis points)
+    pub fn validate_percentage(bps: u16) -> Result<(), ValidationError> {
+        if bps > 10000 {
+            return Err(ValidationError::NumericOverflow);
+        }
+        Ok(())
+    }
+    
+    /// Calculate percentage with overflow protection
+    pub fn calculate_percentage(amount: u64, bps: u16) -> Result<u64, ValidationError> {
+        Self::validate_percentage(bps)?;
+        let percentage = Self::safe_mul(amount, bps as u64)?;
+        Self::safe_div(percentage, 10000)
+    }
+}
+
+// Example usage in instruction data validation
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct TransferInstruction {
+    pub amount: u64,
+    pub memo: String,
+    pub instruction_type: u8,
+}
+
+impl TransferInstruction {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        // Validate amount (non-zero, reasonable bounds)
+        if self.amount == 0 {
+            return Err(ValidationError::NumericOverflow);
+        }
+        
+        // Validate memo string
+        SecureValidator::validate_string(&self.memo, 100, false)?;
+        
+        // Validate instruction type enum
+        SecureValidator::validate_enum(self.instruction_type, 5)?;
+        
+        Ok(())
+    }
+}
+
+// ❌ DON'T: Unsafe validation patterns
+pub fn bad_validation(data: &[u8]) -> Result<u64, ProgramError> {
+    // No length checking
+    let amount = u64::from_le_bytes([
+        data[0], data[1], data[2], data[3],
+        data[4], data[5], data[6], data[7],
+    ]); // Can panic on out-of-bounds
+    
+    // No overflow checking
+    let result = amount * 2; // Can overflow silently
+    
+    Ok(result)
+}
+```
+
+### Account Security Patterns
+
+```rust
+// ✅ DO: Comprehensive account validation and security checks
+use solana_program::{
+    account_info::{next_account_info, AccountInfo},
+    entrypoint::ProgramResult,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_program,
+    sysvar::{rent::Rent, Sysvar},
+    msg,
+};
+
+pub struct AccountSecurity;
+
+impl AccountSecurity {
+    /// Verify account ownership with comprehensive checks
+    pub fn verify_account_owner(
+        account: &AccountInfo,
+        expected_owner: &Pubkey,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Check if account is owned by expected program
+        if account.owner != expected_owner {
+            msg!(
+                "Account {} is owned by {}, expected {}",
+                account.key,
+                account.owner,
+                expected_owner
+            );
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // For program-owned accounts, verify the program ID
+        if expected_owner == program_id {
+            // Additional checks for program-owned accounts
+            Self::verify_program_account(account, program_id)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Verify signer status with security considerations
+    pub fn verify_signer(
+        account: &AccountInfo,
+        required_signer: &Pubkey,
+    ) -> ProgramResult {
+        // Check if account is a signer
+        if !account.is_signer {
+            msg!("Account {} must be a signer", account.key);
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        // Verify signer matches expected key
+        if account.key != required_signer {
+            msg!(
+                "Expected signer {}, got {}",
+                required_signer,
+                account.key
+            );
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Verify account relationships and constraints
+    pub fn verify_account_relationships(
+        account_a: &AccountInfo,
+        account_b: &AccountInfo,
+        relationship_type: AccountRelationship,
+    ) -> ProgramResult {
+        match relationship_type {
+            AccountRelationship::Associated => {
+                // Verify associated account derivation
+                let (expected_address, _) = Pubkey::find_program_address(
+                    &[b"associated", account_a.key.as_ref()],
+                    account_b.owner,
+                );
+                
+                if account_b.key != &expected_address {
+                    msg!("Invalid associated account derivation");
+                    return Err(ProgramError::InvalidSeeds);
+                }
+            }
+            AccountRelationship::Derived => {
+                // Verify PDA derivation
+                Self::verify_pda_derivation(account_b, &[account_a.key.as_ref()])?;
+            }
+            AccountRelationship::Owned => {
+                // Verify ownership relationship
+                if account_b.owner != account_a.key {
+                    msg!("Account ownership mismatch");
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Verify PDA derivation with bump seed validation
+    pub fn verify_pda_derivation(
+        account: &AccountInfo,
+        seeds: &[&[u8]],
+    ) -> ProgramResult {
+        let program_id = account.owner;
+        
+        // Find the canonical bump
+        let (expected_address, canonical_bump) = 
+            Pubkey::find_program_address(seeds, program_id);
+        
+        if account.key != &expected_address {
+            msg!("PDA derivation mismatch");
+            return Err(ProgramError::InvalidSeeds);
+        }
+        
+        // Store canonical bump for later use if needed
+        // This prevents bump seed manipulation attacks
+        
+        Ok(())
+    }
+    
+    /// Verify program-owned account security
+    pub fn verify_program_account(
+        account: &AccountInfo,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Ensure account is owned by this program
+        if account.owner != program_id {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // Check if account is initialized (has data)
+        if account.data.borrow().is_empty() {
+            msg!("Account {} is not initialized", account.key);
+            return Err(ProgramError::UninitializedAccount);
+        }
+        
+        // Verify account is rent-exempt
+        let rent = Rent::get()?;
+        if !rent.is_exempt(account.lamports(), account.data.borrow().len()) {
+            msg!("Account {} is not rent-exempt", account.key);
+            return Err(ProgramError::AccountNotRentExempt);
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate account state consistency
+    pub fn validate_account_state<T: BorshDeserialize>(
+        account: &AccountInfo,
+        expected_discriminator: u8,
+    ) -> Result<T, ProgramError> {
+        // Check minimum data length for discriminator
+        if account.data.borrow().len() < 1 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Verify discriminator matches expected type
+        let discriminator = account.data.borrow()[0];
+        if discriminator != expected_discriminator {
+            msg!(
+                "Invalid account discriminator: expected {}, got {}",
+                expected_discriminator,
+                discriminator
+            );
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Deserialize and validate data structure
+        let data = T::try_from_slice(&account.data.borrow()[1..])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        
+        Ok(data)
+    }
+    
+    /// Check account mutability permissions
+    pub fn verify_account_mutability(
+        account: &AccountInfo,
+        requires_write: bool,
+    ) -> ProgramResult {
+        if requires_write && !account.is_writable {
+            msg!("Account {} must be writable", account.key);
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AccountRelationship {
+    Associated,
+    Derived,
+    Owned,
+}
+
+// Example secure account validation in instruction processor
+pub fn process_secure_transfer(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    
+    let sender_account = next_account_info(account_info_iter)?;
+    let recipient_account = next_account_info(account_info_iter)?;
+    let authority_account = next_account_info(account_info_iter)?;
+    
+    // 1. Verify authority is signer
+    AccountSecurity::verify_signer(authority_account, authority_account.key)?;
+    
+    // 2. Verify account ownerships
+    AccountSecurity::verify_account_owner(sender_account, program_id, program_id)?;
+    AccountSecurity::verify_account_owner(recipient_account, program_id, program_id)?;
+    
+    // 3. Verify account mutability
+    AccountSecurity::verify_account_mutability(sender_account, true)?;
+    AccountSecurity::verify_account_mutability(recipient_account, true)?;
+    
+    // 4. Validate instruction data
+    let transfer_instruction = TransferInstruction::try_from_slice(instruction_data)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    transfer_instruction.validate()?;
+    
+    // 5. Perform additional business logic validation
+    // ... rest of transfer logic
+    
+    Ok(())
+}
+```
+
+### Access Control & Authorization
+
+```rust
+// ✅ DO: Comprehensive access control with role-based patterns
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    clock::Clock,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    sysvar::Sysvar,
+    msg,
+};
+use std::collections::HashMap;
+
+#[derive(BorshDeserialize, BorshSerialize, Debug, Clone, Copy, PartialEq)]
+pub enum Role {
+    Admin = 0,
+    Manager = 1,
+    User = 2,
+    Observer = 3,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Debug, Clone, Copy, PartialEq)]
+pub enum Permission {
+    Read = 0,
+    Write = 1,
+    Admin = 2,
+    Transfer = 3,
+    Mint = 4,
+    Burn = 5,
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct AccessControlList {
+    pub roles: HashMap<Pubkey, Role>,
+    pub permissions: HashMap<Role, Vec<Permission>>,
+    pub admin: Pubkey,
+    pub created_at: i64,
+    pub last_updated: i64,
+}
+
+impl AccessControlList {
+    pub fn new(admin: Pubkey) -> Self {
+        let mut acl = Self {
+            roles: HashMap::new(),
+            permissions: HashMap::new(),
+            admin,
+            created_at: Clock::get().unwrap().unix_timestamp,
+            last_updated: Clock::get().unwrap().unix_timestamp,
+        };
+        
+        // Initialize default permissions
+        acl.setup_default_permissions();
+        acl.roles.insert(admin, Role::Admin);
+        
+        acl
+    }
+    
+    fn setup_default_permissions(&mut self) {
+        // Admin permissions (all)
+        self.permissions.insert(Role::Admin, vec![
+            Permission::Read,
+            Permission::Write,
+            Permission::Admin,
+            Permission::Transfer,
+            Permission::Mint,
+            Permission::Burn,
+        ]);
+        
+        // Manager permissions
+        self.permissions.insert(Role::Manager, vec![
+            Permission::Read,
+            Permission::Write,
+            Permission::Transfer,
+        ]);
+        
+        // User permissions
+        self.permissions.insert(Role::User, vec![
+            Permission::Read,
+            Permission::Transfer,
+        ]);
+        
+        // Observer permissions
+        self.permissions.insert(Role::Observer, vec![
+            Permission::Read,
+        ]);
+    }
+    
+    /// Check if user has specific permission
+    pub fn has_permission(
+        &self,
+        user: &Pubkey,
+        required_permission: Permission,
+    ) -> Result<bool, ProgramError> {
+        // Get user role
+        let role = self.roles.get(user)
+            .ok_or_else(|| {
+                msg!("User {} not found in ACL", user);
+                ProgramError::InvalidAccountData
+            })?;
+        
+        // Get role permissions
+        let permissions = self.permissions.get(role)
+            .ok_or_else(|| {
+                msg!("Role {:?} not found in permissions", role);
+                ProgramError::InvalidAccountData
+            })?;
+        
+        Ok(permissions.contains(&required_permission))
+    }
+    
+    /// Require specific permission (throws error if not authorized)
+    pub fn require_permission(
+        &self,
+        user: &Pubkey,
+        required_permission: Permission,
+    ) -> ProgramResult {
+        if !self.has_permission(user, required_permission)? {
+            msg!(
+                "User {} lacks required permission {:?}",
+                user,
+                required_permission
+            );
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Add user with role (admin only)
+    pub fn add_user(
+        &mut self,
+        admin: &Pubkey,
+        user: Pubkey,
+        role: Role,
+    ) -> ProgramResult {
+        self.require_permission(admin, Permission::Admin)?;
+        
+        self.roles.insert(user, role);
+        self.last_updated = Clock::get()?.unix_timestamp;
+        
+        msg!("Added user {} with role {:?}", user, role);
+        Ok(())
+    }
+    
+    /// Remove user (admin only)
+    pub fn remove_user(
+        &mut self,
+        admin: &Pubkey,
+        user: &Pubkey,
+    ) -> ProgramResult {
+        self.require_permission(admin, Permission::Admin)?;
+        
+        // Prevent admin from removing themselves
+        if user == &self.admin {
+            msg!("Cannot remove primary admin");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        self.roles.remove(user);
+        self.last_updated = Clock::get()?.unix_timestamp;
+        
+        msg!("Removed user {}", user);
+        Ok(())
+    }
+}
+
+/// Multi-signature authorization pattern
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct MultiSigConfig {
+    pub signers: Vec<Pubkey>,
+    pub threshold: u8,
+    pub nonce: u64,
+}
+
+impl MultiSigConfig {
+    pub fn new(signers: Vec<Pubkey>, threshold: u8) -> Result<Self, ProgramError> {
+        if threshold == 0 || threshold as usize > signers.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        if signers.len() > 10 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(Self {
+            signers,
+            threshold,
+            nonce: 0,
+        })
+    }
+    
+    /// Verify sufficient signatures for operation
+    pub fn verify_signatures(
+        &self,
+        provided_signers: &[&Pubkey],
+    ) -> ProgramResult {
+        let mut valid_signatures = 0u8;
+        
+        for provided_signer in provided_signers {
+            if self.signers.contains(provided_signer) {
+                valid_signatures += 1;
+            }
+        }
+        
+        if valid_signatures < self.threshold {
+            msg!(
+                "Insufficient signatures: {} provided, {} required",
+                valid_signatures,
+                self.threshold
+            );
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        Ok(())
+    }
+}
+
+/// Time-based access control
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct TimeBasedAccess {
+    pub start_time: i64,
+    pub end_time: i64,
+    pub cooldown_period: i64,
+    pub last_access: i64,
+}
+
+impl TimeBasedAccess {
+    pub fn new(start_time: i64, end_time: i64, cooldown_period: i64) -> Self {
+        Self {
+            start_time,
+            end_time,
+            cooldown_period,
+            last_access: 0,
+        }
+    }
+    
+    /// Check if access is allowed at current time
+    pub fn is_access_allowed(&self) -> Result<bool, ProgramError> {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        // Check if within allowed time window
+        if current_time < self.start_time || current_time > self.end_time {
+            return Ok(false);
+        }
+        
+        // Check cooldown period
+        if self.last_access + self.cooldown_period > current_time {
+            return Ok(false);
+        }
+        
+        Ok(true)
+    }
+    
+    /// Update last access time
+    pub fn record_access(&mut self) -> ProgramResult {
+        self.last_access = Clock::get()?.unix_timestamp;
+        Ok(())
+    }
+}
+```
+
+### Attack Prevention
+
+```rust
+// ✅ DO: Comprehensive attack prevention and security guards
+use solana_program::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    msg,
+};
+use std::collections::HashMap;
+
+/// Reentrancy guard to prevent recursive calls
+#[derive(Default)]
+pub struct ReentrancyGuard {
+    locked: bool,
+}
+
+impl ReentrancyGuard {
+    pub fn enter(&mut self) -> Result<(), ProgramError> {
+        if self.locked {
+            msg!("Reentrancy detected!");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        self.locked = true;
+        Ok(())
+    }
+    
+    pub fn exit(&mut self) {
+        self.locked = false;
+    }
+}
+
+/// Circuit breaker pattern for emergency stops
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct CircuitBreaker {
+    pub is_active: bool,
+    pub failure_count: u32,
+    pub failure_threshold: u32,
+    pub last_failure: i64,
+    pub recovery_time: i64,
+}
+
+impl CircuitBreaker {
+    pub fn new(failure_threshold: u32, recovery_time: i64) -> Self {
+        Self {
+            is_active: false,
+            failure_count: 0,
+            failure_threshold,
+            last_failure: 0,
+            recovery_time,
+        }
+    }
+    
+    pub fn is_operational(&self) -> Result<bool, ProgramError> {
+        if !self.is_active {
+            return Ok(true);
+        }
+        
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        // Check if recovery time has passed
+        if current_time - self.last_failure > self.recovery_time {
+            return Ok(true);
+        }
+        
+        Ok(false)
+    }
+    
+    pub fn record_failure(&mut self) -> ProgramResult {
+        self.failure_count += 1;
+        self.last_failure = Clock::get()?.unix_timestamp;
+        
+        if self.failure_count >= self.failure_threshold {
+            self.is_active = true;
+            msg!("Circuit breaker activated due to {} failures", self.failure_count);
+        }
+        
+        Ok(())
+    }
+    
+    pub fn reset(&mut self) {
+        self.is_active = false;
+        self.failure_count = 0;
+    }
+}
+
+/// MEV protection through randomization and delays
+pub struct MEVProtection;
+
+impl MEVProtection {
+    /// Add randomized delay to prevent MEV attacks
+    pub fn validate_timestamp_freshness(
+        user_timestamp: i64,
+        max_age_seconds: i64,
+    ) -> ProgramResult {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        if current_time - user_timestamp > max_age_seconds {
+            msg!("Transaction timestamp too old");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Slippage protection for trades
+    pub fn validate_slippage(
+        expected_amount: u64,
+        actual_amount: u64,
+        max_slippage_bps: u16,
+    ) -> ProgramResult {
+        if max_slippage_bps > 10000 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        let slippage_threshold = expected_amount
+            .checked_mul(max_slippage_bps as u64)
+            .and_then(|x| x.checked_div(10000))
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        
+        let min_amount = expected_amount
+            .checked_sub(slippage_threshold)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        
+        if actual_amount < min_amount {
+            msg!(
+                "Slippage too high: expected {}, got {}, min {}",
+                expected_amount,
+                actual_amount,
+                min_amount
+            );
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Price oracle validation to prevent manipulation
+    pub fn validate_price_feed(
+        price: u64,
+        confidence: u64,
+        max_confidence_interval: u64,
+        staleness_threshold: i64,
+        last_update: i64,
+    ) -> ProgramResult {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        // Check staleness
+        if current_time - last_update > staleness_threshold {
+            msg!("Price feed is stale");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Check confidence interval
+        if confidence > max_confidence_interval {
+            msg!("Price confidence interval too wide");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Basic sanity check on price
+        if price == 0 {
+            msg!("Invalid price: zero");
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+}
+
+/// Flash loan protection
+pub struct FlashLoanProtection {
+    balance_snapshots: HashMap<Pubkey, u64>,
+}
+
+impl FlashLoanProtection {
+    pub fn new() -> Self {
+        Self {
+            balance_snapshots: HashMap::new(),
+        }
+    }
+    
+    /// Take balance snapshot at start of transaction
+    pub fn take_snapshot(&mut self, account: &Pubkey, balance: u64) {
+        self.balance_snapshots.insert(*account, balance);
+    }
+    
+    /// Validate that balances haven't been manipulated
+    pub fn validate_end_balances(
+        &self,
+        account: &Pubkey,
+        end_balance: u64,
+        allow_increase: bool,
+    ) -> ProgramResult {
+        if let Some(&start_balance) = self.balance_snapshots.get(account) {
+            if !allow_increase && end_balance > start_balance {
+                msg!("Suspicious balance increase detected");
+                return Err(ProgramError::InvalidAccountData);
+            }
+            
+            // Check for flash loan patterns (large temporary increase)
+            let balance_change = end_balance.saturating_sub(start_balance);
+            if balance_change > start_balance.saturating_mul(2) {
+                msg!("Potential flash loan detected");
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+/// Rate limiting to prevent spam attacks
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct RateLimiter {
+    pub requests: HashMap<Pubkey, Vec<i64>>,
+    pub window_size: i64,
+    pub max_requests: u32,
+}
+
+impl RateLimiter {
+    pub fn new(window_size: i64, max_requests: u32) -> Self {
+        Self {
+            requests: HashMap::new(),
+            window_size,
+            max_requests,
+        }
+    }
+    
+    pub fn is_allowed(&mut self, user: &Pubkey) -> Result<bool, ProgramError> {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        let user_requests = self.requests.entry(*user).or_insert_with(Vec::new);
+        
+        // Clean old requests outside window
+        user_requests.retain(|&timestamp| {
+            current_time - timestamp < self.window_size
+        });
+        
+        // Check if under limit
+        if user_requests.len() >= self.max_requests as usize {
+            return Ok(false);
+        }
+        
+        // Record new request
+        user_requests.push(current_time);
+        
+        Ok(true)
+    }
+}
+
+// Macro for easy reentrancy protection
+#[macro_export]
+macro_rules! with_reentrancy_guard {
+    ($guard:expr, $code:block) => {
+        {
+            $guard.enter()?;
+            let result = (|| $code)();
+            $guard.exit();
+            result
+        }
+    };
+}
+```
+
+## Best Practices Summary
+
+### Input Validation
+- Always validate data length before deserialization
+- Use checked arithmetic operations to prevent overflow
+- Implement comprehensive string and buffer validation
+- Validate enum discriminants against known values
+
+### Account Security
+- Verify account ownership and signer status
+- Validate account relationships and derivations
+- Check account mutability and rent-exemption
+- Use discriminators for account type validation
+
+### Access Control
+- Implement role-based access control patterns
+- Use multi-signature for critical operations
+- Apply time-based access controls where appropriate
+- Maintain audit trails for authorization changes
+
+### Attack Prevention
+- Use reentrancy guards for state-changing operations
+- Implement circuit breakers for emergency stops
+- Add slippage and MEV protection for trading operations
+- Validate price feeds and prevent oracle manipulation
+- Use rate limiting to prevent spam attacks
+
+## References
+- [Solana Security Best Practices](mdc:https:/docs.solana.com/developing/programming-model/overview)
+- [Common Solana Security Pitfalls](mdc:https:/blog.neodyme.io/posts/solana_common_pitfalls)
+- [Verified Builds](mdc:https:/docs.solana.com/developing/deploying#verified-builds)

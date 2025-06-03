@@ -1,0 +1,1130 @@
+---
+description: Solana Token Extensions, SPL Token 2022 program, and advanced token features
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana Token Extensions, SPL Token 2022 program, and advanced token features. You focus on producing secure, efficient token programs using the latest extension standards and privacy-preserving technologies.
+
+## Solana Token Extensions Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Base Token     │    │  Transfer Fee    │    │ Interest-Bearing│
+│  - Mint         │───▶│  - Fee Config    │───▶│  - Rate Config  │
+│  - Accounts     │    │  - Collection    │    │  - Calculations │
+│  - Supply       │    │  - Exemptions    │    │  - Distribution │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Confidential    │    │ Immutable Owner  │    │ Custom Extensions│
+│ - ZK Proofs     │    │ - Fixed Owner    │    │ - User Defined  │
+│ - Private Bal   │    │ - Permanent Del  │    │ - Composability │
+│ - Encryption    │    │ - Memo Required  │    │ - Upgradability │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+token-extensions-program/
+├── programs/
+│   └── token-extensions/
+│       ├── src/
+│       │   ├── lib.rs                      # Program entry point
+│       │   ├── instructions/
+│       │   │   ├── mod.rs                 # Instruction exports
+│       │   │   ├── initialize_mint.rs     # Extended mint creation
+│       │   │   ├── transfer_fee/
+│       │   │   │   ├── mod.rs             # Transfer fee exports
+│       │   │   │   ├── configure.rs       # Fee configuration
+│       │   │   │   ├── collect.rs         # Fee collection
+│       │   │   │   └── exempt.rs          # Fee exemptions
+│       │   │   ├── interest_bearing/
+│       │   │   │   ├── mod.rs             # Interest exports
+│       │   │   │   ├── configure.rs       # Rate configuration
+│       │   │   │   ├── update.rs          # Interest updates
+│       │   │   │   └── distribute.rs      # Interest distribution
+│       │   │   ├── confidential/
+│       │   │   │   ├── mod.rs             # Confidential exports
+│       │   │   │   ├── initialize.rs      # Setup confidential
+│       │   │   │   ├── transfer.rs        # Private transfers
+│       │   │   │   └── proof.rs           # ZK proof handling
+│       │   │   └── immutable/
+│       │   │       ├── mod.rs             # Immutable exports
+│       │   │       ├── owner.rs           # Immutable owner
+│       │   │       ├── delegate.rs        # Permanent delegate
+│       │   │       └── memo.rs            # Required memo
+│       │   ├── state/
+│       │   │   ├── mod.rs                 # State exports
+│       │   │   ├── extension_config.rs    # Extension configuration
+│       │   │   ├── fee_config.rs          # Fee state management
+│       │   │   ├── interest_config.rs     # Interest state
+│       │   │   └── confidential_state.rs  # Confidential state
+│       │   ├── utils/
+│       │   │   ├── mod.rs                 # Utility exports
+│       │   │   ├── fee_calculator.rs      # Fee calculations
+│       │   │   ├── interest_math.rs       # Interest mathematics
+│       │   │   ├── proof_verification.rs  # ZK proof utils
+│       │   │   └── extension_helpers.rs   # Extension utilities
+│       │   └── errors.rs                  # Custom errors
+│       └── Cargo.toml
+├── tests/
+│   ├── transfer_fee.rs                    # Transfer fee tests
+│   ├── interest_bearing.rs                # Interest token tests
+│   ├── confidential_transfer.rs           # Privacy tests
+│   └── extension_composability.rs         # Multi-extension tests
+└── examples/
+    ├── fee_token_example.rs               # Fee token implementation
+    ├── savings_account.rs                 # Interest-bearing example
+    └── private_payments.rs                # Confidential example
+```
+
+## Core Implementation Patterns
+
+### Transfer Fee Extension
+
+```rust
+// ✅ DO: Implement comprehensive transfer fee extension
+use {
+    anchor_lang::prelude::*,
+    spl_token_2022::{
+        extension::{
+            transfer_fee::{
+                TransferFeeConfig, 
+                TransferFeeAmount,
+                MAX_FEE_BASIS_POINTS,
+            },
+            ExtensionType,
+            StateWithExtensions,
+        },
+        state::Mint,
+    },
+    spl_associated_token_account::get_associated_token_address,
+};
+
+#[derive(Accounts)]
+pub struct InitializeTransferFee<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = 9,
+        mint::authority = authority.key(),
+        mint::freeze_authority = authority.key(),
+        extensions = [ExtensionType::TransferFeeConfig],
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        init,
+        payer = authority,
+        associated_token::mint = mint,
+        associated_token::authority = fee_vault_authority,
+    )]
+    pub fee_vault: InterfaceAccount<'info, TokenAccount>,
+    
+    /// CHECK: Fee vault authority can be any account
+    pub fee_vault_authority: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeTransferFee<'info> {
+    pub fn initialize_transfer_fee(
+        &mut self,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+        withdraw_withheld_authority: Option<Pubkey>,
+    ) -> Result<()> {
+        // Validate fee parameters
+        require!(
+            transfer_fee_basis_points <= MAX_FEE_BASIS_POINTS,
+            TokenExtensionError::InvalidTransferFee
+        );
+        require!(maximum_fee > 0, TokenExtensionError::ZeroMaximumFee);
+        
+        // Configure transfer fee extension
+        let transfer_fee_config = TransferFeeConfig {
+            transfer_fee_config_authority: Some(self.authority.key()).try_into().unwrap(),
+            withdraw_withheld_authority: withdraw_withheld_authority.try_into().unwrap(),
+            withheld_amount: 0.into(),
+            older_transfer_fee: TransferFee {
+                epoch: Clock::get()?.epoch.into(),
+                transfer_fee_basis_points: transfer_fee_basis_points.into(),
+                maximum_fee: maximum_fee.into(),
+            },
+            newer_transfer_fee: TransferFee {
+                epoch: (Clock::get()?.epoch + 1).into(),
+                transfer_fee_basis_points: transfer_fee_basis_points.into(),
+                maximum_fee: maximum_fee.into(),
+            },
+        };
+        
+        // Initialize mint with transfer fee extension
+        spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
+            &self.token_program.key(),
+            &self.mint.key(),
+            Some(&self.authority.key()),
+            withdraw_withheld_authority.as_ref(),
+            transfer_fee_basis_points,
+            maximum_fee,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement fee calculation utilities
+pub mod transfer_fee_utils {
+    use super::*;
+    
+    pub struct FeeCalculator;
+    
+    impl FeeCalculator {
+        pub fn calculate_fee(
+            transfer_amount: u64,
+            transfer_fee_basis_points: u16,
+            maximum_fee: u64,
+        ) -> Result<u64> {
+            if transfer_fee_basis_points == 0 {
+                return Ok(0);
+            }
+            
+            // Calculate proportional fee
+            let proportional_fee = transfer_amount
+                .checked_mul(transfer_fee_basis_points as u64)
+                .ok_or(TokenExtensionError::ArithmeticOverflow)?
+                .checked_div(10_000)
+                .ok_or(TokenExtensionError::ArithmeticOverflow)?;
+            
+            // Apply maximum fee cap
+            Ok(proportional_fee.min(maximum_fee))
+        }
+        
+        pub fn calculate_transfer_amount_with_fee(
+            pre_fee_amount: u64,
+            transfer_fee_basis_points: u16,
+            maximum_fee: u64,
+        ) -> Result<(u64, u64)> {
+            let fee = Self::calculate_fee(
+                pre_fee_amount,
+                transfer_fee_basis_points,
+                maximum_fee,
+            )?;
+            
+            let post_fee_amount = pre_fee_amount
+                .checked_sub(fee)
+                .ok_or(TokenExtensionError::InsufficientFunds)?;
+            
+            Ok((post_fee_amount, fee))
+        }
+        
+        pub fn is_fee_exempt(authority: &Pubkey, exempt_list: &[Pubkey]) -> bool {
+            exempt_list.contains(authority)
+        }
+    }
+}
+
+#[derive(Accounts)]
+pub struct CollectTransferFees<'info> {
+    #[account(mut)]
+    pub withdraw_authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = withdraw_authority,
+    )]
+    pub destination: InterfaceAccount<'info, TokenAccount>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+impl<'info> CollectTransferFees<'info> {
+    pub fn collect_fees(&mut self) -> Result<()> {
+        // Verify authority
+        let mint_data = self.mint.to_account_info().data.borrow();
+        let mint_with_extension = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+        let transfer_fee_config = mint_with_extension.get_extension::<TransferFeeConfig>()?;
+        
+        require!(
+            transfer_fee_config.withdraw_withheld_authority == Some(self.withdraw_authority.key()).try_into().unwrap(),
+            TokenExtensionError::InvalidWithdrawAuthority
+        );
+        
+        // Get withheld amount
+        let withheld_amount = u64::from(transfer_fee_config.withheld_amount);
+        require!(withheld_amount > 0, TokenExtensionError::NoFeesToWithdraw);
+        
+        // Transfer withheld fees to destination
+        spl_token_2022::extension::transfer_fee::instruction::withdraw_withheld_tokens_from_mint(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.destination.key(),
+            &self.withdraw_authority.key(),
+            &[&self.withdraw_authority.key()],
+        )?;
+        
+        Ok(())
+    }
+}
+```
+
+### Interest-Bearing Token Extension
+
+```rust
+// ✅ DO: Implement interest-bearing token functionality
+use spl_token_2022::extension::interest_bearing_mint::{InterestBearingConfig, BasisPoints};
+
+#[derive(Accounts)]
+pub struct InitializeInterestBearing<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = 9,
+        mint::authority = authority.key(),
+        extensions = [ExtensionType::InterestBearingConfig],
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeInterestBearing<'info> {
+    pub fn initialize_interest_bearing(
+        &mut self,
+        rate_authority: Option<Pubkey>,
+        initial_rate: i16, // Basis points per year
+    ) -> Result<()> {
+        // Validate interest rate
+        require!(
+            initial_rate >= -10000 && initial_rate <= 10000,
+            TokenExtensionError::InvalidInterestRate
+        );
+        
+        // Initialize interest-bearing extension
+        spl_token_2022::extension::interest_bearing_mint::instruction::initialize(
+            &self.token_program.key(),
+            &self.mint.key(),
+            rate_authority.as_ref(),
+            initial_rate,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement interest calculation utilities
+pub mod interest_utils {
+    use super::*;
+    
+    pub struct InterestCalculator;
+    
+    impl InterestCalculator {
+        // Calculate compound interest using the formula: A = P(1 + r/n)^(nt)
+        pub fn calculate_compound_interest(
+            principal: u64,
+            annual_rate_basis_points: i16,
+            time_elapsed_seconds: i64,
+            compounding_frequency: u32, // Times per year
+        ) -> Result<u64> {
+            if annual_rate_basis_points == 0 || time_elapsed_seconds <= 0 {
+                return Ok(principal);
+            }
+            
+            // Convert basis points to decimal (divide by 10,000)
+            let annual_rate = annual_rate_basis_points as f64 / 10_000.0;
+            
+            // Convert seconds to years
+            let time_in_years = time_elapsed_seconds as f64 / (365.25 * 24.0 * 3600.0);
+            
+            // Calculate compound interest
+            let rate_per_period = annual_rate / compounding_frequency as f64;
+            let periods = compounding_frequency as f64 * time_in_years;
+            
+            let compound_factor = (1.0 + rate_per_period).powf(periods);
+            let final_amount = principal as f64 * compound_factor;
+            
+            // Ensure result doesn't overflow u64
+            if final_amount > u64::MAX as f64 {
+                return Err(TokenExtensionError::InterestOverflow.into());
+            }
+            
+            Ok(final_amount as u64)
+        }
+        
+        pub fn calculate_simple_interest(
+            principal: u64,
+            annual_rate_basis_points: i16,
+            time_elapsed_seconds: i64,
+        ) -> Result<u64> {
+            if annual_rate_basis_points == 0 || time_elapsed_seconds <= 0 {
+                return Ok(0);
+            }
+            
+            let annual_rate = annual_rate_basis_points as f64 / 10_000.0;
+            let time_in_years = time_elapsed_seconds as f64 / (365.25 * 24.0 * 3600.0);
+            
+            let interest = principal as f64 * annual_rate * time_in_years;
+            
+            if interest > u64::MAX as f64 {
+                return Err(TokenExtensionError::InterestOverflow.into());
+            }
+            
+            Ok(interest as u64)
+        }
+        
+        pub fn get_current_interest_rate(mint_account: &AccountInfo) -> Result<i16> {
+            let mint_data = mint_account.data.borrow();
+            let mint_with_extension = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+            let interest_config = mint_with_extension.get_extension::<InterestBearingConfig>()?;
+            
+            Ok(i16::from(interest_config.current_rate))
+        }
+    }
+}
+
+#[derive(Accounts)]
+pub struct UpdateInterestRate<'info> {
+    #[account(mut)]
+    pub rate_authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+impl<'info> UpdateInterestRate<'info> {
+    pub fn update_rate(&mut self, new_rate: i16) -> Result<()> {
+        // Validate authority
+        let mint_data = self.mint.to_account_info().data.borrow();
+        let mint_with_extension = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+        let interest_config = mint_with_extension.get_extension::<InterestBearingConfig>()?;
+        
+        require!(
+            interest_config.rate_authority == Some(self.rate_authority.key()).try_into().unwrap(),
+            TokenExtensionError::InvalidRateAuthority
+        );
+        
+        // Validate new rate
+        require!(
+            new_rate >= -10000 && new_rate <= 10000,
+            TokenExtensionError::InvalidInterestRate
+        );
+        
+        // Update interest rate
+        spl_token_2022::extension::interest_bearing_mint::instruction::update_rate(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.rate_authority.key(),
+            &[&self.rate_authority.key()],
+            new_rate,
+        )?;
+        
+        Ok(())
+    }
+}
+```
+
+### Confidential Transfer Extension
+
+```rust
+// ✅ DO: Implement confidential transfer capabilities
+use {
+    spl_token_2022::extension::confidential_transfer::{
+        ConfidentialTransferMint,
+        ConfidentialTransferAccount,
+        instruction as confidential_instruction,
+    },
+    solana_zk_token_sdk::{
+        encryption::{auth_encryption::AeCiphertext, elgamal::ElGamalCiphertext},
+        zk_token_proofs::{
+            transfer::TransferProofData,
+            withdraw::WithdrawProofData,
+            deposit::DepositProofData,
+        },
+    },
+};
+
+#[derive(Accounts)]
+pub struct InitializeConfidentialTransfer<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = 9,
+        mint::authority = authority.key(),
+        extensions = [ExtensionType::ConfidentialTransferMint],
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeConfidentialTransfer<'info> {
+    pub fn initialize_confidential_transfer(
+        &mut self,
+        auditor_elgamal_pubkey: Option<[u8; 32]>,
+        auto_approve_new_accounts: bool,
+        auditor_encryption_pubkey: Option<[u8; 32]>,
+    ) -> Result<()> {
+        // Initialize confidential transfer extension
+        confidential_instruction::initialize_mint(
+            &self.token_program.key(),
+            &self.mint.key(),
+            Some(&self.authority.key()),
+            auto_approve_new_accounts,
+            auditor_elgamal_pubkey.as_ref(),
+            auditor_encryption_pubkey.as_ref(),
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement confidential account setup
+#[derive(Accounts)]
+pub struct ConfigureConfidentialAccount<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    
+    #[account(mut)]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+impl<'info> ConfigureConfidentialAccount<'info> {
+    pub fn configure_account(
+        &mut self,
+        elgamal_pubkey: [u8; 32],
+        aes_pubkey: [u8; 32],
+        maximum_pending_balance_credit_counter: u8,
+        proof_instruction_offset: i8,
+    ) -> Result<()> {
+        // Verify account ownership
+        require!(
+            self.token_account.owner == self.owner.key(),
+            TokenExtensionError::InvalidAccountOwner
+        );
+        
+        // Configure confidential transfers for the account
+        confidential_instruction::configure_account(
+            &self.token_program.key(),
+            &self.token_account.key(),
+            &self.mint.key(),
+            &elgamal_pubkey,
+            &aes_pubkey,
+            &self.owner.key(),
+            &[&self.owner.key()],
+            proof_instruction_offset,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement confidential transfer with zero-knowledge proofs
+#[derive(Accounts)]
+pub struct ConfidentialTransfer<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub source_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub destination_account: InterfaceAccount<'info, TokenAccount>,
+    
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+    
+    /// CHECK: Instructions sysvar for proof verification
+    pub instructions: UncheckedAccount<'info>,
+}
+
+impl<'info> ConfidentialTransfer<'info> {
+    pub fn confidential_transfer(
+        &mut self,
+        new_source_ciphertext: ElGamalCiphertext,
+        new_destination_ciphertext: ElGamalCiphertext,
+        proof_instruction_offset: i8,
+    ) -> Result<()> {
+        // Verify source account authority
+        require!(
+            self.source_account.owner == self.authority.key(),
+            TokenExtensionError::InvalidAccountOwner
+        );
+        
+        // Execute confidential transfer
+        confidential_instruction::transfer(
+            &self.token_program.key(),
+            &self.source_account.key(),
+            &self.mint.key(),
+            &self.destination_account.key(),
+            &new_source_ciphertext,
+            &new_destination_ciphertext,
+            &self.authority.key(),
+            &[&self.authority.key()],
+            proof_instruction_offset,
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement proof verification utilities
+pub mod confidential_utils {
+    use super::*;
+    
+    pub struct ProofValidator;
+    
+    impl ProofValidator {
+        pub fn verify_transfer_proof(
+            proof_data: &TransferProofData,
+            source_ciphertext: &ElGamalCiphertext,
+            destination_ciphertext: &ElGamalCiphertext,
+        ) -> Result<bool> {
+            // Implement zero-knowledge proof verification
+            // This would typically involve cryptographic verification
+            // of the transfer proof against the provided ciphertexts
+            
+            // Placeholder implementation - in practice, use proper ZK verification
+            let is_valid = proof_data.verify(source_ciphertext, destination_ciphertext);
+            
+            if !is_valid {
+                return Err(TokenExtensionError::InvalidTransferProof.into());
+            }
+            
+            Ok(true)
+        }
+        
+        pub fn verify_balance_proof(
+            encrypted_balance: &ElGamalCiphertext,
+            proof_data: &[u8],
+        ) -> Result<bool> {
+            // Verify that the encrypted balance is valid
+            // This ensures the balance hasn't been tampered with
+            
+            // Placeholder - implement proper balance proof verification
+            if proof_data.is_empty() {
+                return Err(TokenExtensionError::InvalidBalanceProof.into());
+            }
+            
+            Ok(true)
+        }
+        
+        pub fn encrypt_amount(
+            amount: u64,
+            elgamal_pubkey: &[u8; 32],
+            aes_pubkey: &[u8; 32],
+        ) -> Result<(ElGamalCiphertext, AeCiphertext)> {
+            // Encrypt the transfer amount using the provided public keys
+            // This creates the ciphertexts needed for confidential transfers
+            
+            // Placeholder implementation
+            // In practice, use proper encryption libraries
+            let elgamal_ciphertext = ElGamalCiphertext::default();
+            let ae_ciphertext = AeCiphertext::default();
+            
+            Ok((elgamal_ciphertext, ae_ciphertext))
+        }
+    }
+}
+```
+
+## Advanced Patterns
+
+### Immutable Owner Extension
+
+```rust
+// ✅ DO: Implement immutable owner patterns
+use spl_token_2022::extension::immutable_owner::ImmutableOwner;
+
+#[derive(Accounts)]
+pub struct InitializeImmutableOwner<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = owner,
+        associated_token::mint = mint,
+        associated_token::authority = owner,
+        extensions = [ExtensionType::ImmutableOwner],
+    )]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeImmutableOwner<'info> {
+    pub fn initialize_immutable_owner(&mut self) -> Result<()> {
+        // Initialize immutable owner extension
+        // Once set, the owner of this token account cannot be changed
+        spl_token_2022::extension::immutable_owner::instruction::initialize(
+            &self.token_program.key(),
+            &self.token_account.key(),
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement permanent delegate patterns
+#[derive(Accounts)]
+pub struct SetPermanentDelegate<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    /// CHECK: Can be any account that will become permanent delegate
+    pub delegate: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+impl<'info> SetPermanentDelegate<'info> {
+    pub fn set_permanent_delegate(&mut self) -> Result<()> {
+        // Set a permanent delegate that cannot be revoked
+        spl_token_2022::extension::permanent_delegate::instruction::initialize(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.delegate.key(),
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement required memo extension
+#[derive(Accounts)]
+pub struct InitializeRequiredMemo<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = owner,
+        associated_token::mint = mint,
+        associated_token::authority = owner,
+        extensions = [ExtensionType::MemoTransfer],
+    )]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeRequiredMemo<'info> {
+    pub fn initialize_required_memo(&mut self, require_incoming_memo: bool) -> Result<()> {
+        // Initialize memo transfer extension
+        // This requires memos for all incoming transfers
+        if require_incoming_memo {
+            spl_token_2022::extension::memo_transfer::instruction::enable_required_transfer_memos(
+                &self.token_program.key(),
+                &self.token_account.key(),
+                &self.owner.key(),
+                &[&self.owner.key()],
+            )?;
+        }
+        
+        Ok(())
+    }
+}
+```
+
+### Multi-Extension Composability
+
+```rust
+// ✅ DO: Implement multiple extensions on a single token
+#[derive(Accounts)]
+pub struct InitializeMultiExtensionToken<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = 9,
+        mint::authority = authority.key(),
+        mint::freeze_authority = authority.key(),
+        extensions = [
+            ExtensionType::TransferFeeConfig,
+            ExtensionType::InterestBearingConfig,
+            ExtensionType::MintCloseAuthority,
+            ExtensionType::PermanentDelegate,
+        ],
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    /// CHECK: Permanent delegate authority
+    pub permanent_delegate: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> InitializeMultiExtensionToken<'info> {
+    pub fn initialize_multi_extension(
+        &mut self,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+        initial_interest_rate: i16,
+    ) -> Result<()> {
+        // Initialize transfer fee extension
+        spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
+            &self.token_program.key(),
+            &self.mint.key(),
+            Some(&self.authority.key()),
+            Some(&self.authority.key()),
+            transfer_fee_basis_points,
+            maximum_fee,
+        )?;
+        
+        // Initialize interest-bearing extension
+        spl_token_2022::extension::interest_bearing_mint::instruction::initialize(
+            &self.token_program.key(),
+            &self.mint.key(),
+            Some(&self.authority.key()),
+            initial_interest_rate,
+        )?;
+        
+        // Initialize mint close authority
+        spl_token_2022::extension::mint_close_authority::instruction::initialize(
+            &self.token_program.key(),
+            &self.mint.key(),
+            Some(&self.authority.key()),
+        )?;
+        
+        // Initialize permanent delegate
+        spl_token_2022::extension::permanent_delegate::instruction::initialize(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.permanent_delegate.key(),
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement extension state management
+pub mod extension_manager {
+    use super::*;
+    
+    pub struct ExtensionManager;
+    
+    impl ExtensionManager {
+        pub fn get_enabled_extensions(mint_account: &AccountInfo) -> Result<Vec<ExtensionType>> {
+            let mint_data = mint_account.data.borrow();
+            let mint_with_extension = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+            
+            let mut enabled_extensions = Vec::new();
+            
+            // Check for each possible extension
+            if mint_with_extension.get_extension::<TransferFeeConfig>().is_ok() {
+                enabled_extensions.push(ExtensionType::TransferFeeConfig);
+            }
+            
+            if mint_with_extension.get_extension::<InterestBearingConfig>().is_ok() {
+                enabled_extensions.push(ExtensionType::InterestBearingConfig);
+            }
+            
+            if mint_with_extension.get_extension::<ConfidentialTransferMint>().is_ok() {
+                enabled_extensions.push(ExtensionType::ConfidentialTransferMint);
+            }
+            
+            // Add other extension checks as needed
+            
+            Ok(enabled_extensions)
+        }
+        
+        pub fn validate_extension_compatibility(
+            extensions: &[ExtensionType],
+        ) -> Result<()> {
+            // Check for incompatible extension combinations
+            let has_confidential = extensions.contains(&ExtensionType::ConfidentialTransferMint);
+            let has_transfer_fee = extensions.contains(&ExtensionType::TransferFeeConfig);
+            
+            if has_confidential && has_transfer_fee {
+                // Note: This is an example - actual compatibility may vary
+                msg!("Warning: Confidential transfers with transfer fees may have limitations");
+            }
+            
+            // Validate extension count doesn't exceed limits
+            require!(
+                extensions.len() <= 10, // Example limit
+                TokenExtensionError::TooManyExtensions
+            );
+            
+            Ok(())
+        }
+        
+        pub fn calculate_mint_size(extensions: &[ExtensionType]) -> Result<usize> {
+            let mut size = std::mem::size_of::<Mint>();
+            
+            for extension_type in extensions {
+                let extension_size = match extension_type {
+                    ExtensionType::TransferFeeConfig => std::mem::size_of::<TransferFeeConfig>(),
+                    ExtensionType::InterestBearingConfig => std::mem::size_of::<InterestBearingConfig>(),
+                    ExtensionType::ConfidentialTransferMint => std::mem::size_of::<ConfidentialTransferMint>(),
+                    ExtensionType::ImmutableOwner => std::mem::size_of::<ImmutableOwner>(),
+                    _ => 0, // Default for unknown extensions
+                };
+                
+                size = size
+                    .checked_add(extension_size)
+                    .ok_or(TokenExtensionError::SizeCalculationOverflow)?;
+            }
+            
+            Ok(size)
+        }
+    }
+}
+```
+
+## Security Patterns
+
+### Extension Authority Management
+
+```rust
+// ✅ DO: Implement secure authority management for extensions
+#[derive(Accounts)]
+pub struct UpdateExtensionAuthority<'info> {
+    #[account(mut)]
+    pub current_authority: Signer<'info>,
+    
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    /// CHECK: New authority can be any account
+    pub new_authority: UncheckedAccount<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+impl<'info> UpdateExtensionAuthority<'info> {
+    pub fn update_transfer_fee_authority(&mut self) -> Result<()> {
+        // Verify current authority
+        let mint_data = self.mint.to_account_info().data.borrow();
+        let mint_with_extension = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+        let transfer_fee_config = mint_with_extension.get_extension::<TransferFeeConfig>()?;
+        
+        require!(
+            transfer_fee_config.transfer_fee_config_authority == 
+            Some(self.current_authority.key()).try_into().unwrap(),
+            TokenExtensionError::InvalidAuthority
+        );
+        
+        // Update authority
+        spl_token_2022::extension::transfer_fee::instruction::set_transfer_fee_config_authority(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.current_authority.key(),
+            &[&self.current_authority.key()],
+            Some(&self.new_authority.key()),
+        )?;
+        
+        Ok(())
+    }
+    
+    pub fn update_interest_rate_authority(&mut self) -> Result<()> {
+        // Similar pattern for interest rate authority
+        spl_token_2022::extension::interest_bearing_mint::instruction::set_rate_authority(
+            &self.token_program.key(),
+            &self.mint.key(),
+            &self.current_authority.key(),
+            &[&self.current_authority.key()],
+            Some(&self.new_authority.key()),
+        )?;
+        
+        Ok(())
+    }
+}
+
+// ✅ DO: Implement extension validation
+pub mod extension_security {
+    use super::*;
+    
+    pub struct ExtensionValidator;
+    
+    impl ExtensionValidator {
+        pub fn validate_transfer_fee_config(
+            transfer_fee_basis_points: u16,
+            maximum_fee: u64,
+        ) -> Result<()> {
+            require!(
+                transfer_fee_basis_points <= MAX_FEE_BASIS_POINTS,
+                TokenExtensionError::InvalidTransferFee
+            );
+            
+            require!(
+                maximum_fee > 0 && maximum_fee <= u64::MAX / 2,
+                TokenExtensionError::InvalidMaximumFee
+            );
+            
+            Ok(())
+        }
+        
+        pub fn validate_interest_rate(rate: i16) -> Result<()> {
+            // Allow both positive and negative rates
+            // Negative rates can be used for demurrage tokens
+            require!(
+                rate >= -10000 && rate <= 10000, // -100% to +100%
+                TokenExtensionError::InvalidInterestRate
+            );
+            
+            Ok(())
+        }
+        
+        pub fn validate_confidential_setup(
+            elgamal_pubkey: &[u8; 32],
+            aes_pubkey: &[u8; 32],
+        ) -> Result<()> {
+            // Validate public keys are not zero
+            require!(
+                *elgamal_pubkey != [0u8; 32],
+                TokenExtensionError::InvalidElGamalPubkey
+            );
+            
+            require!(
+                *aes_pubkey != [0u8; 32],
+                TokenExtensionError::InvalidAesPubkey
+            );
+            
+            Ok(())
+        }
+    }
+}
+```
+
+## Error Handling
+
+```rust
+// ✅ DO: Define comprehensive extension-specific errors
+#[error_code]
+pub enum TokenExtensionError {
+    #[msg("Transfer fee basis points exceed maximum allowed")]
+    InvalidTransferFee,
+    
+    #[msg("Maximum fee cannot be zero")]
+    ZeroMaximumFee,
+    
+    #[msg("Invalid withdraw authority for transfer fees")]
+    InvalidWithdrawAuthority,
+    
+    #[msg("No fees available to withdraw")]
+    NoFeesToWithdraw,
+    
+    #[msg("Interest rate must be between -100% and 100%")]
+    InvalidInterestRate,
+    
+    #[msg("Invalid rate authority for interest-bearing mint")]
+    InvalidRateAuthority,
+    
+    #[msg("Interest calculation resulted in overflow")]
+    InterestOverflow,
+    
+    #[msg("Invalid transfer proof for confidential transfer")]
+    InvalidTransferProof,
+    
+    #[msg("Invalid balance proof")]
+    InvalidBalanceProof,
+    
+    #[msg("Invalid ElGamal public key")]
+    InvalidElGamalPubkey,
+    
+    #[msg("Invalid AES public key")]
+    InvalidAesPubkey,
+    
+    #[msg("Account owner does not match expected")]
+    InvalidAccountOwner,
+    
+    #[msg("Authority is not valid for this operation")]
+    InvalidAuthority,
+    
+    #[msg("Too many extensions enabled on mint")]
+    TooManyExtensions,
+    
+    #[msg("Arithmetic overflow in calculations")]
+    ArithmeticOverflow,
+    
+    #[msg("Insufficient funds for operation")]
+    InsufficientFunds,
+    
+    #[msg("Invalid maximum fee amount")]
+    InvalidMaximumFee,
+    
+    #[msg("Extension size calculation overflow")]
+    SizeCalculationOverflow,
+    
+    #[msg("Extension configuration is immutable")]
+    ImmutableExtension,
+    
+    #[msg("Extension not enabled on this mint")]
+    ExtensionNotEnabled,
+    
+    #[msg("Extension combination not supported")]
+    UnsupportedExtensionCombination,
+}
+```
+
+## Best Practices Summary
+
+### Extension Development
+- Always validate extension parameters before initialization
+- Use proper authority management for mutable extensions
+- Implement comprehensive error handling for edge cases
+- Test extension combinations for compatibility
+
+### Security
+- Validate all cryptographic inputs for confidential transfers
+- Implement proper access controls for authority operations
+- Use secure randomness for privacy-preserving features
+- Audit extension interactions carefully
+
+### Performance
+- Calculate extension sizes accurately for rent-exemption
+- Optimize fee calculations to prevent overflow
+- Use efficient data structures for extension state
+- Minimize compute units in extension operations
+
+### Composability
+- Design extensions to work together when possible
+- Document extension compatibility requirements
+- Provide utilities for multi-extension management
+- Enable graceful degradation when extensions conflict
+
+## References
+- [SPL Token 2022 Program Documentation](mdc:https:/spl.solana.com/token-2022)
+- [Token Extensions Guide](mdc:https:/spl.solana.com/token-2022/extensions)
+- [Confidential Transfers Documentation](mdc:https:/docs.solana.com/developing/programming-model/calling-between-programs)
+- [Zero-Knowledge Proofs on Solana](mdc:https:/docs.solana.com/developing/programming-model/overview)

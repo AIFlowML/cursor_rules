@@ -1,0 +1,1175 @@
+---
+description: Solana Rust development advanced account management
+globs: 
+alwaysApply: false
+---
+> You are an expert in Solana Rust development, advanced account management, and PDA patterns. You focus on efficient, secure account handling with proper rent management and data lifecycle patterns.
+
+## Account Management Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Account Create │    │   PDA Strategy   │    │   Validation    │
+│   System CPI    │───▶│   Multi-seed     │───▶│   Constraints   │
+│                 │    │                  │    │                 │
+│ - Space calc    │    │ - Hierarchical   │    │ - Owner check   │
+│ - Rent exempt   │    │ - Collision free │    │ - Data verify   │
+│ - Init pattern  │    │ - Bump cache     │    │ - State valid   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Lifecycle     │    │   Reallocation   │    │   Close & Rent  │
+│   Management    │    │   Migration      │    │   Reclamation   │
+│   State track   │    │   Data upgrade   │    │   Safe close    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+account-management/
+├── src/
+│   ├── accounts/
+│   │   ├── mod.rs              # Account type exports
+│   │   ├── user_account.rs     # User account structure
+│   │   ├── config_account.rs   # Global config account
+│   │   └── vault_account.rs    # Vault account patterns
+│   ├── pda/
+│   │   ├── mod.rs              # PDA utilities
+│   │   ├── seeds.rs            # Seed constants and patterns
+│   │   ├── derivation.rs       # Derivation strategies
+│   │   └── hierarchical.rs     # Hierarchical PDA patterns
+│   ├── lifecycle/
+│   │   ├── creation.rs         # Account creation patterns
+│   │   ├── initialization.rs   # Data initialization
+│   │   ├── migration.rs        # Data migration utilities
+│   │   └── closure.rs          # Account closing patterns
+│   └── validation/
+│       ├── constraints.rs      # Account constraints
+│       ├── ownership.rs        # Ownership validation
+│       └── state.rs           # State validation
+```
+
+## Core Implementation Patterns
+
+### Account Creation & Initialization
+
+```rust
+// ✅ DO: Comprehensive account creation with proper space calculation
+use solana_program::{
+    account_info::{next_account_info, AccountInfo},
+    entrypoint::ProgramResult,
+    program::{invoke, invoke_signed},
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    rent::Rent,
+    system_instruction,
+    sysvar::Sysvar,
+};
+use borsh::{BorshDeserialize, BorshSerialize};
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct AccountCreationParams {
+    pub account_type: AccountType,
+    pub initial_data: Vec<u8>,
+    pub authority: Pubkey,
+    pub metadata: AccountMetadata,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub enum AccountType {
+    User { user_id: u64 },
+    Vault { vault_id: u64 },
+    Config,
+    Registry { registry_id: String },
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct AccountMetadata {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub created_at: i64,
+}
+
+pub struct AccountCreator;
+
+impl AccountCreator {
+    /// Calculate exact space needed for account data
+    pub fn calculate_space(account_type: &AccountType, metadata: &AccountMetadata) -> usize {
+        let base_size = match account_type {
+            AccountType::User { .. } => UserAccount::BASE_SIZE,
+            AccountType::Vault { .. } => VaultAccount::BASE_SIZE,
+            AccountType::Config => ConfigAccount::BASE_SIZE,
+            AccountType::Registry { registry_id } => {
+                RegistryAccount::BASE_SIZE + registry_id.len()
+            }
+        };
+        
+        // Add metadata size
+        let metadata_size = 4 + metadata.name.len()
+            + 4 + metadata.description.len()
+            + 4 + metadata.tags.iter().map(|t| 4 + t.len()).sum::<usize>()
+            + 8; // created_at
+            
+        // Add padding for alignment and future upgrades
+        let padding = 128;
+        
+        base_size + metadata_size + padding
+    }
+    
+    /// Create account with proper rent exemption
+    pub fn create_account(
+        funding_account: &AccountInfo,
+        new_account: &AccountInfo,
+        system_program: &AccountInfo,
+        program_id: &Pubkey,
+        params: &AccountCreationParams,
+        signer_seeds: Option<&[&[&[u8]]]>,
+    ) -> ProgramResult {
+        // Calculate required space
+        let space = Self::calculate_space(&params.account_type, &params.metadata);
+        
+        // Get rent exemption amount
+        let rent = Rent::get()?;
+        let required_lamports = rent.minimum_balance(space);
+        
+        // Ensure funding account has sufficient balance
+        if funding_account.lamports() < required_lamports {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        
+        // Create account via System Program
+        let create_instruction = system_instruction::create_account(
+            funding_account.key,
+            new_account.key,
+            required_lamports,
+            space as u64,
+            program_id,
+        );
+        
+        let account_infos = &[
+            funding_account.clone(),
+            new_account.clone(),
+            system_program.clone(),
+        ];
+        
+        match signer_seeds {
+            Some(seeds) => invoke_signed(&create_instruction, account_infos, seeds)?,
+            None => invoke(&create_instruction, account_infos)?,
+        }
+        
+        Ok(())
+    }
+    
+    /// Initialize account data after creation
+    pub fn initialize_account_data(
+        account: &AccountInfo,
+        params: &AccountCreationParams,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Verify account ownership
+        if account.owner != program_id {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // Create account data based on type
+        let account_data = match &params.account_type {
+            AccountType::User { user_id } => {
+                let user_account = UserAccount::new(
+                    *user_id,
+                    params.authority,
+                    params.metadata.clone(),
+                )?;
+                user_account.try_to_vec()?
+            }
+            AccountType::Vault { vault_id } => {
+                let vault_account = VaultAccount::new(
+                    *vault_id,
+                    params.authority,
+                    params.metadata.clone(),
+                )?;
+                vault_account.try_to_vec()?
+            }
+            AccountType::Config => {
+                let config_account = ConfigAccount::new(
+                    params.authority,
+                    params.metadata.clone(),
+                )?;
+                config_account.try_to_vec()?
+            }
+            AccountType::Registry { registry_id } => {
+                let registry_account = RegistryAccount::new(
+                    registry_id.clone(),
+                    params.authority,
+                    params.metadata.clone(),
+                )?;
+                registry_account.try_to_vec()?
+            }
+        };
+        
+        // Write data to account
+        if account_data.len() > account.data_len() {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        
+        account.data.borrow_mut()[..account_data.len()].copy_from_slice(&account_data);
+        
+        Ok(())
+    }
+    
+    /// Create and initialize account in one transaction
+    pub fn create_and_initialize(
+        funding_account: &AccountInfo,
+        new_account: &AccountInfo,
+        system_program: &AccountInfo,
+        program_id: &Pubkey,
+        params: &AccountCreationParams,
+        signer_seeds: Option<&[&[&[u8]]]>,
+    ) -> ProgramResult {
+        // Create account
+        Self::create_account(
+            funding_account,
+            new_account,
+            system_program,
+            program_id,
+            params,
+            signer_seeds,
+        )?;
+        
+        // Initialize data
+        Self::initialize_account_data(new_account, params, program_id)?;
+        
+        Ok(())
+    }
+}
+
+// ❌ DON'T: Manual space calculation without proper sizing
+pub fn bad_create_account(
+    funding_account: &AccountInfo,
+    new_account: &AccountInfo,
+    system_program: &AccountInfo,
+    program_id: &Pubkey,
+) -> ProgramResult {
+    let space = 100; // Hardcoded, insufficient
+    let lamports = 1000000; // Hardcoded rent
+    
+    let create_instruction = system_instruction::create_account(
+        funding_account.key,
+        new_account.key,
+        lamports,
+        space,
+        program_id,
+    );
+    
+    invoke(&create_instruction, &[
+        funding_account.clone(),
+        new_account.clone(),
+        system_program.clone(),
+    ])
+}
+```
+
+### Advanced PDA Patterns & Strategies
+
+```rust
+// ✅ DO: Hierarchical and collision-resistant PDA patterns
+use solana_program::{
+    pubkey::Pubkey,
+    program_error::ProgramError,
+    hash::{hash, Hash},
+};
+use std::collections::HashMap;
+
+pub struct AdvancedPdaManager {
+    /// Cache for frequently used PDAs
+    cache: HashMap<String, (Pubkey, u8)>,
+}
+
+impl AdvancedPdaManager {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+    
+    /// Hierarchical PDA derivation for complex structures
+    pub fn derive_hierarchical_pda(
+        &mut self,
+        root_seeds: &[&[u8]],
+        path_segments: &[&[u8]],
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        // Create cache key
+        let cache_key = format!("{:?}:{:?}", root_seeds, path_segments);
+        
+        // Check cache first
+        if let Some(&(pubkey, bump)) = self.cache.get(&cache_key) {
+            return Ok((pubkey, bump));
+        }
+        
+        // Build complete seed path
+        let mut all_seeds = root_seeds.to_vec();
+        all_seeds.extend_from_slice(path_segments);
+        
+        // Derive PDA
+        let (pubkey, bump) = Pubkey::find_program_address(&all_seeds, program_id);
+        
+        // Cache result
+        self.cache.insert(cache_key, (pubkey, bump));
+        
+        Ok((pubkey, bump))
+    }
+    
+    /// Multi-dimensional PDA for complex relationships
+    pub fn derive_multi_dimensional_pda(
+        authority: &Pubkey,
+        category: &str,
+        subcategory: &str,
+        identifier: u64,
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let seeds = &[
+            b"multi_dim",
+            authority.as_ref(),
+            category.as_bytes(),
+            subcategory.as_bytes(),
+            &identifier.to_le_bytes(),
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Time-based PDA for temporal data
+    pub fn derive_temporal_pda(
+        authority: &Pubkey,
+        timestamp: i64,
+        granularity: TemporalGranularity,
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let normalized_time = granularity.normalize_timestamp(timestamp);
+        
+        let seeds = &[
+            b"temporal",
+            authority.as_ref(),
+            &granularity.to_bytes(),
+            &normalized_time.to_le_bytes(),
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Collision-resistant PDA using hash
+    pub fn derive_collision_resistant_pda(
+        base_data: &[u8],
+        salt: &[u8],
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        // Create hash of input data to ensure uniqueness
+        let hash_input = [base_data, salt].concat();
+        let data_hash = hash(&hash_input);
+        
+        let seeds = &[
+            b"collision_resistant",
+            data_hash.as_ref(),
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Associated PDA pattern for linked accounts
+    pub fn derive_associated_pda(
+        owner: &Pubkey,
+        associated_type: AssociatedType,
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let type_bytes = associated_type.to_bytes();
+        
+        let seeds = &[
+            b"associated",
+            owner.as_ref(),
+            &type_bytes,
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Verify PDA with complex seed structure
+    pub fn verify_complex_pda(
+        pda: &Pubkey,
+        seeds: &[&[u8]],
+        bump: u8,
+        program_id: &Pubkey,
+    ) -> Result<(), ProgramError> {
+        let mut seeds_with_bump = seeds.to_vec();
+        seeds_with_bump.push(&[bump]);
+        
+        let derived = Pubkey::create_program_address(&seeds_with_bump, program_id)
+            .map_err(|_| ProgramError::InvalidSeeds)?;
+            
+        if derived != *pda {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TemporalGranularity {
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl TemporalGranularity {
+    pub fn normalize_timestamp(&self, timestamp: i64) -> i64 {
+        match self {
+            Self::Hour => timestamp / 3600,
+            Self::Day => timestamp / (24 * 3600),
+            Self::Week => timestamp / (7 * 24 * 3600),
+            Self::Month => timestamp / (30 * 24 * 3600),
+        }
+    }
+    
+    pub fn to_bytes(&self) -> [u8; 1] {
+        match self {
+            Self::Hour => [1],
+            Self::Day => [2],
+            Self::Week => [3],
+            Self::Month => [4],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AssociatedType {
+    Profile,
+    Settings,
+    Metadata,
+    Vault,
+}
+
+impl AssociatedType {
+    pub fn to_bytes(&self) -> [u8; 1] {
+        match self {
+            Self::Profile => [1],
+            Self::Settings => [2],
+            Self::Metadata => [3],
+            Self::Vault => [4],
+        }
+    }
+}
+```
+
+### Account Validation & Constraints Framework
+
+```rust
+// ✅ DO: Comprehensive validation with constraint checking
+use solana_program::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    clock::Clock,
+    sysvar::Sysvar,
+};
+
+pub struct AccountConstraints {
+    pub require_signer: bool,
+    pub require_writable: bool,
+    pub expected_owner: Option<Pubkey>,
+    pub expected_data_len: Option<usize>,
+    pub min_lamports: Option<u64>,
+    pub max_lamports: Option<u64>,
+    pub require_initialized: bool,
+    pub custom_validators: Vec<Box<dyn Fn(&AccountInfo) -> ProgramResult>>,
+}
+
+impl AccountConstraints {
+    pub fn new() -> Self {
+        Self {
+            require_signer: false,
+            require_writable: false,
+            expected_owner: None,
+            expected_data_len: None,
+            min_lamports: None,
+            max_lamports: None,
+            require_initialized: false,
+            custom_validators: Vec::new(),
+        }
+    }
+    
+    pub fn signer(mut self) -> Self {
+        self.require_signer = true;
+        self
+    }
+    
+    pub fn writable(mut self) -> Self {
+        self.require_writable = true;
+        self
+    }
+    
+    pub fn owner(mut self, owner: Pubkey) -> Self {
+        self.expected_owner = Some(owner);
+        self
+    }
+    
+    pub fn data_len(mut self, len: usize) -> Self {
+        self.expected_data_len = Some(len);
+        self
+    }
+    
+    pub fn min_balance(mut self, min: u64) -> Self {
+        self.min_lamports = Some(min);
+        self
+    }
+    
+    pub fn initialized(mut self) -> Self {
+        self.require_initialized = true;
+        self
+    }
+    
+    pub fn custom<F>(mut self, validator: F) -> Self
+    where
+        F: Fn(&AccountInfo) -> ProgramResult + 'static,
+    {
+        self.custom_validators.push(Box::new(validator));
+        self
+    }
+    
+    /// Validate account against all constraints
+    pub fn validate(&self, account: &AccountInfo) -> ProgramResult {
+        // Signer validation
+        if self.require_signer && !account.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        // Writable validation
+        if self.require_writable && !account.is_writable {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Owner validation
+        if let Some(expected_owner) = &self.expected_owner {
+            if account.owner != expected_owner {
+                return Err(ProgramError::IncorrectProgramId);
+            }
+        }
+        
+        // Data length validation
+        if let Some(expected_len) = self.expected_data_len {
+            if account.data_len() != expected_len {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        // Balance validation
+        if let Some(min_balance) = self.min_lamports {
+            if account.lamports() < min_balance {
+                return Err(ProgramError::InsufficientFunds);
+            }
+        }
+        
+        if let Some(max_balance) = self.max_lamports {
+            if account.lamports() > max_balance {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        // Initialization validation
+        if self.require_initialized {
+            let data = account.data.borrow();
+            if data.is_empty() || data[0] == 0 {
+                return Err(ProgramError::UninitializedAccount);
+            }
+        }
+        
+        // Custom validators
+        for validator in &self.custom_validators {
+            validator(account)?;
+        }
+        
+        Ok(())
+    }
+}
+
+/// State transition validator
+pub struct StateTransitionValidator;
+
+impl StateTransitionValidator {
+    /// Validate account state transition is legal
+    pub fn validate_transition<T>(
+        current_state: &T,
+        new_state: &T,
+        allowed_transitions: &[(T, T)],
+    ) -> ProgramResult
+    where
+        T: PartialEq + Clone,
+    {
+        for (from, to) in allowed_transitions {
+            if current_state == from && new_state == to {
+                return Ok(());
+            }
+        }
+        
+        Err(ProgramError::InvalidAccountData)
+    }
+    
+    /// Validate time-based constraints
+    pub fn validate_time_constraints(
+        last_update: i64,
+        min_interval: i64,
+        max_age: Option<i64>,
+    ) -> ProgramResult {
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        // Check minimum interval
+        if current_time - last_update < min_interval {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Check maximum age
+        if let Some(max_age) = max_age {
+            if current_time - last_update > max_age {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate account relationships
+    pub fn validate_account_relationship(
+        account_a: &AccountInfo,
+        account_b: &AccountInfo,
+        relationship_type: RelationshipType,
+    ) -> ProgramResult {
+        match relationship_type {
+            RelationshipType::Owner => {
+                // Validate B owns A
+                if account_a.owner != account_b.key {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            }
+            RelationshipType::Authority => {
+                // Load account A data and check authority field
+                let data_a = account_a.data.borrow();
+                if data_a.len() < 32 {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+                
+                let authority_bytes = &data_a[..32];
+                let authority = Pubkey::new_from_array(
+                    authority_bytes.try_into()
+                        .map_err(|_| ProgramError::InvalidAccountData)?
+                );
+                
+                if authority != *account_b.key {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            }
+            RelationshipType::Associated => {
+                // Validate PDA relationship
+                // Implementation depends on specific PDA derivation
+                // This is a placeholder for associated account validation
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RelationshipType {
+    Owner,
+    Authority,
+    Associated,
+}
+```
+
+### Account Lifecycle Management
+
+```rust
+// ✅ DO: Complete lifecycle management with migration support
+use solana_program::{
+    account_info::AccountInfo,
+    entrypoint::ProgramResult,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_program,
+};
+
+pub struct AccountLifecycleManager;
+
+impl AccountLifecycleManager {
+    /// Reallocate account with more space
+    pub fn reallocate_account(
+        account: &AccountInfo,
+        payer: &AccountInfo,
+        system_program: &AccountInfo,
+        new_size: usize,
+    ) -> ProgramResult {
+        // Validate current account state
+        if account.data_len() >= new_size {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        // Calculate additional rent needed
+        let rent = solana_program::sysvar::rent::Rent::get()?;
+        let new_rent_exemption = rent.minimum_balance(new_size);
+        let current_rent_exemption = rent.minimum_balance(account.data_len());
+        let additional_rent = new_rent_exemption
+            .checked_sub(current_rent_exemption)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        
+        if additional_rent > 0 {
+            // Transfer additional rent
+            let transfer_instruction = solana_program::system_instruction::transfer(
+                payer.key,
+                account.key,
+                additional_rent,
+            );
+            
+            solana_program::program::invoke(
+                &transfer_instruction,
+                &[payer.clone(), account.clone(), system_program.clone()],
+            )?;
+        }
+        
+        // Reallocate account
+        account.realloc(new_size, false)?;
+        
+        Ok(())
+    }
+    
+    /// Migrate account data to new format
+    pub fn migrate_account_data<T, U>(
+        account: &AccountInfo,
+        migration_fn: impl Fn(T) -> Result<U, ProgramError>,
+    ) -> ProgramResult
+    where
+        T: borsh::BorshDeserialize,
+        U: borsh::BorshSerialize,
+    {
+        // Load current data
+        let current_data = T::try_from_slice(&account.data.borrow())
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        
+        // Perform migration
+        let new_data = migration_fn(current_data)?;
+        
+        // Serialize new data
+        let serialized = new_data.try_to_vec()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        
+        // Check if reallocation is needed
+        if serialized.len() > account.data_len() {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        
+        // Write new data
+        let mut data = account.data.borrow_mut();
+        data[..serialized.len()].copy_from_slice(&serialized);
+        
+        // Zero out remaining space
+        for byte in data[serialized.len()..].iter_mut() {
+            *byte = 0;
+        }
+        
+        Ok(())
+    }
+    
+    /// Close account and reclaim rent
+    pub fn close_account(
+        account_to_close: &AccountInfo,
+        destination: &AccountInfo,
+        authority: &AccountInfo,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Validate authority
+        if !authority.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        // Validate account ownership
+        if account_to_close.owner != program_id {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        
+        // Load and validate account data
+        let data = account_to_close.data.borrow();
+        if data.len() < 32 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Check if account has the right authority
+        let account_authority = Pubkey::new_from_array(
+            data[..32].try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        
+        if account_authority != *authority.key {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Transfer all lamports to destination
+        let lamports = account_to_close.lamports();
+        **account_to_close.lamports.borrow_mut() = 0;
+        **destination.lamports.borrow_mut() = destination.lamports()
+            .checked_add(lamports)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        
+        // Zero out account data
+        let mut data = account_to_close.data.borrow_mut();
+        for byte in data.iter_mut() {
+            *byte = 0;
+        }
+        
+        // Assign to system program to complete closure
+        account_to_close.assign(&system_program::id());
+        
+        Ok(())
+    }
+    
+    /// Archive account data off-chain while keeping minimal on-chain record
+    pub fn archive_account(
+        account: &AccountInfo,
+        archive_hash: [u8; 32],
+        archive_url: String,
+        authority: &AccountInfo,
+    ) -> ProgramResult {
+        // Validate authority
+        if !authority.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        // Create archive record
+        let archive_record = ArchivedAccountRecord {
+            original_data_hash: archive_hash,
+            archive_url,
+            archived_at: solana_program::clock::Clock::get()?.unix_timestamp,
+            authority: *authority.key,
+        };
+        
+        // Serialize archive record
+        let serialized = archive_record.try_to_vec()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        
+        // Write archive record to account
+        if serialized.len() > account.data_len() {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        
+        let mut data = account.data.borrow_mut();
+        data[..serialized.len()].copy_from_slice(&serialized);
+        
+        Ok(())
+    }
+}
+
+#[derive(borsh::BorshSerialize, borsh::BorshDeserialize, Debug)]
+pub struct ArchivedAccountRecord {
+    pub original_data_hash: [u8; 32],
+    pub archive_url: String,
+    pub archived_at: i64,
+    pub authority: Pubkey,
+}
+```
+
+## Advanced Patterns
+
+### Associated Account Creation
+
+```rust
+// ✅ DO: Associated account patterns with proper derivation
+pub struct AssociatedAccountManager;
+
+impl AssociatedAccountManager {
+    /// Create associated token account pattern
+    pub fn create_associated_account(
+        funding_account: &AccountInfo,
+        associated_account: &AccountInfo,
+        owner: &AccountInfo,
+        mint: &AccountInfo,
+        system_program: &AccountInfo,
+        token_program: &AccountInfo,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Derive expected PDA
+        let (expected_pda, bump) = Self::derive_associated_account_address(
+            owner.key,
+            mint.key,
+            program_id,
+        )?;
+        
+        // Verify provided account matches derived PDA
+        if *associated_account.key != expected_pda {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        
+        // Create account with proper seeds
+        let signer_seeds = &[
+            b"associated",
+            owner.key.as_ref(),
+            mint.key.as_ref(),
+            &[bump],
+        ];
+        
+        AccountCreator::create_account(
+            funding_account,
+            associated_account,
+            system_program,
+            program_id,
+            &AccountCreationParams {
+                account_type: AccountType::User { user_id: 0 },
+                initial_data: vec![],
+                authority: *owner.key,
+                metadata: AccountMetadata {
+                    name: "Associated Account".to_string(),
+                    description: "Auto-generated associated account".to_string(),
+                    tags: vec!["associated".to_string()],
+                    created_at: solana_program::clock::Clock::get()?.unix_timestamp,
+                },
+            },
+            Some(&[signer_seeds]),
+        )?;
+        
+        Ok(())
+    }
+    
+    /// Derive associated account address
+    pub fn derive_associated_account_address(
+        owner: &Pubkey,
+        mint: &Pubkey,
+        program_id: &Pubkey,
+    ) -> Result<(Pubkey, u8), ProgramError> {
+        let seeds = &[
+            b"associated",
+            owner.as_ref(),
+            mint.as_ref(),
+        ];
+        
+        Pubkey::find_program_address(seeds, program_id)
+            .map(|(pubkey, bump)| (pubkey, bump))
+            .ok_or(ProgramError::InvalidSeeds)
+    }
+    
+    /// Get or create associated account
+    pub fn get_or_create_associated_account(
+        funding_account: &AccountInfo,
+        associated_account: &AccountInfo,
+        owner: &AccountInfo,
+        mint: &AccountInfo,
+        system_program: &AccountInfo,
+        program_id: &Pubkey,
+    ) -> ProgramResult {
+        // Check if account already exists and is initialized
+        if associated_account.lamports() > 0 && associated_account.data_len() > 0 {
+            // Account exists, validate it
+            if associated_account.owner != program_id {
+                return Err(ProgramError::IncorrectProgramId);
+            }
+            return Ok(());
+        }
+        
+        // Account doesn't exist, create it
+        Self::create_associated_account(
+            funding_account,
+            associated_account,
+            owner,
+            mint,
+            system_program,
+            &AccountInfo::new_readonly(program_id, false, &mut 0, &mut [], program_id, false, 0),
+            program_id,
+        )
+    }
+}
+```
+
+## Security Patterns
+
+### Account State Validation
+
+```rust
+// ✅ DO: Comprehensive state validation with security checks
+pub struct SecurityValidator;
+
+impl SecurityValidator {
+    /// Validate account has not been tampered with
+    pub fn validate_account_integrity(
+        account: &AccountInfo,
+        expected_checksum: Option<[u8; 32]>,
+    ) -> ProgramResult {
+        let data = account.data.borrow();
+        
+        // Check for minimum data requirements
+        if data.len() < 32 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        // Validate checksum if provided
+        if let Some(expected) = expected_checksum {
+            let actual_checksum = solana_program::hash::hash(&data);
+            if actual_checksum.to_bytes() != expected {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+        
+        // Check for null bytes in critical areas
+        if data[..32].contains(&0) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        
+        Ok(())
+    }
+    
+    /// Rate limiting for account operations
+    pub fn check_rate_limit(
+        account: &AccountInfo,
+        max_operations_per_period: u64,
+        period_seconds: i64,
+    ) -> ProgramResult {
+        let data = account.data.borrow();
+        
+        // Assuming rate limit data is stored at specific offset
+        let rate_limit_offset = data.len() - 16; // Last 16 bytes for rate limiting
+        
+        if data.len() < 16 {
+            return Ok(()); // No rate limiting data
+        }
+        
+        let last_operation_time = i64::from_le_bytes(
+            data[rate_limit_offset..rate_limit_offset + 8]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        
+        let operation_count = u64::from_le_bytes(
+            data[rate_limit_offset + 8..rate_limit_offset + 16]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        
+        let current_time = solana_program::clock::Clock::get()?.unix_timestamp;
+        
+        // Reset counter if period has elapsed
+        if current_time - last_operation_time > period_seconds {
+            return Ok(());
+        }
+        
+        // Check if limit exceeded
+        if operation_count >= max_operations_per_period {
+            return Err(ProgramError::Custom(1001)); // Rate limit exceeded
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate account permissions for operation
+    pub fn validate_operation_permission(
+        account: &AccountInfo,
+        authority: &AccountInfo,
+        operation: Operation,
+    ) -> ProgramResult {
+        if !authority.is_signer {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        
+        let data = account.data.borrow();
+        
+        // Load account authority (assuming first 32 bytes)
+        let account_authority = Pubkey::new_from_array(
+            data[..32].try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        
+        // Load permissions (assuming next 8 bytes as bitfield)
+        let permissions = u64::from_le_bytes(
+            data[32..40].try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        
+        // Check authority matches
+        if account_authority != *authority.key {
+            // Check if operation is allowed for non-authorities
+            if !operation.is_public() {
+                return Err(ProgramError::Custom(1002)); // Unauthorized
+            }
+        }
+        
+        // Check operation permission
+        if !operation.is_permitted(permissions) {
+            return Err(ProgramError::Custom(1003)); // Operation not permitted
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Operation {
+    Read = 1,
+    Write = 2,
+    Delete = 4,
+    Transfer = 8,
+    Admin = 16,
+}
+
+impl Operation {
+    pub fn is_public(&self) -> bool {
+        matches!(self, Operation::Read)
+    }
+    
+    pub fn is_permitted(&self, permissions: u64) -> bool {
+        (permissions & (*self as u64)) != 0
+    }
+}
+```
+
+## Best Practices Summary
+
+### Account Creation
+- Always calculate exact space requirements with padding
+- Use proper rent exemption calculations
+- Implement atomic create-and-initialize patterns
+- Cache frequently used PDA derivations
+
+### PDA Management
+- Use hierarchical seed patterns for complex structures
+- Implement collision-resistant derivation strategies
+- Cache PDA results for performance
+- Use meaningful seed components for debugging
+
+### Validation
+- Implement comprehensive constraint checking
+- Validate state transitions explicitly
+- Check account relationships and dependencies
+- Use rate limiting for sensitive operations
+
+### Lifecycle Management
+- Support account reallocation for upgrades
+- Implement safe migration patterns
+- Provide proper account closure with rent reclamation
+- Consider archival patterns for historical data
+
+### Security
+- Validate account integrity with checksums
+- Implement proper authorization checks
+- Use time-based constraints where appropriate
+- Log security-relevant events
+
+## References
+- [Solana Account Model](mdc:https:/docs.solana.com/developing/programming-model/accounts)
+- [PDA Documentation](mdc:https:/docs.solana.com/developing/programming-model/calling-between-programs#program-derived-addresses)
+- [Account Validation Patterns](mdc:https:/solanacookbook.com/references/accounts.html)
+- [Rent Economics](mdc:https:/docs.solana.com/developing/programming-model/accounts#rent)
