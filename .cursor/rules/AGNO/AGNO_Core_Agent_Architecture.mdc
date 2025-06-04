@@ -1,8 +1,83 @@
 ---
-description: AGENT core architecture in AGNO
+description: AGNO framework, agent architecture
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO framework, agent architecture, and Python. You focus on building robust, scalable agents with memory, knowledge, tools, and reasoning capabilities using AGNO's comprehensive agent system.
+
+## AGNO Agent Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   User Input    │    │   Agent Core     │    │   Model Layer   │
+│   - Query       │───▶│   - Instructions │───▶│   - LLM API     │
+│   - Context     │    │   - Role/Name    │    │   - Claude      │
+│   - Parameters  │    │   - Description  │    │   - GPT-4       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Response Output │    │  Processing      │    │   Tool Layer    │
+│ - Formatted     │◀───│  - Memory        │◀───│   - Functions   │
+│ - Structured    │    │  - Knowledge     │    │   - APIs        │
+│ - Streamed      │    │  - Reasoning     │    │   - Integrations│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+agno_agent_project/
+├── src/
+│   ├── agents/                  # Agent implementations
+│   │   ├── __init__.py
+│   │   ├── base_agent.py        # Base agent class
+│   │   ├── chat_agent.py        # Conversational agent
+│   │   ├── research_agent.py    # Research-focused agent
+│   │   └── task_agent.py        # Task-oriented agent
+│   ├── models/                  # Model configurations
+│   │   ├── __init__.py
+│   │   ├── anthropic_models.py  # Claude configurations
+│   │   ├── openai_models.py     # OpenAI configurations
+│   │   └── model_factory.py     # Model selection logic
+│   ├── tools/                   # Custom tools
+│   │   ├── __init__.py
+│   │   ├── data_tools.py        # Data processing tools
+│   │   ├── api_tools.py         # API integration tools
+│   │   └── reasoning_tools.py   # Custom reasoning tools
+│   ├── instructions/            # Agent instructions
+│   │   ├── __init__.py
+│   │   ├── base_instructions.py # Common instructions
+│   │   ├── role_instructions.py # Role-specific instructions
+│   │   └── output_formats.py    # Output format instructions
+│   ├── memory/                  # Memory implementations
+│   │   ├── __init__.py
+│   │   ├── session_memory.py    # Session-based memory
+│   │   ├── persistent_memory.py # Persistent memory
+│   │   └── vector_memory.py     # Vector-based memory
+│   └── utils/                   # Utilities
+│       ├── __init__.py
+│       ├── agent_helpers.py     # Agent helper functions
+│       ├── response_utils.py    # Response utilities
+│       └── debug_utils.py       # Debugging utilities
+├── config/                      # Configuration
+│   ├── agent_config.py          # Agent configurations
+│   ├── model_config.py          # Model settings
+│   └── environment.py           # Environment variables
+├── tests/                       # Tests
+│   ├── __init__.py
+│   ├── test_agents.py           # Agent functionality tests
+│   ├── test_models.py           # Model integration tests
+│   └── test_tools.py            # Tool functionality tests
+├── examples/                    # Usage examples
+│   ├── basic_agent.py           # Basic agent usage
+│   ├── advanced_agent.py        # Advanced features
+│   └── multi_agent.py           # Multi-agent systems
+├── pyproject.toml               # Dependencies
+├── .env                         # Environment variables
+└── README.md                    # Documentation
+```
+
 # AGNO Agent Architecture Guidelines
 
 AGNO provides a lightweight framework for building agents with memory, knowledge, tools, and reasoning capabilities. Use this guide for creating well-structured agents.
@@ -15,12 +90,16 @@ from agno.models.anthropic import Claude  # Or any other model provider
 
 agent = Agent(
     name="MyAgent",  # Optional but recommended for multi-agent systems
+    description="my description"
+    role="my role"
     model=Claude(id="claude-3-7-sonnet-latest"),  # Required: The LLM powering the agent
     instructions=[  # Optional: Control agent behavior with specific instructions
         "Use tables to display data",
         "Respond concisely and accurately"
     ],
+    expected_output="my expected output"
     markdown=True,  # Optional: Enable markdown formatting in responses
+    
 )
 
 # Run an agent

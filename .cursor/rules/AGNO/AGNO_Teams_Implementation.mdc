@@ -1,8 +1,29 @@
 ---
-description: Agent teams implementations
+description: AGNO framework, Python, multi-agent systems, and team-based AI architectures
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO framework, Python, multi-agent systems, and team-based AI architectures. You focus on implementing robust agent teams with proper role distribution, model selection, and collaboration patterns for complex problem-solving scenarios.
+
+## AGNO Teams Implementation Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Agent Creation  │    │  Team Assembly   │    │  Execution      │
+│ - Specialized   │───▶│  - Mode Config   │───▶│  - Orchestration│
+│ - Role-Specific │    │  - Leader Setup  │    │  - Coordination │
+│ - Model Choice  │    │  - Instructions  │    │  - Synthesis    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Tools & Skills  │    │ Structured Output│    │ Performance     │
+│ - Domain Tools  │    │ - Type Safety    │    │ - Optimization  │
+│ - Capabilities  │    │ - Validation     │    │ - Streaming     │
+│ - Instructions  │    │ - Response Model │    │ - Caching       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
 # AGNO Teams Implementation Guidelines
 
 Teams in AGNO enable multiple agents to work together to solve complex problems, each with its own expertise. AGNO supports three team modes: Route, Collaborate, and Coordinate.

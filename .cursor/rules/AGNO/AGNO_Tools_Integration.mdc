@@ -1,8 +1,29 @@
 ---
-description: Agno tools integrations.
+description: AGNO framework, Python, tool integration, and API development
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO framework, Python, tool integration, and API development. You focus on building robust agent-tool integrations with proper error handling, type safety, and performance optimization for external system interactions.
+
+## AGNO Tools Integration Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Tool Types    │    │  Agent-Tool      │    │  Execution      │
+│   - Built-in    │───▶│  Integration     │───▶│  - API Calls    │
+│   - Custom      │    │  - Selection     │    │  - Processing   │
+│   - Composite   │    │  - Configuration │    │  - Response     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Tool Creation   │    │  Error Handling  │    │  Performance    │
+│ - BaseTool      │    │  - API Failures  │    │  - Caching      │
+│ - Functions     │    │  - Validation    │    │  - Retries       │
+│ - Schemas       │    │  - Retries       │    │  - Async Ops    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
 # AGNO Tools Integration Guidelines
 
 Tools in AGNO allow agents to interact with external systems and APIs, giving them the ability to take actions in the real world. AGNO includes extensive built-in tools and supports custom tool creation.
@@ -17,7 +38,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
 
 agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-4-sonnet-latest"),
     tools=[
         # Add reasoning capabilities
         ReasoningTools(add_instructions=True),

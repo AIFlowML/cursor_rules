@@ -1,0 +1,707 @@
+---
+description: AGNO framework, agent state management
+globs: 
+alwaysApply: false
+---
+# AGNO Agent State
+
+> You are an expert in AGNO framework, agent state management, and Python. You focus on implementing persistent agent state, session management, and stateful agent behaviors using AGNO's comprehensive state management system.
+
+## AGNO Agent State Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Agent Request  │    │   State Layer    │    │  Storage Engine │
+│  - User Input   │───▶│  - Current State │───▶│  - SQLite DB    │
+│  - Session ID   │    │  - State Cache   │    │  - PostgreSQL   │
+│  - User Context │    │  - State Methods │    │  - Memory Store │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Response Output │    │ State Mutation   │    │ Persistence Ops │
+│ - State Context │◀───│ - Key/Value Ops  │◀───│ - Load/Save     │
+│ - Response Data │    │ - Update/Delete  │    │ - Session Mgmt  │
+│ - Next State    │    │ - Clear/Get All  │    │ - State Sync    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+agno_state_project/
+├── src/
+│   ├── agents/                  # Agent implementations
+│   │   ├── __init__.py
+│   │   ├── stateful_agent.py    # Main stateful agent
+│   │   ├── chat_agent.py        # Chat agent with state
+│   │   └── task_agent.py        # Task-oriented agent
+│   ├── state/                   # State management
+│   │   ├── __init__.py
+│   │   ├── manager.py           # State manager
+│   │   ├── serializers.py       # State serialization
+│   │   └── validators.py        # State validation
+│   ├── storage/                 # Storage backends
+│   │   ├── __init__.py
+│   │   ├── sqlite_store.py      # SQLite implementation
+│   │   ├── postgres_store.py    # PostgreSQL implementation
+│   │   └── memory_store.py      # In-memory store
+│   ├── tools/                   # State-aware tools
+│   │   ├── __init__.py
+│   │   ├── state_tools.py       # State manipulation tools
+│   │   └── counter_tools.py     # Counter and tracking tools
+│   └── utils/                   # Utilities
+│       ├── __init__.py
+│       ├── state_helpers.py     # State helper functions
+│       └── session_utils.py     # Session utilities
+├── config/                      # Configuration
+│   ├── settings.py              # App settings
+│   └── state_config.py          # State configuration
+├── tests/                       # Tests
+│   ├── __init__.py
+│   ├── test_agent_state.py      # State functionality tests
+│   ├── test_state_persistence.py # Persistence tests
+│   └── test_state_tools.py      # State tools tests
+├── examples/                    # Usage examples
+│   ├── basic_state.py           # Basic state usage
+│   ├── persistent_chat.py       # Persistent chat bot
+│   └── complex_state.py         # Complex state management
+├── pyproject.toml               # Dependencies
+├── .env                         # Environment variables
+└── README.md                    # Documentation
+```
+
+## State Functions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `state.get` | `key: str, default=None` | Get a value by key with optional default |
+| `state.set` | `key: str, value: Any` | Set a value by key |
+| `state.has` | `key: str` | Check if a key exists |
+| `state.delete` | `key: str` | Delete a key |
+| `state.update` | `key: str, value: Dict` | Update a dictionary value |
+| `state.clear` | None | Clear all state |
+| `state.get_all` | None | Get all state as a dictionary |
+
+## Core Principles
+- Agent State maintains context and data between agent runs
+- State is persisted across execution cycles when using Storage
+- Implement proper state management for stateful applications
+- Use agent state to track conversational context and user information
+
+## Implementation Patterns
+
+### Basic State Usage
+
+```python
+# ✅ DO: Implement proper state initialization and access
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+)
+
+# ✅ DO: Initialize state with meaningful values
+agent.state.set("user_name", "Alice")
+agent.state.set("preferences", {"theme": "dark", "language": "en"})
+
+# ✅ DO: Use safe state access with defaults
+user_name = agent.state.get("user_name", "Unknown User")
+preferences = agent.state.get("preferences", {})
+
+# ✅ DO: Check existence before accessing
+if agent.state.has("user_name"):
+    print(f"Hello, {agent.state.get('user_name')}!")
+
+# ✅ DO: State is included in the context sent to the model
+response = agent.run("What's my name?")
+
+# ✅ DO: Leverage state persistence between runs
+response = agent.run("What are my preferences?")
+
+# ❌ DON'T: Access state without checking existence
+# bad_value = agent.state.get("nonexistent_key")  # Could return None unexpectedly
+
+# ❌ DON'T: Store sensitive data in state without encryption
+# agent.state.set("password", "plaintext_password")  # Security risk
+```
+
+### State Persistence with Storage
+
+```python
+# ✅ DO: Implement proper storage-backed state persistence
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+
+agent = Agent(
+    model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+    session_id="user_123_session",
+    storage=SqliteStorage(table_name="agent_sessions", db_file="data.db"),
+)
+
+# ✅ DO: Handle existing state gracefully
+existing_value = agent.state.get("user_name")
+if existing_value:
+    print(f"Welcome back, {existing_value}!")
+else:
+    print("Welcome, new user!")
+
+# ✅ DO: Update state with meaningful data
+agent.state.set("last_interaction", "2023-10-15")
+agent.state.set("session_count", agent.state.get("session_count", 0) + 1)
+
+# ✅ DO: State is automatically saved to storage after each run
+agent.run("Hello")
+
+# ✅ DO: Plan for state reloading in future sessions
+# State will be reloaded in future sessions with the same session_id
+
+# ❌ DON'T: Use storage without proper error handling
+# agent = Agent(storage=SqliteStorage(db_file="/invalid/path/data.db"))  # Could fail
+
+# ❌ DON'T: Forget to use consistent session IDs
+# agent1 = Agent(session_id="user_123")
+# agent2 = Agent(session_id="user_456")  # Different sessions won't share state
+```
+
+### Managing Complex State
+
+```python
+# ✅ DO: Structure complex state with nested dictionaries
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from datetime import datetime
+
+agent = Agent(
+    model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+)
+
+# ✅ DO: Use well-structured nested data
+agent.state.set("user", {
+    "name": "Alice",
+    "email": "alice@example.com",
+    "preferences": {
+        "theme": "dark",
+        "notifications": True,
+        "language": "en"
+    },
+    "history": [
+        {"date": "2023-10-12", "action": "login"},
+        {"date": "2023-10-13", "action": "update_profile"}
+    ],
+    "metadata": {
+        "created_at": datetime.now().isoformat(),
+        "last_updated": datetime.now().isoformat()
+    }
+})
+
+# ✅ DO: Update nested fields safely
+user = agent.state.get("user", {})
+if "preferences" in user:
+    user["preferences"]["notifications"] = False
+    user["metadata"]["last_updated"] = datetime.now().isoformat()
+    agent.state.set("user", user)
+
+# ✅ DO: Use update for partial dictionary updates
+agent.state.update("user", {
+    "last_login": datetime.now().isoformat(),
+    "login_count": agent.state.get("user", {}).get("login_count", 0) + 1
+})
+
+# ✅ DO: Validate state structure before saving
+def validate_user_state(user_data):
+    """Validate user state structure"""
+    required_fields = ["name", "preferences"]
+    return all(field in user_data for field in required_fields)
+
+user_data = agent.state.get("user", {})
+if validate_user_state(user_data):
+    agent.state.set("user", user_data)
+
+# ❌ DON'T: Modify nested state without proper structure
+# user = agent.state.get("user")
+# user["new_field"] = "value"  # Could fail if user is None
+
+# ❌ DON'T: Store unserializable objects
+# agent.state.set("callback", lambda x: x)  # Won't persist properly
+```
+
+## Advanced Patterns
+
+### State-Aware Tools Implementation
+
+```python
+# ✅ DO: Create tools that interact with agent state
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools import tool
+
+@tool
+def counter_tool(agent_state) -> str:
+    """Increment a counter in the agent state and return current value."""
+    # ✅ DO: Use safe state access with defaults
+    count = agent_state.get("counter", 0)
+    count += 1
+    agent_state.set("counter", count)
+    
+    # ✅ DO: Update related metadata
+    agent_state.set("last_counter_update", datetime.now().isoformat())
+    
+    return f"Counter incremented to: {count}"
+
+@tool
+def reset_counter_tool(agent_state) -> str:
+    """Reset the counter to zero."""
+    agent_state.set("counter", 0)
+    agent_state.set("counter_reset_at", datetime.now().isoformat())
+    return "Counter reset to 0"
+
+@tool
+def get_user_stats_tool(agent_state) -> str:
+    """Get user statistics from state."""
+    # ✅ DO: Aggregate state data for insights
+    counter = agent_state.get("counter", 0)
+    user = agent_state.get("user", {})
+    session_count = agent_state.get("session_count", 0)
+    
+    stats = {
+        "counter_value": counter,
+        "user_name": user.get("name", "Unknown"),
+        "session_count": session_count,
+        "total_interactions": counter + session_count
+    }
+    
+    return f"User Stats: {stats}"
+
+agent = Agent(
+    model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+    tools=[counter_tool, reset_counter_tool, get_user_stats_tool],
+)
+
+# ✅ DO: Tools can access and modify state
+agent.run("Increment the counter three times")
+agent.run("Show me my statistics")
+
+# ❌ DON'T: Create tools without proper state validation
+# @tool
+# def bad_tool(agent_state):
+#     value = agent_state.get("undefined_key")
+#     return value.upper()  # Could fail if value is None
+```
+
+### State Lifecycle Management
+
+```python
+# ✅ DO: Implement proper state lifecycle management
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+from datetime import datetime, timedelta
+
+class StatefulChatAgent:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.agent = Agent(
+            model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+            session_id=f"user_{user_id}_session",
+            storage=SqliteStorage(table_name="chat_sessions", db_file="chat.db"),
+        )
+        self._initialize_state()
+    
+    def _initialize_state(self):
+        """Initialize state for new or returning users."""
+        # ✅ DO: Set up default state structure
+        if not self.agent.state.has("initialized"):
+            self.agent.state.set("user_id", self.user_id)
+            self.agent.state.set("created_at", datetime.now().isoformat())
+            self.agent.state.set("conversation_count", 0)
+            self.agent.state.set("preferences", {
+                "language": "en",
+                "timezone": "UTC",
+                "response_style": "friendly"
+            })
+            self.agent.state.set("initialized", True)
+        
+        # ✅ DO: Update session metadata
+        self.agent.state.set("last_session", datetime.now().isoformat())
+        session_count = self.agent.state.get("session_count", 0)
+        self.agent.state.set("session_count", session_count + 1)
+    
+    def chat(self, message: str) -> str:
+        """Send a message and update conversation state."""
+        # ✅ DO: Track conversation metrics
+        conv_count = self.agent.state.get("conversation_count", 0)
+        self.agent.state.set("conversation_count", conv_count + 1)
+        
+        # ✅ DO: Store conversation context
+        last_messages = self.agent.state.get("recent_messages", [])
+        last_messages.append({
+            "timestamp": datetime.now().isoformat(),
+            "user_message": message[:100],  # Truncate for storage efficiency
+            "message_id": conv_count + 1
+        })
+        
+        # ✅ DO: Maintain reasonable state size
+        if len(last_messages) > 10:
+            last_messages = last_messages[-10:]  # Keep only last 10 messages
+        
+        self.agent.state.set("recent_messages", last_messages)
+        
+        return self.agent.run(message)
+    
+    def cleanup_old_state(self, days: int = 30):
+        """Clean up old state data."""
+        # ✅ DO: Implement state cleanup for performance
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        recent_messages = self.agent.state.get("recent_messages", [])
+        filtered_messages = [
+            msg for msg in recent_messages
+            if datetime.fromisoformat(msg["timestamp"]) > cutoff_date
+        ]
+        
+        self.agent.state.set("recent_messages", filtered_messages)
+    
+    def export_state(self) -> dict:
+        """Export state for backup or analysis."""
+        # ✅ DO: Provide state export functionality
+        return self.agent.state.get_all()
+
+# ❌ DON'T: Create agents without proper initialization
+# agent = Agent(model=OpenAIChat(id="gpt-4o"))
+# agent.run("Hello")  # No persistent state, no user context
+```
+
+### State Validation and Error Handling
+
+```python
+# ✅ DO: Implement comprehensive state validation
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from typing import Any, Dict, Optional
+import json
+
+class StateValidator:
+    @staticmethod
+    def validate_user_data(data: Dict[str, Any]) -> bool:
+        """Validate user data structure."""
+        required_fields = ["name", "preferences"]
+        if not all(field in data for field in required_fields):
+            return False
+        
+        if not isinstance(data.get("preferences"), dict):
+            return False
+        
+        return True
+    
+    @staticmethod
+    def sanitize_state_value(value: Any) -> Any:
+        """Sanitize state value for storage."""
+        try:
+            # ✅ DO: Test serialization before storing
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            # ✅ DO: Convert non-serializable objects
+            return str(value)
+
+class SafeStateAgent:
+    def __init__(self):
+        self.agent = Agent(
+            model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+        )
+        self.validator = StateValidator()
+    
+    def safe_set_state(self, key: str, value: Any) -> bool:
+        """Safely set state with validation."""
+        try:
+            # ✅ DO: Validate before setting
+            sanitized_value = self.validator.sanitize_state_value(value)
+            
+            # ✅ DO: Special validation for specific keys
+            if key == "user" and not self.validator.validate_user_data(value):
+                raise ValueError("Invalid user data structure")
+            
+            self.agent.state.set(key, sanitized_value)
+            return True
+            
+        except Exception as e:
+            print(f"Failed to set state for key '{key}': {e}")
+            return False
+    
+    def safe_get_state(self, key: str, default: Any = None) -> Any:
+        """Safely get state with error handling."""
+        try:
+            return self.agent.state.get(key, default)
+        except Exception as e:
+            print(f"Failed to get state for key '{key}': {e}")
+            return default
+    
+    def backup_state(self) -> Optional[Dict[str, Any]]:
+        """Create a backup of current state."""
+        try:
+            return self.agent.state.get_all()
+        except Exception as e:
+            print(f"Failed to backup state: {e}")
+            return None
+    
+    def restore_state(self, backup: Dict[str, Any]) -> bool:
+        """Restore state from backup."""
+        try:
+            # ✅ DO: Clear current state before restore
+            self.agent.state.clear()
+            
+            # ✅ DO: Validate each item before restoring
+            for key, value in backup.items():
+                if not self.safe_set_state(key, value):
+                    print(f"Failed to restore key: {key}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"Failed to restore state: {e}")
+            return False
+
+# ❌ DON'T: Set state without validation
+# agent.state.set("user", "invalid_structure")  # Should be a dict
+
+# ❌ DON'T: Ignore state operation failures
+# agent.state.set("key", some_complex_object)  # Might fail silently
+```
+
+## Performance Optimization
+
+### State Caching and Batching
+
+```python
+# ✅ DO: Implement state caching for performance
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from typing import Dict, Any
+import time
+
+class CachedStateAgent:
+    def __init__(self):
+        self.agent = Agent(
+            model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+        )
+        self._state_cache: Dict[str, Any] = {}
+        self._cache_expiry: Dict[str, float] = {}
+        self._cache_ttl = 300  # 5 minutes
+    
+    def get_cached_state(self, key: str, default: Any = None) -> Any:
+        """Get state with caching."""
+        current_time = time.time()
+        
+        # ✅ DO: Check cache first
+        if (key in self._state_cache and 
+            key in self._cache_expiry and 
+            current_time < self._cache_expiry[key]):
+            return self._state_cache[key]
+        
+        # ✅ DO: Fetch from state and cache
+        value = self.agent.state.get(key, default)
+        self._state_cache[key] = value
+        self._cache_expiry[key] = current_time + self._cache_ttl
+        
+        return value
+    
+    def batch_state_update(self, updates: Dict[str, Any]):
+        """Batch multiple state updates."""
+        # ✅ DO: Batch updates for efficiency
+        for key, value in updates.items():
+            self.agent.state.set(key, value)
+            # ✅ DO: Update cache
+            self._state_cache[key] = value
+            self._cache_expiry[key] = time.time() + self._cache_ttl
+    
+    def invalidate_cache(self, key: Optional[str] = None):
+        """Invalidate cache entries."""
+        if key:
+            self._state_cache.pop(key, None)
+            self._cache_expiry.pop(key, None)
+        else:
+            self._state_cache.clear()
+            self._cache_expiry.clear()
+
+# ❌ DON'T: Access state repeatedly without caching
+# for i in range(100):
+#     value = agent.state.get("expensive_computation")  # Inefficient
+```
+
+## Testing Patterns
+
+### State Testing Strategies
+
+```python
+# ✅ DO: Implement comprehensive state testing
+import pytest
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+class TestAgentState:
+    def setup_method(self):
+        """Set up test agent for each test."""
+        self.agent = Agent(
+            model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+        )
+    
+    def test_basic_state_operations(self):
+        """Test basic state CRUD operations."""
+        # ✅ DO: Test all basic operations
+        # Set
+        self.agent.state.set("test_key", "test_value")
+        assert self.agent.state.has("test_key")
+        
+        # Get
+        value = self.agent.state.get("test_key")
+        assert value == "test_value"
+        
+        # Update
+        self.agent.state.set("test_key", "updated_value")
+        assert self.agent.state.get("test_key") == "updated_value"
+        
+        # Delete
+        self.agent.state.delete("test_key")
+        assert not self.agent.state.has("test_key")
+    
+    def test_complex_state_structures(self):
+        """Test complex nested state structures."""
+        complex_data = {
+            "user": {
+                "name": "Test User",
+                "preferences": {"theme": "dark"},
+                "history": [{"action": "login", "timestamp": "2023-10-15"}]
+            }
+        }
+        
+        self.agent.state.set("complex_data", complex_data)
+        retrieved = self.agent.state.get("complex_data")
+        
+        assert retrieved["user"]["name"] == "Test User"
+        assert retrieved["user"]["preferences"]["theme"] == "dark"
+        assert len(retrieved["user"]["history"]) == 1
+    
+    def test_state_with_defaults(self):
+        """Test state access with default values."""
+        # ✅ DO: Test default value behavior
+        default_value = self.agent.state.get("nonexistent", "default")
+        assert default_value == "default"
+        
+        none_value = self.agent.state.get("nonexistent")
+        assert none_value is None
+    
+    def test_state_clear(self):
+        """Test state clearing functionality."""
+        self.agent.state.set("key1", "value1")
+        self.agent.state.set("key2", "value2")
+        
+        self.agent.state.clear()
+        
+        assert not self.agent.state.has("key1")
+        assert not self.agent.state.has("key2")
+        assert len(self.agent.state.get_all()) == 0
+
+# ❌ DON'T: Test without proper setup and teardown
+# def test_agent_state():
+#     agent.state.set("key", "value")  # Undefined agent, potential conflicts
+```
+
+## Best Practices Summary
+
+### State Management
+- ✅ Use descriptive key names for state values
+- ✅ Group related values in dictionary structures  
+- ✅ Implement proper state cleanup for completed conversations
+- ✅ Handle state value validation before storage
+- ✅ Consider serialization limitations for complex objects
+- ❌ Don't store sensitive information in state without encryption
+- ❌ Don't access state without checking existence first
+
+### Performance
+- ✅ Implement state caching for frequently accessed values
+- ✅ Use batch operations for multiple state updates
+- ✅ Set appropriate TTL for ephemeral state values
+- ✅ Clean up old state data regularly
+- ❌ Don't access state repeatedly without caching
+- ❌ Don't store large objects without considering memory impact
+
+### Persistence  
+- ✅ Use consistent session IDs for state continuity
+- ✅ Implement proper storage backend configuration
+- ✅ Handle storage failures gracefully
+- ✅ Provide state export/import functionality
+- ❌ Don't rely on state without proper storage setup
+- ❌ Don't ignore persistence errors
+
+### Security
+- ✅ Validate state data before storage and retrieval
+- ✅ Sanitize user inputs before storing in state
+- ✅ Implement proper access controls for sensitive state
+- ✅ Use encryption for sensitive state values
+- ❌ Don't store passwords or API keys in plain text
+- ❌ Don't trust state data without validation
+
+## State Access in Tools and Functions
+
+```python
+# ✅ DO: Create comprehensive state-aware tools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools import tool
+from datetime import datetime
+
+@tool
+def counter_tool(agent_state) -> str:
+    """Increment a counter in the agent state and return current value."""
+    # ✅ DO: Use safe state access with proper error handling
+    try:
+        count = agent_state.get("counter", 0)
+        count += 1
+        agent_state.set("counter", count)
+        agent_state.set("last_counter_update", datetime.now().isoformat())
+        return f"Counter incremented to: {count}"
+    except Exception as e:
+        return f"Error updating counter: {e}"
+
+@tool 
+def user_preference_tool(agent_state, preference: str, value: str) -> str:
+    """Update user preferences in state."""
+    # ✅ DO: Handle nested state updates safely
+    try:
+        user_data = agent_state.get("user", {})
+        if "preferences" not in user_data:
+            user_data["preferences"] = {}
+        
+        user_data["preferences"][preference] = value
+        user_data["last_updated"] = datetime.now().isoformat()
+        
+        agent_state.set("user", user_data)
+        return f"Updated {preference} to {value}"
+    except Exception as e:
+        return f"Error updating preference: {e}"
+
+agent = Agent(
+    model=OpenAIChat(id="claude-3-5-sonnet-20241022"),
+    tools=[counter_tool, user_preference_tool],
+)
+
+# ✅ DO: Tools can safely access and modify state
+agent.run("Increment the counter")
+agent.run("Set my theme preference to dark")
+
+# ❌ DON'T: Create tools without proper error handling
+# @tool
+# def unsafe_tool(agent_state):
+#     data = agent_state.get("undefined_key")
+#     return data.upper()  # Will fail if data is None
+```
+
+## References
+- [AGNO Agent Documentation](mdc:https:/docs.agno.ai/agents)
+- [AGNO Storage Documentation](mdc:https:/docs.agno.ai/storage)
+- [Python State Management Patterns](mdc:https:/realpython.com/python-state-management)
+- [Persistent Session Storage](mdc:https:/docs.agno.ai/storage/session-storage)

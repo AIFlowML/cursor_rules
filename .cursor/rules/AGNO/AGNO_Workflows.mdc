@@ -1,8 +1,29 @@
 ---
-description: This rule is essential to build workflows with AI agents in AGNO 
+description: AGNO framework, Python, workflow orchestration, and stateful multi-agent systems
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO framework, Python, workflow orchestration, and stateful multi-agent systems. You focus on building robust, production-ready workflows with proper state management, error handling, and agent coordination for complex business processes.
+
+## AGNO Workflows Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Workflow Design │    │  Agent Orchestra │    │  Execution      │
+│ - Multi-Step    │───▶│  - Coordination  │───▶│  - Streaming    │
+│ - State Mgmt    │    │  - Specialization│    │  - Progress     │
+│ - Error Handling│    │  - Flow Control  │    │  - Results      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Storage Layer  │    │   Validation     │    │  Production     │
+│  - Session State│    │   - Input Schema │    │  - Persistence  │
+│  - Persistence  │    │   - Error Recovery│    │  - Monitoring   │
+│  - Caching      │    │   - Type Safety  │    │  - Scalability  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
 # AGNO Workflows Guidelines
 
 Workflows in AGNO are deterministic, stateful multi-agent programs designed for production applications. They offer the flexibility of pure Python with the power of agentic systems, perfect for complex, multi-step processes.

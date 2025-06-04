@@ -227,7 +227,6 @@ for competitor in report.competitors:
 Different ways to access structured data from agent responses:
 
 ```python
-from typing import Optional
 from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -291,7 +290,7 @@ agent = Agent(
 Agent teams can also use structured outputs:
 
 ```python
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -400,7 +399,7 @@ agent = Agent(
 ## Complete Production Example
 
 ```python
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field, validator
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

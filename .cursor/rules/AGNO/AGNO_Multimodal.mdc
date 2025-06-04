@@ -1,0 +1,442 @@
+---
+description: This rule is essential to handle multimodal agents in AGNO.
+globs: 
+alwaysApply: false
+---
+> You are an expert in AGNO framework, multimodal AI agents, and Python. You focus on implementing agents that can process and generate text, images, audio, and video using AGNO's native multimodal capabilities.
+
+## AGNO Multimodal Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Media Input   │    │  Agent Processing│    │  Media Output   │
+│   - Image URL   │───▶│  - Vision Models │───▶│  - Generated    │
+│   - Audio File  │    │  - Audio Models  │    │    Images       │
+│   - Video Stream│    │  - Text Models   │    │  - Audio Speech │
+│   - File Path   │    │  - Multimodal    │    │  - Text Response│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Media Classes  │    │   Model Config   │    │  Output Handler │
+│  - Image()      │    │  - Modalities    │    │  - File Writer  │
+│  - Audio()      │    │  - Capabilities  │    │  - Stream Save  │
+│  - Video()      │    │  - Formats       │    │  - Media Utils  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+project-root/
+├── src/
+│   ├── agents/                 # Multimodal agent implementations
+│   │   ├── vision_agent.py     # Image processing agent
+│   │   ├── audio_agent.py      # Audio processing agent
+│   │   ├── video_agent.py      # Video analysis agent
+│   │   └── multimodal_agent.py # Combined multimodal agent
+│   ├── media/                  # Media handling utilities
+│   │   ├── processors/         # Media preprocessing
+│   │   ├── validators/         # Format validation
+│   │   └── converters/         # Format conversion
+│   ├── models/                 # Model configurations
+│   │   ├── vision_models.py    # GPT-4V, Gemini configs
+│   │   ├── audio_models.py     # Audio-capable models
+│   │   └── multimodal_models.py # Combined configurations
+│   ├── tools/                  # Multimodal tools
+│   │   ├── image_tools.py      # DALL-E, image generation
+│   │   ├── audio_tools.py      # TTS, audio processing
+│   │   └── video_tools.py      # Video analysis tools
+│   └── utils/                  # Utility functions
+│       ├── media_handler.py    # Media file operations
+│       ├── format_converter.py # Format conversions
+│       └── error_handler.py    # Media-specific errors
+├── media/                      # Media storage
+│   ├── input/                  # Input media files
+│   ├── output/                 # Generated media files
+│   └── cache/                  # Cached processed media
+├── config/
+│   ├── models.yaml             # Model configurations
+│   └── media.yaml             # Media handling settings
+└── tests/
+    ├── test_vision.py          # Vision agent tests
+    ├── test_audio.py           # Audio agent tests
+    └── test_multimodal.py      # Integration tests
+```
+
+# AGNO Multimodal Agents
+
+## Core Principles
+- AGNO agents natively support text, image, audio, and video inputs
+- AGNO agents can generate text, image, audio, and video outputs
+- Configure the appropriate model with multimodal capabilities
+- Use the proper media classes for handling different input/output types
+
+## Multimodal Input Implementation
+
+### Image Input
+```python
+# ✅ DO: Use proper Image class with multiple input methods
+from agno.agent import Agent
+from agno.media import Image
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),  # Model with vision capabilities
+    markdown=True,
+)
+
+# From URL
+agent.run(
+    "Describe this image in detail",
+    images=[Image(url="https://example.com/image.jpg")]
+)
+
+# From file path
+agent.run(
+    "What's in this image?",
+    images=[Image(filepath="path/to/image.jpg")]
+)
+
+# From binary content
+agent.run(
+    "Analyze this image",
+    images=[Image(content=image_bytes)]
+)
+
+# ❌ DON'T: Use models without vision capabilities for image tasks
+# ❌ DON'T: Pass raw file paths without Image wrapper
+```
+
+### Audio Input
+```python
+# ✅ DO: Configure audio modalities correctly
+from agno.agent import Agent
+from agno.media import Audio
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
+    markdown=True,
+)
+
+agent.run(
+    "Transcribe this audio",
+    audio=[Audio(content=audio_bytes, format="wav")]
+)
+
+# ❌ DON'T: Forget to specify audio format
+# ❌ DON'T: Use text-only models for audio processing
+```
+
+### Video Input
+```python
+# ✅ DO: Use video-capable models for video analysis
+from agno.agent import Agent
+from agno.media import Video
+from agno.models.google import Gemini
+
+agent = Agent(
+    model=Gemini(id="gemini-2.0-flash-exp"),  # Model with video capabilities
+    markdown=True,
+)
+
+agent.run(
+    "Describe this video",
+    videos=[Video(filepath="path/to/video.mp4")]
+)
+
+# ❌ DON'T: Use non-video models for video processing
+# ❌ DON'T: Process very large video files without chunking
+```
+
+## Multimodal Output Implementation
+
+### Image Generation
+```python
+# ✅ DO: Use specialized image generation tools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.dalle import DalleTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DalleTools()],
+    instructions="Generate images when requested",
+    markdown=True,
+)
+
+response = agent.run("Create an image of a sunset over mountains")
+images = agent.get_images()
+
+# ❌ DON'T: Try to generate images without proper tools
+# ❌ DON'T: Ignore image retrieval after generation
+```
+
+### Audio Generation
+```python
+# ✅ DO: Configure audio output properly
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.utils.audio import write_audio_to_file
+
+agent = Agent(
+    model=OpenAIChat(
+        id="gpt-4o-audio-preview",
+        modalities=["text", "audio"],
+        audio={"voice": "alloy", "format": "wav"},
+    ),
+    markdown=True,
+)
+
+response = agent.run("Tell me a brief story")
+
+if response.response_audio is not None:
+    write_audio_to_file(
+        audio=response.response_audio.content, 
+        filename="output.wav"
+    )
+
+# ❌ DON'T: Forget to check for audio response
+# ❌ DON'T: Use unsupported audio formats
+```
+
+## Advanced Patterns
+
+### Combined Multimodal Processing
+```python
+# ✅ DO: Process multiple media types in single request
+from agno.agent import Agent
+from agno.media import Image, Audio
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Analyze both visual and audio content together",
+    markdown=True,
+)
+
+response = agent.run(
+    "Compare the mood in this image with the tone of this audio",
+    images=[Image(filepath="scene.jpg")],
+    audio=[Audio(filepath="soundtrack.wav")]
+)
+
+# ❌ DON'T: Process media types separately when correlation is needed
+```
+
+### Media Validation and Error Handling
+```python
+# ✅ DO: Implement proper media validation
+from agno.media import Image
+from pathlib import Path
+import logging
+
+def validate_and_process_image(image_path: str) -> Image:
+    """Validate image file before processing."""
+    path = Path(image_path)
+    
+    if not path.exists():
+        raise FileNotFoundError(f"Image file not found: {image_path}")
+    
+    if not path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.webp']:
+        raise ValueError(f"Unsupported image format: {path.suffix}")
+    
+    file_size = path.stat().st_size
+    if file_size > 20 * 1024 * 1024:  # 20MB limit
+        logging.warning(f"Large image file: {file_size / 1024 / 1024:.1f}MB")
+    
+    return Image(filepath=str(path))
+
+# ❌ DON'T: Process media files without validation
+```
+
+### Streaming Multimodal Responses
+```python
+# ✅ DO: Handle streaming with multimodal content
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    stream=True,
+    markdown=True,
+)
+
+def process_multimodal_stream(prompt: str, image_path: str):
+    """Process streaming response with image input."""
+    response = agent.run(
+        prompt,
+        images=[Image(filepath=image_path)],
+        stream=True
+    )
+    
+    for chunk in response:
+        if chunk.content:
+            print(chunk.content, end="", flush=True)
+    
+    # Check for generated media after stream completes
+    if hasattr(agent, 'get_images'):
+        generated_images = agent.get_images()
+        return generated_images
+
+# ❌ DON'T: Expect media in streaming chunks
+```
+
+## Performance Optimization
+
+### Media Caching and Preprocessing
+```python
+# ✅ DO: Implement media caching for efficiency
+import hashlib
+from pathlib import Path
+from agno.media import Image
+
+class MediaCache:
+    def __init__(self, cache_dir: str = "media_cache"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+    
+    def get_image_hash(self, image_path: str) -> str:
+        """Generate hash for image caching."""
+        with open(image_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+    
+    def cache_processed_image(self, image_path: str, processed_data: bytes):
+        """Cache processed image data."""
+        hash_key = self.get_image_hash(image_path)
+        cache_file = self.cache_dir / f"{hash_key}.cache"
+        cache_file.write_bytes(processed_data)
+    
+    def get_cached_image(self, image_path: str) -> bytes:
+        """Retrieve cached processed image."""
+        hash_key = self.get_image_hash(image_path)
+        cache_file = self.cache_dir / f"{hash_key}.cache"
+        if cache_file.exists():
+            return cache_file.read_bytes()
+        return None
+
+# ❌ DON'T: Reprocess the same media files repeatedly
+```
+
+### Batch Media Processing
+```python
+# ✅ DO: Process multiple media files efficiently
+from agno.agent import Agent
+from agno.media import Image
+from typing import List
+
+def batch_image_analysis(image_paths: List[str], batch_size: int = 5) -> List[str]:
+    """Process images in batches for efficiency."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        markdown=True,
+    )
+    
+    results = []
+    for i in range(0, len(image_paths), batch_size):
+        batch = image_paths[i:i + batch_size]
+        images = [Image(filepath=path) for path in batch]
+        
+        response = agent.run(
+            "Analyze these images and provide brief descriptions for each",
+            images=images
+        )
+        results.append(response.content)
+    
+    return results
+
+# ❌ DON'T: Process large numbers of media files individually
+```
+
+## Testing Patterns
+
+### Multimodal Agent Testing
+```python
+# ✅ DO: Test multimodal functionality comprehensively
+import pytest
+from agno.agent import Agent
+from agno.media import Image, Audio
+from agno.models.openai import OpenAIChat
+
+class TestMultimodalAgent:
+    def setup_method(self):
+        self.agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            markdown=True,
+        )
+    
+    def test_image_analysis(self, sample_image):
+        """Test image analysis capability."""
+        response = self.agent.run(
+            "What's in this image?",
+            images=[Image(filepath=sample_image)]
+        )
+        assert response.content
+        assert len(response.content) > 10
+    
+    def test_audio_transcription(self, sample_audio):
+        """Test audio transcription."""
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o-audio-preview"),
+            markdown=True,
+        )
+        response = agent.run(
+            "Transcribe this audio",
+            audio=[Audio(filepath=sample_audio)]
+        )
+        assert response.content
+    
+    def test_multimodal_combination(self, sample_image, sample_audio):
+        """Test combined multimodal processing."""
+        response = self.agent.run(
+            "Describe the relationship between this image and audio",
+            images=[Image(filepath=sample_image)],
+            audio=[Audio(filepath=sample_audio)]
+        )
+        assert response.content
+        assert "image" in response.content.lower()
+        assert "audio" in response.content.lower()
+
+# ❌ DON'T: Test only text functionality in multimodal agents
+```
+
+## Best Practices Summary
+
+### Model Selection
+- Use vision-capable models (GPT-4V, Gemini) for image/video tasks
+- Configure audio modalities explicitly for audio processing
+- Match model capabilities to required media types
+- Consider token/processing costs for different model choices
+
+### Media Handling
+- Validate media files before processing
+- Implement appropriate file size limits
+- Use proper error handling for media operations
+- Cache processed media for efficiency
+
+### Performance
+- Batch process multiple media files when possible
+- Implement caching for frequently accessed media
+- Monitor memory usage with large media files
+- Use streaming for real-time multimodal interactions
+
+### Security
+- Validate media file types and sizes
+- Sanitize file paths and URLs
+- Implement rate limiting for media processing
+- Secure storage for sensitive media content
+
+## Media Class Usage
+
+| Media Class | Input Methods | Formats |
+|-------------|---------------|---------|
+| `Image` | url, filepath, content | jpg, png, webp, gif |
+| `Audio` | url, filepath, content | wav, mp3, ogg, m4a |
+| `Video` | url, filepath, content | mp4, mov, avi (model-dependent) |
+
+## References
+- [AGNO Multimodal Documentation](mdc:https:/docs.phidata.com/agents/multimodal)
+- [OpenAI Vision API](mdc:https:/platform.openai.com/docs/guides/vision)
+- [Google Gemini Multimodal](mdc:https:/ai.google.dev/gemini-api/docs/vision)
+- [Media Processing Best Practices](mdc:https:/docs.phidata.com/guides/media-processing)

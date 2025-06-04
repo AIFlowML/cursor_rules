@@ -1,8 +1,29 @@
 ---
-description: Create teams of agents in AGNO
+description: AGNO framework, Python, and multi-agent systems
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO framework, Python, and multi-agent systems. You focus on building efficient team-based AI architectures using AGNO's team modes for collaborative problem-solving and task distribution.
+
+## AGNO Team Modes Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Route Mode    │    │ Collaborate Mode │    │ Coordinate Mode │
+│   - Leader      │───▶│   - All Members  │───▶│   - Discussion  │
+│   - Select      │    │   - Parallel     │    │   - Sequential  │
+│   - Forward     │    │   - Synthesize   │    │   - Orchestrate │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Query Input   │    │   Team Context   │    │   Response Out  │
+│   - User Query  │    │   - Memory       │    │   - Synthesized │
+│   - Analysis    │    │   - Storage      │    │   - Structured  │
+│   - Routing     │    │   - History      │    │   - Streaming   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
 # AGNO Team Modes Reference
 
 AGNO supports three distinct team modes for multi-agent systems, each with different collaboration patterns and use cases. This rule provides detailed information about each mode and their configuration parameters.

@@ -11,11 +11,69 @@ AGNO offers three types of memory capabilities to enhance agent functionality:
 2. **User Memories**: Store user preferences and details for personalization
 3. **Session Summaries**: Create condensed representations of chat history
 
+## AGNO Memory Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Agent Request  │    │  Memory Layer    │    │  Storage Engine │
+│  - User Input   │───▶│  - Session Store │───▶│  - SQLite DB    │
+│  - User ID      │    │  - User Memories │    │  - PostgreSQL   │
+│  - Session ID   │    │  - Chat History  │    │  - MongoDB      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Response Output │    │ Memory Retrieval │    │  Data Retrieval │
+│ - With Context  │◀───│ - History Context│◀───│ - Persisted     │
+│ - Personalized │    │ - User Preferences│    │   Sessions      │
+│ - Continuity    │    │ - Past Knowledge │    │ - User Memories │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+project-root/
+├── src/
+│   ├── agents/                 # Agent implementations
+│   │   ├── memory_agent.py     # Memory-enabled agents
+│   │   ├── session_agent.py    # Session-persistent agents
+│   │   └── user_agent.py       # User-specific agents
+│   ├── storage/                # Storage implementations
+│   │   ├── sqlite_handler.py   # SQLite operations
+│   │   ├── postgres_handler.py # PostgreSQL operations
+│   │   └── mongo_handler.py    # MongoDB operations
+│   ├── memory/                 # Memory management
+│   │   ├── session_manager.py  # Session state management
+│   │   ├── user_memories.py    # User memory operations
+│   │   └── memory_utils.py     # Memory utilities
+│   ├── models/                 # Database models
+│   │   ├── session_models.py   # Session data models
+│   │   ├── memory_models.py    # Memory data models
+│   │   └── user_models.py      # User data models
+│   └── utils/                  # Utility functions
+│       ├── db_utils.py         # Database utilities
+│       ├── migration_utils.py  # Database migrations
+│       └── backup_utils.py     # Backup operations
+├── data/                       # Database files
+│   ├── agent.db               # SQLite database
+│   ├── memory.db              # Memory database
+│   └── backups/               # Database backups
+├── config/
+│   ├── database.yaml          # Database configurations
+│   └── memory.yaml            # Memory settings
+└── tests/
+    ├── test_memory.py         # Memory system tests
+    ├── test_storage.py        # Storage tests
+    └── test_integration.py    # Integration tests
+```
+
 ## Session Storage Implementation
 
 Session storage persists chat history and state in a database, allowing multi-turn conversations.
 
 ```python
+# ✅ DO: Configure session storage with proper parameters
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
@@ -34,6 +92,9 @@ agent = Agent(
 
 # Run agent - history will be retrieved automatically
 agent.print_response("What did we discuss earlier?")
+
+# ❌ DON'T: Use session storage without history configuration
+# ❌ DON'T: Forget to set appropriate session IDs for continuity
 ```
 
 ## User Memories Implementation
@@ -41,6 +102,7 @@ agent.print_response("What did we discuss earlier?")
 Store specific facts about users that persist across conversations.
 
 ```python
+# ✅ DO: Initialize memory with proper model and database
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
@@ -72,33 +134,335 @@ agent.print_response(
 
 # Access user memories programmatically
 user_memories = memory.get_user_memories(user_id="john@example.com")
+
+# ❌ DON'T: Use memory without user_id parameter
+# ❌ DON'T: Initialize memory without proper model configuration
 ```
 
-## Memory Best Practices
+## Advanced Memory Patterns
 
-1. **Session Storage**:
-   - Use `add_history_to_messages=True` to include chat history
-   - Set appropriate `num_history_runs` (3-5 is typical)
-   - Enable `read_chat_history=True` for longer history access
+### Production-Ready Storage Configuration
+```python
+# ✅ DO: Use PostgreSQL for production environments
+from agno.agent import Agent
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.models.openai import OpenAIChat
+from agno.storage.postgres import PostgresStorage
+import os
 
-2. **User Memories**:
-   - Always include `user_id` parameter in agent runs
-   - Use `enable_agentic_memory=True` for agent-controlled memory management
-   - Consider proper database backup for production systems
+# Production database configuration
+db_config = {
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": os.getenv("DB_NAME"),
+}
 
-3. **Storage Selection**:
-   - SQLite for development and small deployments
-   - PostgreSQL for production environments
-   - MongoDB for document-oriented storage
+# Memory database
+memory_db = PostgresMemoryDb(
+    table_name="user_memories",
+    **db_config
+)
 
-4. **Memory Management**:
-   - Use `memory.clear()` to reset user memories
-   - Implement regular memory summarization for long-term users
-   - Validate and sanitize memory content before storage
+# Session storage
+storage = PostgresStorage(
+    table_name="agent_sessions",
+    **db_config
+)
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    memory=Memory(model=OpenAIChat(id="gpt-4o"), db=memory_db),
+    storage=storage,
+    enable_agentic_memory=True,
+    add_history_to_messages=True,
+    num_history_runs=5,
+)
+
+# ❌ DON'T: Use SQLite in production without considering scalability
+# ❌ DON'T: Hardcode database credentials
+```
+
+### Memory Cleanup and Management
+```python
+# ✅ DO: Implement memory management utilities
+from agno.memory.v2.memory import Memory
+from datetime import datetime, timedelta
+import logging
+
+class MemoryManager:
+    def __init__(self, memory: Memory):
+        self.memory = memory
+        self.logger = logging.getLogger(__name__)
+    
+    def cleanup_old_memories(self, user_id: str, days_threshold: int = 30):
+        """Remove memories older than threshold."""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=days_threshold)
+            # Implementation depends on memory DB structure
+            self.logger.info(f"Cleaned up old memories for user {user_id}")
+        except Exception as e:
+            self.logger.error(f"Memory cleanup failed: {e}")
+    
+    def backup_user_memories(self, user_id: str, backup_path: str):
+        """Backup user memories to file."""
+        try:
+            memories = self.memory.get_user_memories(user_id=user_id)
+            # Implement backup logic
+            self.logger.info(f"Backed up memories for user {user_id}")
+        except Exception as e:
+            self.logger.error(f"Memory backup failed: {e}")
+    
+    def clear_user_memories(self, user_id: str):
+        """Clear all memories for a user."""
+        try:
+            self.memory.clear(user_id=user_id)
+            self.logger.info(f"Cleared memories for user {user_id}")
+        except Exception as e:
+            self.logger.error(f"Memory clear failed: {e}")
+
+# ❌ DON'T: Let memories accumulate indefinitely
+# ❌ DON'T: Skip implementing backup strategies
+```
+
+### Session Summarization
+```python
+# ✅ DO: Implement session summarization for long conversations
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+class SessionSummarizer:
+    def __init__(self):
+        self.summarizer = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            instructions="Create concise summaries of conversation history",
+        )
+    
+    def summarize_session(self, chat_history: list) -> str:
+        """Summarize chat history for context preservation."""
+        if len(chat_history) < 5:  # Don't summarize short sessions
+            return ""
+        
+        # Extract messages for summarization
+        messages = [msg.get('content', '') for msg in chat_history]
+        conversation_text = "\n".join(messages)
+        
+        summary = self.summarizer.run(
+            f"Summarize this conversation, focusing on key decisions, "
+            f"preferences, and important context:\n\n{conversation_text}"
+        )
+        return summary.content
+    
+    def should_summarize(self, num_messages: int, threshold: int = 20) -> bool:
+        """Determine if session should be summarized."""
+        return num_messages >= threshold
+
+# ❌ DON'T: Let session history grow unbounded
+# ❌ DON'T: Lose important context when truncating history
+```
+
+## Performance Optimization
+
+### Memory Query Optimization
+```python
+# ✅ DO: Optimize memory queries for performance
+from agno.memory.v2.memory import Memory
+from typing import List, Dict
+
+class OptimizedMemoryHandler:
+    def __init__(self, memory: Memory):
+        self.memory = memory
+        self._memory_cache = {}
+    
+    def get_user_memories_cached(self, user_id: str) -> List[Dict]:
+        """Get user memories with caching."""
+        if user_id in self._memory_cache:
+            return self._memory_cache[user_id]
+        
+        memories = self.memory.get_user_memories(user_id=user_id)
+        self._memory_cache[user_id] = memories
+        return memories
+    
+    def invalidate_cache(self, user_id: str = None):
+        """Invalidate memory cache for user or all users."""
+        if user_id:
+            self._memory_cache.pop(user_id, None)
+        else:
+            self._memory_cache.clear()
+    
+    def batch_get_memories(self, user_ids: List[str]) -> Dict[str, List[Dict]]:
+        """Batch retrieve memories for multiple users."""
+        results = {}
+        for user_id in user_ids:
+            results[user_id] = self.get_user_memories_cached(user_id)
+        return results
+
+# ❌ DON'T: Query memory database repeatedly for the same user
+# ❌ DON'T: Load all memories when only recent ones are needed
+```
+
+### Database Connection Management
+```python
+# ✅ DO: Implement proper connection pooling
+from agno.storage.postgres import PostgresStorage
+from contextlib import contextmanager
+import psycopg2.pool
+
+class DatabaseManager:
+    def __init__(self, db_config: dict, min_conn: int = 5, max_conn: int = 20):
+        self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
+            min_conn, max_conn, **db_config
+        )
+    
+    @contextmanager
+    def get_connection(self):
+        """Get database connection from pool."""
+        conn = None
+        try:
+            conn = self.connection_pool.getconn()
+            yield conn
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+    
+    def health_check(self) -> bool:
+        """Check database connectivity."""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    return True
+        except Exception:
+            return False
+
+# ❌ DON'T: Create new connections for each memory operation
+# ❌ DON'T: Skip connection health checks in production
+```
+
+## Testing Patterns
+
+### Memory System Testing
+```python
+# ✅ DO: Test memory functionality comprehensively
+import pytest
+from agno.agent import Agent
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.models.openai import OpenAIChat
+
+class TestMemorySystem:
+    def setup_method(self):
+        """Setup test environment."""
+        self.memory_db = SqliteMemoryDb(
+            table_name="test_memories",
+            db_file=":memory:"  # Use in-memory database for tests
+        )
+        self.memory = Memory(
+            model=OpenAIChat(id="gpt-4o"),
+            db=self.memory_db
+        )
+        self.agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            memory=self.memory,
+            enable_user_memories=True,
+        )
+    
+    def test_memory_persistence(self):
+        """Test that memories persist across agent runs."""
+        user_id = "test_user_001"
+        
+        # First interaction
+        self.agent.run(
+            "My favorite color is blue",
+            user_id=user_id
+        )
+        
+        # Check memory was created
+        memories = self.memory.get_user_memories(user_id=user_id)
+        assert len(memories) > 0
+        assert any("blue" in str(memory).lower() for memory in memories)
+    
+    def test_memory_retrieval(self):
+        """Test memory retrieval and context usage."""
+        user_id = "test_user_002"
+        
+        # Store initial memory
+        self.agent.run(
+            "I work as a software engineer",
+            user_id=user_id
+        )
+        
+        # Test memory retrieval in subsequent interaction
+        response = self.agent.run(
+            "What's my profession?",
+            user_id=user_id
+        )
+        
+        assert "software engineer" in response.content.lower()
+    
+    def test_memory_isolation(self):
+        """Test that user memories are properly isolated."""
+        user1_id = "test_user_003"
+        user2_id = "test_user_004"
+        
+        # Store different memories for different users
+        self.agent.run("I love pizza", user_id=user1_id)
+        self.agent.run("I hate pizza", user_id=user2_id)
+        
+        # Check memory isolation
+        user1_memories = self.memory.get_user_memories(user_id=user1_id)
+        user2_memories = self.memory.get_user_memories(user_id=user2_id)
+        
+        assert len(user1_memories) > 0
+        assert len(user2_memories) > 0
+        assert user1_memories != user2_memories
+
+# ❌ DON'T: Skip testing memory isolation between users
+# ❌ DON'T: Use production databases for testing
+```
+
+## Memory Best Practices Summary
+
+### Session Storage Best Practices
+- Use `add_history_to_messages=True` to include chat history
+- Set appropriate `num_history_runs` (3-5 is typical)
+- Enable `read_chat_history=True` for longer history access
+- Implement session cleanup for storage efficiency
+- Use unique session IDs for proper conversation continuity
+
+### User Memories Best Practices
+- Always include `user_id` parameter in agent runs
+- Use `enable_agentic_memory=True` for agent-controlled memory management
+- Consider proper database backup for production systems
+- Implement memory validation and sanitization
+- Monitor memory growth and implement cleanup policies
+
+### Storage Selection Guidelines
+- SQLite for development and small deployments
+- PostgreSQL for production environments with high concurrency
+- MongoDB for document-oriented storage and flexible schemas
+- Consider read/write patterns when choosing storage backend
+
+### Performance Considerations
+- Implement connection pooling for database operations
+- Use caching for frequently accessed memories
+- Batch memory operations when possible
+- Monitor database performance and optimize queries
+- Implement proper indexing on user_id and timestamp columns
+
+### Security Best Practices
+- Encrypt sensitive memory data at rest
+- Implement proper access controls and user isolation
+- Sanitize and validate memory content before storage
+- Regular security audits of stored memory data
+- Implement proper backup and disaster recovery procedures
 
 ## Complete Memory Example
 
 ```python
+# ✅ DO: Comprehensive memory-enabled agent setup
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
@@ -135,4 +499,13 @@ agent.print_response(
     user_id=user_id,
     stream=True
 )
+
+# ❌ DON'T: Skip implementing proper error handling for memory operations
+# ❌ DON'T: Use memory systems without considering data privacy implications
 ```
+
+## References
+- [AGNO Memory Documentation](mdc:https:/docs.phidata.com/agents/memory)
+- [AGNO Storage Guide](mdc:https:/docs.phidata.com/agents/storage)
+- [Database Best Practices](mdc:https:/docs.phidata.com/guides/database)
+- [Memory Performance Optimization](mdc:https:/docs.phidata.com/guides/performance)

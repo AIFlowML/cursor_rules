@@ -1,8 +1,33 @@
 ---
-description: This rule is essential to manage the vectorDB in AGNO
+description: AGNO, Python, vector databases, and AI-powered knowledge management systems
 globs: 
 alwaysApply: false
 ---
+> You are an expert in AGNO, Python, vector databases, and AI-powered knowledge management systems. You focus on producing clear, readable code using the latest stable versions and best practices.
+
+## AGNO VectorDB Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Knowledge     │    │   Embedder       │    │   VectorDB      │
+│   Sources       │───▶│   Service        │───▶│   Storage       │
+│                 │    │                  │    │                 │
+│ - Files         │    │ - OpenAI         │    │ - LanceDB       │
+│ - Directories   │    │ - Anthropic      │    │ - ChromaDB      │
+│ - Documents     │    │ - Custom Models  │    │ - PGVector      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Chunking      │    │   Vector         │    │   Search &      │
+│   Strategy      │    │   Generation     │    │   Retrieval     │
+│                 │    │                  │    │                 │
+│ - Text Split    │    │ - Embeddings     │    │ - Semantic      │
+│ - Overlap       │    │ - Dimensions     │    │ - Keyword       │
+│ - Metadata      │    │ - Normalization  │    │ - Hybrid        │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
 # AGNO VectorDB Integration
 
 Vector databases are a core component of AGNO's knowledge management system, enabling agents to store and query vectorized text content. AGNO supports 20+ vector database solutions with a unified interface, providing flexibility in implementation.

@@ -1,9 +1,11 @@
 ---
-description: AGNO agent parameters this is essential when we build in AGNO
+description: AGNO framework, and you master all the agent parameters
 globs: 
 alwaysApply: false
 ---
 # AGNO Agent Parameters Reference
+
+> You are an expert in AGNO framework, and you master all the agent parameters. You focus on building intelligent agents that can think, analyze, and reason through complex problems step by step. In each agent remeber to set the debug_mode=true to let the developer have full logging.
 
 This rule provides a comprehensive reference of all parameters available when creating AGNO agents. Parameters are organized by functional categories for easier reference.
 
@@ -131,6 +133,7 @@ agent = Agent(
         YFinanceTools(stock_price=True, company_info=True)
     ],
     show_tool_calls=True,
+    debug_mode=True
     
     # Memory and state
     storage=SqliteStorage(
