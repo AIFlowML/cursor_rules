@@ -1,0 +1,901 @@
+---
+description: Guidelines for implementing MCP server capabilities and feature flags
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) server capabilities, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK patterns and best practices.
+
+# MCP Server Capabilities Implementation Rules
+
+## MCP Server Capabilities Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Capability    │    │   Registration   │    │   Validation    │
+│   Declaration   │───▶│   & Merging      │───▶│   & Assertion   │
+│                 │    │                  │    │                 │
+│ - Resources     │    │ - mergeCapabs    │    │ - Method Checks │
+│ - Tools         │    │ - registerCaps   │    │ - Feature Gates │
+│ - Prompts       │    │ - Dynamic Load   │    │ - Error Handle  │
+│ - Logging       │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Initialize    │    │   Runtime        │    │   Notifications │
+│   Protocol      │    │   Assertions     │    │   & Updates     │
+│                 │    │                  │    │                 │
+│ - Init Request  │    │ - assertMethod   │    │ - listChanged   │
+│ - Capability    │    │ - assertNotif    │    │ - resources/up  │
+│ - Negotiation   │    │ - Client Checks  │    │ - tools/changed │
+│                 │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+server/
+├── capabilities/        # Capability definitions and management
+│   ├── registry.ts     # Capability registration system
+│   ├── validator.ts    # Capability validation logic
+│   └── types.ts        # Capability type definitions
+├── handlers/           # Request handlers by capability
+│   ├── resources.ts    # Resource capability handlers
+│   ├── tools.ts        # Tool capability handlers
+│   ├── prompts.ts      # Prompt capability handlers
+│   └── logging.ts      # Logging capability handlers
+├── server.ts           # Main server implementation
+└── index.ts           # Server exports
+```
+
+## Core Implementation Patterns
+
+### Server Capability Declaration
+
+```typescript
+// ✅ DO: Comprehensive server capability setup
+import { Server, ServerCapabilities } from "@modelcontextprotocol/sdk/server/index.js";
+
+const server = new Server({
+  name: "advanced-mcp-server",
+  version: "1.0.0"
+}, {
+  capabilities: {
+    resources: {
+      subscribe: true,
+      listChanged: true
+    },
+    tools: {
+      listChanged: true
+    },
+    prompts: {
+      listChanged: true
+    },
+    logging: {},
+    completions: {},
+    experimental: {
+      customFeature: {
+        enabled: true,
+        version: "1.0.0"
+      }
+    }
+  } as ServerCapabilities,
+  instructions: "This server provides comprehensive MCP functionality with real-time updates."
+});
+
+// ❌ DON'T: Minimal or incorrect capability declaration
+const badServer = new Server({
+  name: "server",
+  version: "1.0.0"
+}, {}); // Missing capabilities
+```
+
+### Dynamic Capability Registration
+
+```typescript
+// ✅ DO: Register capabilities before transport connection
+class CapabilityManager {
+  private server: Server;
+  private dynamicCapabilities: ServerCapabilities = {};
+
+  constructor(server: Server) {
+    this.server = server;
+  }
+
+  registerResourceCapability(options: { subscribe?: boolean; listChanged?: boolean }) {
+    this.dynamicCapabilities.resources = {
+      ...this.dynamicCapabilities.resources,
+      ...options
+    };
+    
+    this.server.registerCapabilities(this.dynamicCapabilities);
+  }
+
+  registerToolCapability(options: { listChanged?: boolean }) {
+    this.dynamicCapabilities.tools = {
+      ...this.dynamicCapabilities.tools,
+      ...options
+    };
+    
+    this.server.registerCapabilities(this.dynamicCapabilities);
+  }
+
+  registerLoggingCapability() {
+    this.dynamicCapabilities.logging = {};
+    this.server.registerCapabilities(this.dynamicCapabilities);
+  }
+}
+
+// Usage
+const capabilityManager = new CapabilityManager(server);
+capabilityManager.registerResourceCapability({ subscribe: true, listChanged: true });
+capabilityManager.registerToolCapability({ listChanged: true });
+
+// ❌ DON'T: Register capabilities after transport connection
+// server.connect(transport); // Connected first
+// server.registerCapabilities(caps); // This will throw an error
+```
+
+### Resource Capability Implementation
+
+```typescript
+// ✅ DO: Complete resource capability with subscription support
+import { 
+  ListResourcesResult, 
+  ReadResourceResult, 
+  ResourceUpdatedNotification 
+} from "@modelcontextprotocol/sdk/types.js";
+
+class ResourceCapabilityHandler {
+  private server: Server;
+  private subscriptions = new Map<string, Set<string>>();
+  private resources = new Map<string, any>();
+
+  constructor(server: Server) {
+    this.server = server;
+    this.setupResourceHandlers();
+  }
+
+  private setupResourceHandlers() {
+    // Register list resources handler
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      return {
+        resources: Array.from(this.resources.values()).map(resource => ({
+          uri: resource.uri,
+          name: resource.name,
+          description: resource.description,
+          mimeType: resource.mimeType
+        }))
+      } as ListResourcesResult;
+    });
+
+    // Register read resource handler
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const resource = this.resources.get(request.params.uri);
+      if (!resource) {
+        throw new Error(`Resource not found: ${request.params.uri}`);
+      }
+
+      return {
+        contents: [{
+          uri: resource.uri,
+          text: resource.content,
+          mimeType: resource.mimeType
+        }]
+      } as ReadResourceResult;
+    });
+
+    // Register subscription handlers if capability is enabled
+    if (this.server.getCapabilities().resources?.subscribe) {
+      this.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+        const { uri } = request.params;
+        const subs = this.subscriptions.get(uri) ?? new Set();
+        subs.add(request.id?.toString() ?? "unknown");
+        this.subscriptions.set(uri, subs);
+        return {};
+      });
+
+      this.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+        const { uri } = request.params;
+        const subs = this.subscriptions.get(uri);
+        if (subs) {
+          subs.delete(request.id?.toString() ?? "unknown");
+          if (subs.size === 0) {
+            this.subscriptions.delete(uri);
+          }
+        }
+        return {};
+      });
+    }
+  }
+
+  async updateResource(uri: string, content: string) {
+    const resource = this.resources.get(uri);
+    if (resource) {
+      resource.content = content;
+      resource.lastModified = new Date().toISOString();
+      
+      // Notify subscribers if capability is enabled
+      if (this.server.getCapabilities().resources?.subscribe && this.subscriptions.has(uri)) {
+        await this.server.sendResourceUpdated({ uri });
+      }
+    }
+  }
+
+  async notifyResourceListChanged() {
+    if (this.server.getCapabilities().resources?.listChanged) {
+      await this.server.sendResourceListChanged();
+    }
+  }
+}
+
+// ❌ DON'T: Incomplete resource implementation
+class IncompleteResourceHandler {
+  // Missing subscription handling
+  // Missing proper error handling
+  // Missing capability checks
+}
+```
+
+### Tool Capability Implementation
+
+```typescript
+// ✅ DO: Comprehensive tool capability with validation
+import { 
+  Tool, 
+  CallToolResult, 
+  ListToolsResult 
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+class ToolCapabilityHandler {
+  private server: Server;
+  private tools = new Map<string, Tool>();
+  private toolHandlers = new Map<string, Function>();
+
+  constructor(server: Server) {
+    this.server = server;
+    this.setupToolHandlers();
+  }
+
+  private setupToolHandlers() {
+    // Register list tools handler
+    this.server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => {
+      return {
+        tools: Array.from(this.tools.values())
+      };
+    });
+
+    // Register call tool handler
+    this.server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+      const { name, arguments: args } = request.params;
+      const handler = this.toolHandlers.get(name);
+      
+      if (!handler) {
+        throw new Error(`Tool not found: ${name}`);
+      }
+
+      // Validate arguments against tool schema
+      const tool = this.tools.get(name);
+      if (tool?.inputSchema) {
+        try {
+          z.object(tool.inputSchema.properties ?? {}).parse(args);
+        } catch (error) {
+          throw new Error(`Invalid arguments for tool ${name}: ${error.message}`);
+        }
+      }
+
+      return await handler(args);
+    });
+  }
+
+  registerTool<T extends Record<string, any>>(
+    name: string,
+    description: string,
+    inputSchema: z.ZodObject<any>,
+    handler: (args: T) => Promise<CallToolResult>
+  ) {
+    // Validate tool registration
+    if (this.tools.has(name)) {
+      throw new Error(`Tool ${name} already registered`);
+    }
+
+    const tool: Tool = {
+      name,
+      description,
+      inputSchema: {
+        type: "object",
+        properties: Object.fromEntries(
+          Object.entries(inputSchema.shape).map(([key, schema]) => [
+            key,
+            { type: (schema as z.ZodType)._def.typeName.toLowerCase() }
+          ])
+        )
+      }
+    };
+
+    this.tools.set(name, tool);
+    this.toolHandlers.set(name, handler);
+
+    // Notify about tool list changes if capability is enabled
+    this.notifyToolListChanged();
+  }
+
+  async notifyToolListChanged() {
+    if (this.server.getCapabilities().tools?.listChanged) {
+      await this.server.sendToolListChanged();
+    }
+  }
+}
+
+// Usage example
+const toolHandler = new ToolCapabilityHandler(server);
+
+toolHandler.registerTool(
+  "calculate",
+  "Perform mathematical calculations",
+  z.object({
+    expression: z.string().describe("Mathematical expression to evaluate"),
+    precision: z.number().optional().describe("Decimal precision")
+  }),
+  async ({ expression, precision = 2 }) => {
+    try {
+      const result = eval(expression); // In production, use a safe math parser
+      return {
+        content: [{
+          type: "text",
+          text: `Result: ${result.toFixed(precision)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+// ❌ DON'T: Unsafe tool registration
+// Missing validation, error handling, and capability checks
+```
+
+## Advanced Patterns
+
+### Capability-Based Request Validation
+
+```typescript
+// ✅ DO: Implement comprehensive capability validation
+class CapabilityValidator {
+  private server: Server;
+
+  constructor(server: Server) {
+    this.server = server;
+  }
+
+  validateRequestCapability(method: string): void {
+    const capabilities = this.server.getCapabilities();
+    
+    switch (method) {
+      case "resources/list":
+      case "resources/read":
+        if (!capabilities.resources) {
+          throw new Error(`Server does not support resources (required for ${method})`);
+        }
+        break;
+
+      case "resources/subscribe":
+        if (!capabilities.resources?.subscribe) {
+          throw new Error(`Server does not support resource subscriptions (required for ${method})`);
+        }
+        break;
+
+      case "tools/list":
+      case "tools/call":
+        if (!capabilities.tools) {
+          throw new Error(`Server does not support tools (required for ${method})`);
+        }
+        break;
+
+      case "prompts/list":
+      case "prompts/get":
+        if (!capabilities.prompts) {
+          throw new Error(`Server does not support prompts (required for ${method})`);
+        }
+        break;
+
+      case "logging/setLevel":
+        if (!capabilities.logging) {
+          throw new Error(`Server does not support logging (required for ${method})`);
+        }
+        break;
+
+      case "completion/complete":
+        if (!capabilities.completions) {
+          throw new Error(`Server does not support completions (required for ${method})`);
+        }
+        break;
+
+      default:
+        // Check experimental capabilities
+        if (method.startsWith("experimental/")) {
+          const feature = method.replace("experimental/", "");
+          if (!capabilities.experimental?.[feature]) {
+            throw new Error(`Server does not support experimental feature: ${feature}`);
+          }
+        }
+    }
+  }
+
+  validateNotificationCapability(method: string): void {
+    const capabilities = this.server.getCapabilities();
+    
+    switch (method) {
+      case "notifications/resources/updated":
+        if (!capabilities.resources?.subscribe) {
+          throw new Error(`Server cannot send resource updates without subscribe capability`);
+        }
+        break;
+
+      case "notifications/resources/list_changed":
+        if (!capabilities.resources?.listChanged) {
+          throw new Error(`Server cannot send resource list changes without listChanged capability`);
+        }
+        break;
+
+      case "notifications/tools/list_changed":
+        if (!capabilities.tools?.listChanged) {
+          throw new Error(`Server cannot send tool list changes without listChanged capability`);
+        }
+        break;
+
+      case "notifications/prompts/list_changed":
+        if (!capabilities.prompts?.listChanged) {
+          throw new Error(`Server cannot send prompt list changes without listChanged capability`);
+        }
+        break;
+
+      case "notifications/message":
+        if (!capabilities.logging) {
+          throw new Error(`Server cannot send log messages without logging capability`);
+        }
+        break;
+    }
+  }
+}
+
+// ❌ DON'T: Skip capability validation
+// This can lead to runtime errors and broken protocols
+```
+
+### Experimental Capability Management
+
+```typescript
+// ✅ DO: Proper experimental capability handling
+interface ExperimentalCapability {
+  enabled: boolean;
+  version: string;
+  description?: string;
+  deprecationDate?: string;
+}
+
+class ExperimentalCapabilityManager {
+  private server: Server;
+  private experimentalFeatures = new Map<string, ExperimentalCapability>();
+
+  constructor(server: Server) {
+    this.server = server;
+  }
+
+  registerExperimentalFeature(
+    name: string, 
+    capability: ExperimentalCapability
+  ) {
+    this.experimentalFeatures.set(name, capability);
+    
+    // Update server capabilities
+    const currentCaps = this.server.getCapabilities();
+    const experimentalCaps = Object.fromEntries(this.experimentalFeatures);
+    
+    this.server.registerCapabilities({
+      ...currentCaps,
+      experimental: {
+        ...currentCaps.experimental,
+        ...experimentalCaps
+      }
+    });
+  }
+
+  isFeatureEnabled(name: string): boolean {
+    const feature = this.experimentalFeatures.get(name);
+    return feature?.enabled ?? false;
+  }
+
+  validateExperimentalRequest(method: string) {
+    if (!method.startsWith("experimental/")) {
+      return;
+    }
+
+    const featureName = method.replace("experimental/", "");
+    if (!this.isFeatureEnabled(featureName)) {
+      throw new Error(`Experimental feature not enabled: ${featureName}`);
+    }
+
+    const feature = this.experimentalFeatures.get(featureName);
+    if (feature?.deprecationDate) {
+      const deprecationDate = new Date(feature.deprecationDate);
+      if (new Date() > deprecationDate) {
+        console.warn(`Warning: Experimental feature ${featureName} is deprecated`);
+      }
+    }
+  }
+}
+
+// Usage
+const expManager = new ExperimentalCapabilityManager(server);
+expManager.registerExperimentalFeature("aiAgent", {
+  enabled: true,
+  version: "1.0.0",
+  description: "AI agent capabilities",
+  deprecationDate: "2025-01-01"
+});
+
+// ❌ DON'T: Enable experimental features without proper management
+```
+
+### Logging Capability Implementation
+
+```typescript
+// ✅ DO: Comprehensive logging capability
+import { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+
+class LoggingCapabilityHandler {
+  private server: Server;
+  private currentLevel: LoggingLevel = "info";
+  private readonly logLevels: Record<LoggingLevel, number> = {
+    debug: 0,
+    info: 1,
+    notice: 2,
+    warning: 3,
+    error: 4,
+    critical: 5,
+    alert: 6,
+    emergency: 7
+  };
+
+  constructor(server: Server) {
+    this.server = server;
+    this.setupLoggingHandlers();
+  }
+
+  private setupLoggingHandlers() {
+    // Register set level handler
+    this.server.setRequestHandler(SetLevelRequestSchema, async (request) => {
+      const { level } = request.params;
+      this.currentLevel = level;
+      return {};
+    });
+  }
+
+  async log(level: LoggingLevel, message: string, data?: unknown) {
+    if (this.shouldLog(level)) {
+      await this.server.sendLoggingMessage({
+        level,
+        data: data ? `${message}: ${JSON.stringify(data)}` : message,
+        logger: this.server.constructor.name
+      });
+    }
+  }
+
+  private shouldLog(level: LoggingLevel): boolean {
+    return this.logLevels[level] >= this.logLevels[this.currentLevel];
+  }
+
+  async debug(message: string, data?: unknown) {
+    await this.log("debug", message, data);
+  }
+
+  async info(message: string, data?: unknown) {
+    await this.log("info", message, data);
+  }
+
+  async warning(message: string, data?: unknown) {
+    await this.log("warning", message, data);
+  }
+
+  async error(message: string, data?: unknown) {
+    await this.log("error", message, data);
+  }
+}
+
+// ❌ DON'T: Ignore log levels or bypass capability checks
+```
+
+## Testing Patterns
+
+### Capability Testing
+
+```typescript
+// ✅ DO: Comprehensive capability testing
+describe("Server Capabilities", () => {
+  let server: Server;
+  let transport: TestTransport;
+
+  beforeEach(() => {
+    server = new Server({
+      name: "test-server",
+      version: "1.0.0"
+    }, {
+      capabilities: {
+        resources: { subscribe: true, listChanged: true },
+        tools: { listChanged: true },
+        logging: {}
+      }
+    });
+    
+    transport = new TestTransport();
+  });
+
+  it("should declare capabilities during initialization", async () => {
+    await server.connect(transport);
+    
+    const initRequest = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "test-client", version: "1.0.0" }
+      }
+    };
+
+    const response = await transport.send(initRequest);
+    
+    expect(response.result.capabilities).toEqual({
+      resources: { subscribe: true, listChanged: true },
+      tools: { listChanged: true },
+      logging: {}
+    });
+  });
+
+  it("should validate requests against capabilities", async () => {
+    await server.connect(transport);
+    
+    // This should work - resources capability is declared
+    const listResourcesRequest = {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/list",
+      params: {}
+    };
+    
+    await expect(transport.send(listResourcesRequest)).resolves.toBeDefined();
+    
+    // This should fail if completions capability is not declared
+    const completeRequest = {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "completion/complete",
+      params: { ref: { type: "ref", uri: "test://example" } }
+    };
+    
+    await expect(transport.send(completeRequest)).rejects.toThrow(
+      "Server does not support completions"
+    );
+  });
+
+  it("should handle capability registration before transport connection", () => {
+    expect(() => {
+      server.registerCapabilities({ prompts: { listChanged: true } });
+    }).not.toThrow();
+    
+    // After connection, registration should fail
+    server.connect(transport);
+    
+    expect(() => {
+      server.registerCapabilities({ completions: {} });
+    }).toThrow("Cannot register capabilities after connecting to transport");
+  });
+
+  it("should validate notification capabilities", async () => {
+    const handler = new ResourceCapabilityHandler(server);
+    
+    // Should work - resources capability with listChanged is declared
+    await expect(handler.notifyResourceListChanged()).resolves.toBeUndefined();
+    
+    // Should fail for undeclared capabilities
+    const toolHandler = new ToolCapabilityHandler(new Server({
+      name: "test",
+      version: "1.0.0"
+    }, { capabilities: {} })); // No tool capabilities
+    
+    await expect(toolHandler.notifyToolListChanged()).rejects.toThrow();
+  });
+});
+
+// ❌ DON'T: Skip capability validation in tests
+```
+
+### Integration Testing with Capabilities
+
+```typescript
+// ✅ DO: Test capability negotiation and usage
+describe("Capability Integration", () => {
+  it("should handle full capability workflow", async () => {
+    const server = new Server({
+      name: "integration-test-server",
+      version: "1.0.0"
+    }, {
+      capabilities: {
+        resources: { subscribe: true, listChanged: true },
+        tools: { listChanged: true },
+        logging: {}
+      }
+    });
+
+    const client = new Client({
+      name: "test-client",
+      version: "1.0.0"
+    }, {
+      capabilities: {
+        roots: { listChanged: true },
+        sampling: {}
+      }
+    });
+
+    // Connect via transport
+    const { clientTransport, serverTransport } = createTestTransportPair();
+    
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport)
+    ]);
+
+    // Test capability-dependent operations
+    const serverCaps = client.getServerCapabilities();
+    expect(serverCaps?.resources?.subscribe).toBe(true);
+    
+    // Test resource subscription (requires subscribe capability)
+    if (serverCaps?.resources?.subscribe) {
+      await client.request({
+        method: "resources/subscribe",
+        params: { uri: "test://example" }
+      });
+    }
+
+    // Test logging (requires logging capability)
+    if (serverCaps?.logging) {
+      await server.sendLoggingMessage({
+        level: "info",
+        data: "Test message"
+      });
+    }
+
+    // Verify client receives capability-dependent notifications
+    const notifications = await client.getReceivedNotifications();
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        method: "notifications/message"
+      })
+    );
+  });
+});
+```
+
+## Security Patterns
+
+### Capability-Based Access Control
+
+```typescript
+// ✅ DO: Implement capability-based security
+class CapabilitySecurityManager {
+  private server: Server;
+  private allowedMethods = new Set<string>();
+
+  constructor(server: Server) {
+    this.server = server;
+    this.initializeAllowedMethods();
+  }
+
+  private initializeAllowedMethods() {
+    const capabilities = this.server.getCapabilities();
+    
+    // Add methods based on declared capabilities
+    if (capabilities.resources) {
+      this.allowedMethods.add("resources/list");
+      this.allowedMethods.add("resources/read");
+      
+      if (capabilities.resources.subscribe) {
+        this.allowedMethods.add("resources/subscribe");
+        this.allowedMethods.add("resources/unsubscribe");
+      }
+    }
+
+    if (capabilities.tools) {
+      this.allowedMethods.add("tools/list");
+      this.allowedMethods.add("tools/call");
+    }
+
+    if (capabilities.prompts) {
+      this.allowedMethods.add("prompts/list");
+      this.allowedMethods.add("prompts/get");
+    }
+
+    if (capabilities.logging) {
+      this.allowedMethods.add("logging/setLevel");
+    }
+
+    if (capabilities.completions) {
+      this.allowedMethods.add("completion/complete");
+    }
+  }
+
+  validateMethodAccess(method: string, clientId?: string): boolean {
+    // Basic capability check
+    if (!this.allowedMethods.has(method)) {
+      return false;
+    }
+
+    // Additional security checks can be added here
+    // e.g., rate limiting, client authentication, etc.
+
+    return true;
+  }
+
+  secureRequestHandler(originalHandler: Function) {
+    return async (request: any) => {
+      if (!this.validateMethodAccess(request.method, request.clientId)) {
+        throw new Error(`Access denied for method: ${request.method}`);
+      }
+      
+      return await originalHandler(request);
+    };
+  }
+}
+
+// ❌ DON'T: Allow unrestricted method access regardless of capabilities
+```
+
+## Best Practices Summary
+
+### Capability Management
+- Always declare capabilities during server initialization
+- Use `registerCapabilities()` only before transport connection
+- Implement comprehensive capability validation for all requests
+- Provide clear error messages for unsupported operations
+
+### Feature Implementation
+- Only declare capabilities that are fully implemented
+- Validate all requests against declared capabilities
+- Handle experimental features with proper versioning
+- Implement proper notification mechanisms for list changes
+
+### Error Handling
+- Throw specific errors for missing capabilities
+- Validate client capabilities before making requests
+- Handle capability mismatches gracefully
+- Provide helpful error messages for debugging
+
+### Testing
+- Test capability declaration and negotiation
+- Validate capability-dependent request handling
+- Test experimental feature toggles
+- Verify proper error handling for unsupported operations
+
+### Security
+- Implement capability-based access control
+- Validate all incoming requests against capabilities
+- Use principle of least privilege for capability grants
+- Monitor and log capability violations
+
+## References
+- [MCP Specification - Capabilities](mdc:https:/spec.modelcontextprotocol.io/specification/server/capabilities)
+- [MCP TypeScript SDK - Server](mdc:MCPts/src/server/index.ts)
+- [MCP Types - ServerCapabilities](mdc:MCPts/src/types.ts)
+- [MCP Examples - Server Implementation](mdc:MCPts/src/examples/server)
+- [JSON-RPC 2.0 Specification](mdc:https:/www.jsonrpc.org/specification)

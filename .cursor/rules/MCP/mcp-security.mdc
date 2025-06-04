@@ -1,0 +1,714 @@
+---
+description: Model Context Protocol (MCP) security
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) security, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK patterns and best practices.
+
+## MCP Security Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Input Validation  │    │   Authentication   │    │   Authorization   │
+│  - Schema Parsing  │───▶│   - OAuth 2.1      │───▶│   - RBAC/Scopes   │
+│  - Type Checking   │    │   - Bearer Tokens  │    │   - Permissions   │
+│  - Sanitization    │    │   - Client Auth    │    │   - Rate Limiting │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Error Handling   │    │  Resource Protection │    │   Audit Logging   │
+│  - OAuth Errors   │    │  - Rate Limiting    │    │  - Security Events │
+│  - Graceful Fails │    │  - Resource Quotas  │    │  - Access Tracking │
+│  - Status Codes   │    │  - Request Timeouts │    │  - Anomaly Detection│
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+project-root/
+├── src/
+│   ├── server/
+│   │   ├── auth/                # Authentication & authorization
+│   │   │   ├── types.ts         # Auth interface definitions
+│   │   │   ├── errors.ts        # OAuth error classes
+│   │   │   ├── provider.ts      # Auth provider interface
+│   │   │   ├── router.ts        # OAuth endpoints
+│   │   │   ├── middleware/      # Security middleware
+│   │   │   │   ├── bearerAuth.ts    # Bearer token validation
+│   │   │   │   ├── clientAuth.ts    # Client authentication
+│   │   │   │   └── allowedMethods.ts # HTTP method filtering
+│   │   │   ├── handlers/        # OAuth flow handlers
+│   │   │   └── providers/       # Auth provider implementations
+│   │   ├── mcp.ts              # Core MCP server with security
+│   │   └── index.ts            # Server entry point
+│   ├── shared/
+│   │   ├── auth.ts             # Shared auth types and schemas
+│   │   └── validation.ts       # Input validation utilities
+│   ├── types.ts                # Core MCP types with validation
+│   └── client/                 # Secure client implementations
+├── tests/                      # Security test suites
+└── config/                     # Security configuration
+```
+
+## Core Implementation Patterns
+
+### Input Validation with Zod
+
+```typescript
+// ✅ DO: Comprehensive input validation with Zod schemas
+import { z } from "zod";
+
+const SecureRequestSchema = z.object({
+  client_id: z.string().min(1).max(100),
+  client_secret: z.string().optional(),
+  grant_type: z.enum(["authorization_code", "refresh_token"]),
+  code: z.string().optional(),
+  redirect_uri: z.string().url().optional(),
+  scope: z.string().optional(),
+}).strict();
+
+class SecureHandler {
+  async processRequest(input: unknown): Promise<SecureResponse> {
+    try {
+      // Validate input against schema
+      const validated = SecureRequestSchema.parse(input);
+      
+      // Process only validated data
+      return await this.processValidated(validated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new InvalidRequestError(`Validation failed: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+}
+
+// ❌ DON'T: Accept unvalidated input
+class UnsafeHandler {
+  processRequest(input: any) { // No validation
+    return this.process(input); // Direct processing of untrusted data
+  }
+}
+```
+
+### OAuth 2.1 Authentication
+
+```typescript
+// ✅ DO: Implement proper OAuth 2.1 authentication
+import { RequestHandler } from "express";
+import { AuthInfo } from "./types.js";
+
+export interface OAuthTokenVerifier {
+  verifyAccessToken(token: string): Promise<AuthInfo>;
+}
+
+export function requireBearerAuth(options: {
+  verifier: OAuthTokenVerifier;
+  requiredScopes?: string[];
+  resourceMetadataUrl?: string;
+}): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        throw new InvalidTokenError("Missing Authorization header");
+      }
+
+      const [type, token] = authHeader.split(' ');
+      if (type.toLowerCase() !== 'bearer' || !token) {
+        throw new InvalidTokenError("Invalid Authorization header format");
+      }
+
+      const authInfo = await options.verifier.verifyAccessToken(token);
+
+      // Verify required scopes
+      if (options.requiredScopes?.length > 0) {
+        const hasAllScopes = options.requiredScopes.every(scope =>
+          authInfo.scopes.includes(scope)
+        );
+        if (!hasAllScopes) {
+          throw new InsufficientScopeError("Insufficient scope");
+        }
+      }
+
+      // Check token expiration
+      if (authInfo.expiresAt && authInfo.expiresAt < Date.now() / 1000) {
+        throw new InvalidTokenError("Token has expired");
+      }
+
+      req.auth = authInfo;
+      next();
+    } catch (error) {
+      this.handleAuthError(error, res, options.resourceMetadataUrl);
+    }
+  };
+}
+
+// ❌ DON'T: Implement basic or custom auth without standards
+function basicAuth(req: Request, res: Response, next: NextFunction) {
+  const auth = req.headers.authorization; // No proper validation
+  if (auth === "Bearer secret") { // Hardcoded secret
+    next();
+  } else {
+    res.status(401).send("Unauthorized"); // Generic error
+  }
+}
+```
+
+### Client Authentication
+
+```typescript
+// ✅ DO: Implement secure client authentication
+export function authenticateClient(options: {
+  clientsStore: OAuthRegisteredClientsStore;
+}): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const { client_id, client_secret } = ClientAuthenticatedRequestSchema.parse(req.body);
+      
+      const client = await options.clientsStore.getClient(client_id);
+      if (!client) {
+        throw new InvalidClientError("Invalid client_id");
+      }
+
+      // Validate client secret if required
+      if (client.client_secret) {
+        if (!client_secret) {
+          throw new InvalidClientError("Client secret is required");
+        }
+        
+        if (client.client_secret !== client_secret) {
+          throw new InvalidClientError("Invalid client_secret");
+        }
+        
+        // Check secret expiration
+        if (client.client_secret_expires_at && 
+            client.client_secret_expires_at < Math.floor(Date.now() / 1000)) {
+          throw new InvalidClientError("Client secret has expired");
+        }
+      }
+
+      req.client = client;
+      next();
+    } catch (error) {
+      this.handleClientAuthError(error, res);
+    }
+  };
+}
+
+// ❌ DON'T: Skip client validation
+function unsafeClientAuth(req: Request, res: Response, next: NextFunction) {
+  req.client = { id: req.body.client_id }; // No validation
+  next();
+}
+```
+
+## Advanced Security Patterns
+
+### Comprehensive Error Handling
+
+```typescript
+// ✅ DO: Implement OAuth-compliant error handling
+export class OAuthError extends Error {
+  constructor(
+    public readonly errorCode: string,
+    message: string,
+    public readonly errorUri?: string
+  ) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+
+  toResponseObject(): OAuthErrorResponse {
+    const response: OAuthErrorResponse = {
+      error: this.errorCode,
+      error_description: this.message
+    };
+
+    if (this.errorUri) {
+      response.error_uri = this.errorUri;
+    }
+
+    return response;
+  }
+}
+
+// Specific OAuth error types
+export class InvalidTokenError extends OAuthError {
+  constructor(message: string, errorUri?: string) {
+    super("invalid_token", message, errorUri);
+  }
+}
+
+export class InsufficientScopeError extends OAuthError {
+  constructor(message: string, errorUri?: string) {
+    super("insufficient_scope", message, errorUri);
+  }
+}
+
+export class TooManyRequestsError extends OAuthError {
+  constructor(message: string, errorUri?: string) {
+    super("too_many_requests", message, errorUri);
+  }
+}
+
+// ❌ DON'T: Use generic error handling
+class GenericHandler {
+  async handle(req: Request, res: Response) {
+    try {
+      await this.process(req);
+    } catch (error) {
+      res.status(500).json({ error: "Internal Error" }); // No specificity
+    }
+  }
+}
+```
+
+### Rate Limiting and Resource Protection
+
+```typescript
+// ✅ DO: Implement comprehensive rate limiting
+interface RateLimitConfig {
+  windowMs: number;
+  maxRequests: number;
+  keyGenerator: (req: Request) => string;
+  skipSuccessfulRequests?: boolean;
+}
+
+class SecureRateLimiter {
+  private requests = new Map<string, RequestCount[]>();
+  
+  constructor(private config: RateLimitConfig) {}
+  
+  middleware(): RequestHandler {
+    return async (req, res, next) => {
+      try {
+        const key = this.config.keyGenerator(req);
+        const now = Date.now();
+        
+        // Clean expired entries
+        this.cleanupExpired(key, now);
+        
+        // Check current count
+        const requests = this.requests.get(key) || [];
+        if (requests.length >= this.config.maxRequests) {
+          throw new TooManyRequestsError("Rate limit exceeded");
+        }
+        
+        // Add current request
+        requests.push({ timestamp: now });
+        this.requests.set(key, requests);
+        
+        next();
+      } catch (error) {
+        if (error instanceof TooManyRequestsError) {
+          res.status(429).json(error.toResponseObject());
+        } else {
+          next(error);
+        }
+      }
+    };
+  }
+  
+  private cleanupExpired(key: string, now: number): void {
+    const requests = this.requests.get(key) || [];
+    const validRequests = requests.filter(
+      req => (now - req.timestamp) < this.config.windowMs
+    );
+    this.requests.set(key, validRequests);
+  }
+}
+
+// Usage
+const rateLimiter = new SecureRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxRequests: 100,
+  keyGenerator: (req) => req.ip || 'unknown'
+});
+
+// ❌ DON'T: Skip rate limiting
+function unprotectedEndpoint(req: Request, res: Response) {
+  // No rate limiting - vulnerable to abuse
+  res.json(await processRequest(req));
+}
+```
+
+### Secure Data Storage and Transmission
+
+```typescript
+// ✅ DO: Implement secure token storage and validation
+interface TokenStorage {
+  store(token: string, data: AuthInfo): Promise<void>;
+  retrieve(token: string): Promise<AuthInfo | null>;
+  revoke(token: string): Promise<void>;
+  cleanup(): Promise<void>;
+}
+
+class SecureTokenStorage implements TokenStorage {
+  private tokens = new Map<string, StoredToken>();
+  
+  async store(token: string, data: AuthInfo): Promise<void> {
+    // Hash token for storage (don't store plaintext)
+    const hashedToken = await this.hashToken(token);
+    
+    this.tokens.set(hashedToken, {
+      data,
+      createdAt: Date.now(),
+      expiresAt: data.expiresAt ? data.expiresAt * 1000 : undefined
+    });
+  }
+  
+  async retrieve(token: string): Promise<AuthInfo | null> {
+    const hashedToken = await this.hashToken(token);
+    const stored = this.tokens.get(hashedToken);
+    
+    if (!stored) return null;
+    
+    // Check expiration
+    if (stored.expiresAt && Date.now() > stored.expiresAt) {
+      await this.revoke(token);
+      return null;
+    }
+    
+    return stored.data;
+  }
+  
+  private async hashToken(token: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(token);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hash))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+}
+
+// ❌ DON'T: Store tokens in plaintext
+class UnsafeTokenStorage {
+  private tokens = new Map<string, any>();
+  
+  store(token: string, data: any) {
+    this.tokens.set(token, data); // Plaintext storage
+  }
+}
+```
+
+## Testing Security Patterns
+
+### Security Test Suites
+
+```typescript
+// ✅ DO: Comprehensive security testing
+describe("Bearer Auth Middleware", () => {
+  let mockVerifier: jest.Mocked<OAuthTokenVerifier>;
+  let middleware: RequestHandler;
+  
+  beforeEach(() => {
+    mockVerifier = {
+      verifyAccessToken: jest.fn()
+    };
+    
+    middleware = requireBearerAuth({
+      verifier: mockVerifier,
+      requiredScopes: ["read", "write"]
+    });
+  });
+  
+  it("should reject missing authorization header", async () => {
+    const { req, res, next } = createMockExpressObjects();
+    
+    await middleware(req, res, next);
+    
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "invalid_token",
+      error_description: "Missing Authorization header"
+    });
+  });
+  
+  it("should reject malformed authorization header", async () => {
+    const { req, res, next } = createMockExpressObjects();
+    req.headers.authorization = "Basic invalid";
+    
+    await middleware(req, res, next);
+    
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+  
+  it("should reject expired tokens", async () => {
+    const { req, res, next } = createMockExpressObjects();
+    req.headers.authorization = "Bearer valid-token";
+    
+    mockVerifier.verifyAccessToken.mockResolvedValue({
+      token: "valid-token",
+      clientId: "test-client",
+      scopes: ["read", "write"],
+      expiresAt: Math.floor(Date.now() / 1000) - 3600 // Expired 1 hour ago
+    });
+    
+    await middleware(req, res, next);
+    
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "invalid_token",
+      error_description: "Token has expired"
+    });
+  });
+  
+  it("should reject insufficient scopes", async () => {
+    const { req, res, next } = createMockExpressObjects();
+    req.headers.authorization = "Bearer valid-token";
+    
+    mockVerifier.verifyAccessToken.mockResolvedValue({
+      token: "valid-token",
+      clientId: "test-client",
+      scopes: ["read"], // Missing "write" scope
+      expiresAt: Math.floor(Date.now() / 1000) + 3600
+    });
+    
+    await middleware(req, res, next);
+    
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "insufficient_scope",
+      error_description: "Insufficient scope"
+    });
+  });
+  
+  it("should accept valid tokens with sufficient scopes", async () => {
+    const { req, res, next } = createMockExpressObjects();
+    req.headers.authorization = "Bearer valid-token";
+    
+    const authInfo = {
+      token: "valid-token",
+      clientId: "test-client",
+      scopes: ["read", "write", "admin"],
+      expiresAt: Math.floor(Date.now() / 1000) + 3600
+    };
+    
+    mockVerifier.verifyAccessToken.mockResolvedValue(authInfo);
+    
+    await middleware(req, res, next);
+    
+    expect(req.auth).toEqual(authInfo);
+    expect(next).toHaveBeenCalledWith();
+  });
+});
+
+// ❌ DON'T: Skip security testing
+describe("Unsafe Auth", () => {
+  it("should work", () => {
+    expect(true).toBe(true); // Meaningless test
+  });
+});
+```
+
+### Penetration Testing Patterns
+
+```typescript
+// ✅ DO: Test against common attack vectors
+describe("Security Vulnerabilities", () => {
+  it("should prevent SQL injection in client lookup", async () => {
+    const maliciousClientId = "'; DROP TABLE clients; --";
+    
+    await expect(
+      clientsStore.getClient(maliciousClientId)
+    ).rejects.toThrow(InvalidRequestError);
+  });
+  
+  it("should prevent XSS in error messages", async () => {
+    const maliciousInput = "<script>alert('xss')</script>";
+    
+    const error = new InvalidRequestError(maliciousInput);
+    const response = error.toResponseObject();
+    
+    expect(response.error_description).not.toContain("<script>");
+    expect(response.error_description).toContain("&lt;script&gt;");
+  });
+  
+  it("should prevent timing attacks on client secret verification", async () => {
+    const validClient = "valid-client-id";
+    const invalidClient = "invalid-client-id";
+    const secret = "client-secret";
+    
+    const start1 = Date.now();
+    await expect(authenticateClient(validClient, "wrong-secret")).rejects.toThrow();
+    const time1 = Date.now() - start1;
+    
+    const start2 = Date.now();
+    await expect(authenticateClient(invalidClient, secret)).rejects.toThrow();
+    const time2 = Date.now() - start2;
+    
+    // Timing difference should be minimal to prevent timing attacks
+    expect(Math.abs(time1 - time2)).toBeLessThan(10);
+  });
+  
+  it("should prevent token brute force attacks", async () => {
+    const attempts = Array.from({ length: 1000 }, (_, i) => 
+      verifyToken(`fake-token-${i}`)
+    );
+    
+    const results = await Promise.allSettled(attempts);
+    const failures = results.filter(r => r.status === 'rejected');
+    
+    // Should have rate limiting in place
+    expect(failures.length).toBeGreaterThan(900);
+  });
+});
+```
+
+## Security Configuration Patterns
+
+### Environment-Based Security Configuration
+
+```typescript
+// ✅ DO: Use environment-based security configuration
+interface SecurityConfig {
+  jwtSecret: string;
+  tokenExpiry: number;
+  rateLimitWindow: number;
+  rateLimitMax: number;
+  enableAuditLogging: boolean;
+  corsOrigins: string[];
+  enforceHttps: boolean;
+}
+
+const securityConfig: SecurityConfig = {
+  jwtSecret: process.env.JWT_SECRET || (() => {
+    throw new Error("JWT_SECRET environment variable is required");
+  })(),
+  tokenExpiry: parseInt(process.env.TOKEN_EXPIRY || "3600"),
+  rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW || "900000"), // 15 min
+  rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || "100"),
+  enableAuditLogging: process.env.ENABLE_AUDIT_LOGGING === "true",
+  corsOrigins: (process.env.CORS_ORIGINS || "").split(",").filter(Boolean),
+  enforceHttps: process.env.NODE_ENV === "production"
+};
+
+// Validate configuration at startup
+function validateSecurityConfig(config: SecurityConfig): void {
+  if (config.jwtSecret.length < 32) {
+    throw new Error("JWT secret must be at least 32 characters");
+  }
+  
+  if (config.tokenExpiry < 300) { // 5 minutes minimum
+    throw new Error("Token expiry must be at least 300 seconds");
+  }
+  
+  if (config.enforceHttps && process.env.NODE_ENV === "production") {
+    console.log("HTTPS enforcement enabled for production");
+  }
+}
+
+// ❌ DON'T: Hardcode security configuration
+const unsafeConfig = {
+  jwtSecret: "secret123", // Hardcoded secret
+  tokenExpiry: 999999999, // Excessive expiry
+  enableLogging: false    // No audit logging
+};
+```
+
+### HTTPS and TLS Configuration
+
+```typescript
+// ✅ DO: Enforce HTTPS in production
+import { RequestHandler } from "express";
+
+export function enforceHttps(): RequestHandler {
+  return (req, res, next) => {
+    if (process.env.NODE_ENV === "production") {
+      if (!req.secure && req.get("X-Forwarded-Proto") !== "https") {
+        return res.redirect(301, `https://${req.get("Host")}${req.url}`);
+      }
+    }
+    next();
+  };
+}
+
+export function securityHeaders(): RequestHandler {
+  return (req, res, next) => {
+    // HTTPS Strict Transport Security
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    
+    // Content Security Policy
+    res.setHeader("Content-Security-Policy", "default-src 'self'");
+    
+    // Prevent MIME type sniffing
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    
+    // XSS Protection
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    
+    // Frame Options
+    res.setHeader("X-Frame-Options", "DENY");
+    
+    // Referrer Policy
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    
+    next();
+  };
+}
+
+// ❌ DON'T: Skip HTTPS enforcement
+function unsafeServer() {
+  // No HTTPS enforcement
+  // No security headers
+  // No TLS configuration
+}
+```
+
+## Best Practices Summary
+
+### Authentication & Authorization
+- Always use OAuth 2.1 standard for authentication
+- Implement proper scope-based authorization
+- Use secure token storage with hashing
+- Enforce token expiration and refresh cycles
+- Implement comprehensive client authentication
+
+### Input Validation
+- Use Zod schemas for all input validation
+- Validate at the earliest possible point
+- Sanitize all user inputs before processing
+- Implement proper error handling for validation failures
+- Never trust client-side validation alone
+
+### Error Handling
+- Use OAuth-compliant error responses
+- Implement specific error types for different scenarios
+- Log security events for monitoring and analysis
+- Never expose sensitive information in error messages
+- Provide consistent error response timing
+
+### Rate Limiting & Resource Protection
+- Implement rate limiting on all public endpoints
+- Use sliding window algorithms for accurate limiting
+- Protect against brute force attacks
+- Monitor and alert on suspicious patterns
+- Implement resource quotas and timeouts
+
+### Security Headers & Transport
+- Enforce HTTPS in production environments
+- Implement proper CORS configuration
+- Use security headers (HSTS, CSP, etc.)
+- Validate SSL/TLS certificate chains
+- Use secure session management
+
+### Monitoring & Auditing
+- Log all authentication and authorization events
+- Implement real-time security monitoring
+- Track and analyze access patterns
+- Set up alerts for security anomalies
+- Maintain audit trails for compliance
+
+## References
+- [OAuth 2.1 Authorization Framework](mdc:https:/datatracker.ietf.org/doc/draft-ietf-oauth-v2-1)
+- [RFC 8414 - OAuth 2.0 Authorization Server Metadata](mdc:https:/tools.ietf.org/html/rfc8414)
+- [RFC 7591 - OAuth 2.0 Dynamic Client Registration](mdc:https:/tools.ietf.org/html/rfc7591)
+- [RFC 9728 - OAuth 2.0 Protected Resource Metadata](mdc:https:/datatracker.ietf.org/doc/rfc9728)
+- [Model Context Protocol Security Guidelines](mdc:https:/modelcontextprotocol.io/docs/security)
+- [OWASP API Security Top 10](mdc:https:/owasp.org/API-Security/editions/2023/en/0x00-header)
+- [TypeScript Security Best Practices](mdc:https:/typescript-eslint.io/rules/?=keyword-security) 

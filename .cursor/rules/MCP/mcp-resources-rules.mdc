@@ -1,0 +1,856 @@
+---
+description: Guidelines for implementing MCP resources in Podman Desktop extensions
+globs: 
+alwaysApply: false
+---
+> You are an expert in MCP (Model Context Protocol) resources, TypeScript, URI templates, and content management systems. You focus on building efficient, type-safe resource handling with proper caching, validation, and content delivery mechanisms.
+
+## MCP Resources Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Resource      │    │   URI Template   │    │   Content       │
+│   Registration  │───▶│   Processing     │───▶│   Resolution    │
+│                 │    │                  │    │                 │
+│ - Static URI    │    │ - Pattern Match  │    │ - Text Content  │
+│ - Template URI  │    │ - Variable       │    │ - Binary Blob   │
+│ - Metadata      │    │   Extraction     │    │ - MIME Types    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   List & Query  │    │   Access Control │    │   Notification  │
+│   Operations    │    │   & Validation   │    │   System        │
+│                 │    │                  │    │                 │
+│ - List Resources│    │ - Path Security  │    │ - List Changed  │
+│ - List Templates│    │ - Input Validate │    │ - Content Update│
+│ - Completions   │    │ - Error Handling │    │ - Subscriptions │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+mcp_resources_project/
+├── src/
+│   ├── server/
+│   │   ├── index.ts             # Main MCP server setup
+│   │   ├── resources/           # Resource implementations
+│   │   │   ├── static.ts        # Static resource handlers
+│   │   │   ├── templates.ts     # Template-based resources
+│   │   │   ├── files.ts         # File system resources
+│   │   │   └── api.ts           # External API resources
+│   │   ├── types/
+│   │   │   ├── resources.ts     # Resource type definitions
+│   │   │   └── callbacks.ts     # Callback type definitions
+│   │   └── utils/
+│   │       ├── validation.ts    # Input validation utilities
+│   │       ├── caching.ts       # Resource caching system
+│   │       └── security.ts      # Security utilities
+│   ├── client/
+│   │   ├── index.ts             # MCP client implementation
+│   │   └── resource-client.ts   # Resource-specific client
+│   └── shared/
+│       ├── uri-templates.ts     # URI template utilities
+│       ├── content-types.ts     # MIME type handling
+│       └── errors.ts            # Custom error types
+├── tests/
+│   ├── resources/
+│   │   ├── static.test.ts
+│   │   ├── templates.test.ts
+│   │   └── security.test.ts
+│   └── integration/
+│       └── client-server.test.ts
+└── examples/
+    ├── file-server.ts           # File system resource server
+    ├── api-gateway.ts           # API proxy resource server
+    └── content-management.ts    # CMS resource server
+```
+
+## Core Implementation Patterns
+
+### Static Resource Registration
+
+```typescript
+// ✅ DO: Proper static resource with comprehensive metadata
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ReadResourceResult, TextResourceContents } from '@modelcontextprotocol/sdk/types.js';
+
+const server = new McpServer(
+  { name: 'resource-server', version: '1.0.0' },
+  { capabilities: { resources: { listChanged: true } } }
+);
+
+// Simple static text resource
+server.resource(
+  'greeting-resource',
+  'https://example.com/greetings/default',
+  { 
+    mimeType: 'text/plain',
+    description: 'A simple greeting message for users'
+  },
+  async (): Promise<ReadResourceResult> => {
+    return {
+      contents: [{
+        uri: 'https://example.com/greetings/default',
+        text: 'Hello, world! Welcome to our MCP resource server.',
+        mimeType: 'text/plain'
+      }]
+    };
+  }
+);
+
+// JSON configuration resource with structured data
+server.resource(
+  'server-config',
+  'config://server/settings',
+  {
+    mimeType: 'application/json',
+    description: 'Current server configuration and operational settings'
+  },
+  async (): Promise<ReadResourceResult> => {
+    const config = {
+      server: {
+        name: 'mcp-resource-server',
+        version: '1.0.0',
+        environment: process.env.NODE_ENV || 'development'
+      },
+      features: {
+        caching: true,
+        compression: false,
+        authentication: true
+      },
+      limits: {
+        maxResourceSize: 10485760, // 10MB
+        requestTimeout: 30000,
+        maxConcurrentRequests: 100
+      }
+    };
+
+    return {
+      contents: [{
+        uri: 'config://server/settings',
+        text: JSON.stringify(config, null, 2),
+        mimeType: 'application/json'
+      }]
+    };
+  }
+);
+
+// Binary resource example
+server.resource(
+  'logo-image',
+  'assets://images/logo.png',
+  {
+    mimeType: 'image/png',
+    description: 'Company logo in PNG format'
+  },
+  async (): Promise<ReadResourceResult> => {
+    // In practice, read from file system or external source
+    const imageBuffer = await fs.readFile('assets/logo.png');
+    const base64Data = imageBuffer.toString('base64');
+
+    return {
+      contents: [{
+        uri: 'assets://images/logo.png',
+        blob: base64Data,
+        mimeType: 'image/png'
+      }]
+    };
+  }
+);
+
+// ❌ DON'T: Register resources without proper metadata
+server.resource('bad-resource', 'bad://resource', async () => {
+  return { contents: [{ uri: 'bad://resource', text: 'content' }] }; // Missing metadata
+});
+```
+
+### Template-Based Resources
+
+```typescript
+// ✅ DO: Implement URI templates with proper validation and completion
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Variables } from '@modelcontextprotocol/sdk/shared/uri.js';
+
+// User profile resource template
+const userTemplate = new ResourceTemplate(
+  'users://{userId}/profile',
+  {
+    list: async () => {
+      // List all available user profiles
+      const userIds = await getUserIds();
+      const resources = userIds.map(id => ({
+        uri: `users://${id}/profile`,
+        name: `User ${id} Profile`,
+        description: `Profile information for user ${id}`,
+        mimeType: 'application/json'
+      }));
+      
+      return { resources };
+    },
+    complete: {
+      userId: async (partial: string) => {
+        // Provide completion suggestions for user IDs
+        const allUserIds = await getUserIds();
+        return allUserIds
+          .filter(id => id.startsWith(partial))
+          .slice(0, 10); // Limit suggestions
+      }
+    }
+  }
+);
+
+server.resource(
+  'user-profiles',
+  userTemplate,
+  {
+    mimeType: 'application/json',
+    description: 'User profile information accessed by user ID'
+  },
+  async (uri: URL, variables: Variables): Promise<ReadResourceResult> => {
+    const { userId } = variables;
+    
+    // Validate user ID format
+    if (!userId || typeof userId !== 'string' || !/^\w+$/.test(userId)) {
+      throw new Error(`Invalid user ID format: ${userId}`);
+    }
+
+    try {
+      const userProfile = await fetchUserProfile(userId);
+      
+      if (!userProfile) {
+        throw new Error(`User not found: ${userId}`);
+      }
+
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: JSON.stringify(userProfile, null, 2),
+          mimeType: 'application/json'
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch user profile: ${error.message}`);
+    }
+  }
+);
+
+// File system template with security validation
+const fileTemplate = new ResourceTemplate(
+  'files://{path+}',
+  {
+    list: async () => {
+      // List available files (with security constraints)
+      const allowedFiles = await getAccessibleFiles();
+      const resources = allowedFiles.map(file => ({
+        uri: `files://${file.path}`,
+        name: file.name,
+        description: `File: ${file.path}`,
+        mimeType: file.mimeType
+      }));
+      
+      return { resources };
+    },
+    complete: {
+      path: async (partial: string) => {
+        // File path completion with security filtering
+        return await getFilePathCompletions(partial);
+      }
+    }
+  }
+);
+
+server.resource(
+  'file-system',
+  fileTemplate,
+  {
+    description: 'Secure file system access with path validation'
+  },
+  async (uri: URL, variables: Variables): Promise<ReadResourceResult> => {
+    const { path } = variables;
+    
+    if (!path || typeof path !== 'string') {
+      throw new Error('Path parameter is required');
+    }
+
+    // Security validation
+    const safePath = validateAndSanitizePath(path);
+    if (!safePath) {
+      throw new Error('Invalid or unsafe file path');
+    }
+
+    try {
+      const fileContent = await readFileSecurely(safePath);
+      const mimeType = getMimeType(safePath);
+      
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: fileContent,
+          mimeType
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to read file: ${error.message}`);
+    }
+  }
+);
+
+// ❌ DON'T: Create templates without proper validation
+const badTemplate = new ResourceTemplate(
+  'unsafe://{path}',
+  { list: undefined } // No listing capability
+);
+
+server.resource('unsafe', badTemplate, async (uri: URL, variables: Variables) => {
+  const { path } = variables;
+  // No validation - security risk!
+  return { contents: [{ uri: uri.toString(), text: fs.readFileSync(path, 'utf8') }] };
+});
+```
+
+### Advanced Resource Patterns
+
+```typescript
+// ✅ DO: Implement caching and performance optimization
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  ttl: number;
+}
+
+class ResourceCache {
+  private cache = new Map<string, CacheEntry<any>>();
+  
+  get<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    
+    if (Date.now() - entry.timestamp > entry.ttl) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return entry.data;
+  }
+  
+  set<T>(key: string, data: T, ttl: number = 300000): void { // 5 min default
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+  
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+const resourceCache = new ResourceCache();
+
+// Cached API resource
+server.resource(
+  'weather-data',
+  'weather://current/{location}',
+  {
+    mimeType: 'application/json',
+    description: 'Current weather data for specified location'
+  },
+  async (uri: URL, variables: Variables): Promise<ReadResourceResult> => {
+    const { location } = variables;
+    
+    if (!location || typeof location !== 'string') {
+      throw new Error('Location parameter is required');
+    }
+
+    const cacheKey = `weather:${location}`;
+    const cached = resourceCache.get(cacheKey);
+    
+    if (cached) {
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: JSON.stringify(cached),
+          mimeType: 'application/json'
+        }]
+      };
+    }
+
+    try {
+      const weatherData = await fetchWeatherData(location);
+      resourceCache.set(cacheKey, weatherData, 600000); // 10 minutes
+      
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: JSON.stringify(weatherData, null, 2),
+          mimeType: 'application/json'
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch weather data: ${error.message}`);
+    }
+  }
+);
+
+// Resource with subscription support
+interface ResourceSubscription {
+  uri: string;
+  callback: (content: any) => void;
+  interval?: NodeJS.Timeout;
+}
+
+class ResourceSubscriptionManager {
+  private subscriptions = new Map<string, Set<ResourceSubscription>>();
+  
+  subscribe(uri: string, callback: (content: any) => void): () => void {
+    if (!this.subscriptions.has(uri)) {
+      this.subscriptions.set(uri, new Set());
+    }
+    
+    const subscription: ResourceSubscription = { uri, callback };
+    this.subscriptions.get(uri)!.add(subscription);
+    
+    // Start polling for changes
+    subscription.interval = setInterval(async () => {
+      try {
+        const content = await this.fetchResourceContent(uri);
+        callback(content);
+      } catch (error) {
+        console.error(`Subscription error for ${uri}:`, error);
+      }
+    }, 30000); // Poll every 30 seconds
+    
+    return () => {
+      const subs = this.subscriptions.get(uri);
+      if (subs) {
+        subs.delete(subscription);
+        if (subscription.interval) {
+          clearInterval(subscription.interval);
+        }
+        if (subs.size === 0) {
+          this.subscriptions.delete(uri);
+        }
+      }
+    };
+  }
+  
+  private async fetchResourceContent(uri: string): Promise<any> {
+    // Implementation would fetch current resource content
+    return {};
+  }
+}
+
+const subscriptionManager = new ResourceSubscriptionManager();
+
+// ❌ DON'T: Ignore performance and caching considerations
+server.resource('slow-resource', 'slow://data', async () => {
+  // Expensive operation called every time - no caching
+  const expensiveData = await performExpensiveOperation();
+  return { contents: [{ uri: 'slow://data', text: JSON.stringify(expensiveData) }] };
+});
+```
+
+### Security and Validation Patterns
+
+```typescript
+// ✅ DO: Implement comprehensive security measures
+import { z } from 'zod';
+
+// Input validation schemas
+const UserIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid user ID format');
+const FilePathSchema = z.string().regex(/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/, 'Invalid file path');
+
+// Path sanitization utility
+function validateAndSanitizePath(path: string): string | null {
+  try {
+    // Remove dangerous patterns
+    const sanitized = path
+      .replace(/\.\./g, '') // Remove parent directory references
+      .replace(/\/+/g, '/') // Normalize multiple slashes
+      .replace(/^\//, ''); // Remove leading slash
+    
+    // Validate against allowed patterns
+    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(sanitized)) {
+      return null;
+    }
+    
+    // Check if path is within allowed directories
+    const allowedDirectories = ['public', 'documents', 'images'];
+    const firstSegment = sanitized.split('/')[0];
+    
+    if (!allowedDirectories.includes(firstSegment)) {
+      return null;
+    }
+    
+    return sanitized;
+  } catch {
+    return null;
+  }
+}
+
+// Secure resource with comprehensive validation
+server.resource(
+  'secure-documents',
+  'docs://{userId}/{docType}/{docId}',
+  {
+    mimeType: 'application/json',
+    description: 'Secure document access with user authorization'
+  },
+  async (uri: URL, variables: Variables): Promise<ReadResourceResult> => {
+    const { userId, docType, docId } = variables;
+    
+    // Validate all parameters
+    try {
+      UserIdSchema.parse(userId);
+      z.enum(['pdf', 'text', 'markdown']).parse(docType);
+      z.string().uuid().parse(docId);
+    } catch (error) {
+      throw new Error(`Invalid parameters: ${error.message}`);
+    }
+    
+    // Check user authorization
+    const hasAccess = await checkUserDocumentAccess(userId, docId);
+    if (!hasAccess) {
+      throw new Error('Access denied: insufficient permissions');
+    }
+    
+    try {
+      const document = await fetchSecureDocument(userId, docType, docId);
+      
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: JSON.stringify(document, null, 2),
+          mimeType: 'application/json'
+        }]
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch document: ${error.message}`);
+    }
+  }
+);
+
+// Rate limiting implementation
+class RateLimiter {
+  private requests = new Map<string, number[]>();
+  
+  constructor(
+    private maxRequests: number = 100,
+    private windowMs: number = 60000 // 1 minute
+  ) {}
+  
+  isAllowed(clientId: string): boolean {
+    const now = Date.now();
+    const clientRequests = this.requests.get(clientId) || [];
+    
+    // Remove old requests outside the window
+    const validRequests = clientRequests.filter(
+      time => now - time < this.windowMs
+    );
+    
+    if (validRequests.length >= this.maxRequests) {
+      return false;
+    }
+    
+    validRequests.push(now);
+    this.requests.set(clientId, validRequests);
+    return true;
+  }
+}
+
+const rateLimiter = new RateLimiter();
+
+// ❌ DON'T: Skip input validation and security checks
+server.resource('unsafe-files', 'files://{path}', async (uri: URL, variables: Variables) => {
+  const { path } = variables;
+  // No validation - allows directory traversal!
+  const content = fs.readFileSync(path, 'utf8'); // Dangerous!
+  return { contents: [{ uri: uri.toString(), text: content }] };
+});
+```
+
+### Error Handling and Monitoring
+
+```typescript
+// ✅ DO: Implement proper error handling and monitoring
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+
+class ResourceError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly statusCode: number = 500
+  ) {
+    super(message);
+    this.name = 'ResourceError';
+  }
+}
+
+class ResourceMonitor {
+  private metrics = {
+    requests: 0,
+    errors: 0,
+    averageResponseTime: 0,
+    lastError: null as Error | null
+  };
+  
+  recordRequest(duration: number): void {
+    this.metrics.requests++;
+    this.metrics.averageResponseTime = 
+      (this.metrics.averageResponseTime * (this.metrics.requests - 1) + duration) 
+      / this.metrics.requests;
+  }
+  
+  recordError(error: Error): void {
+    this.metrics.errors++;
+    this.metrics.lastError = error;
+    console.error('Resource error:', error);
+  }
+  
+  getMetrics() {
+    return { ...this.metrics };
+  }
+}
+
+const monitor = new ResourceMonitor();
+
+// Monitored resource with comprehensive error handling
+server.resource(
+  'monitored-api',
+  'api://{endpoint}/{id}',
+  {
+    mimeType: 'application/json',
+    description: 'External API resource with monitoring and error handling'
+  },
+  async (uri: URL, variables: Variables): Promise<ReadResourceResult> => {
+    const startTime = Date.now();
+    
+    try {
+      const { endpoint, id } = variables;
+      
+      // Validate parameters
+      if (!endpoint || !id) {
+        throw new ResourceError(
+          'Missing required parameters',
+          'INVALID_PARAMS',
+          400
+        );
+      }
+      
+      // Check rate limiting
+      if (!rateLimiter.isAllowed('default-client')) {
+        throw new ResourceError(
+          'Rate limit exceeded',
+          'RATE_LIMITED',
+          429
+        );
+      }
+      
+      const result = await fetchExternalAPI(endpoint, id);
+      
+      monitor.recordRequest(Date.now() - startTime);
+      
+      return {
+        contents: [{
+          uri: uri.toString(),
+          text: JSON.stringify(result, null, 2),
+          mimeType: 'application/json'
+        }]
+      };
+      
+    } catch (error) {
+      monitor.recordError(error);
+      
+      if (error instanceof ResourceError) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          error.message,
+          { code: error.code, statusCode: error.statusCode }
+        );
+      }
+      
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Resource access failed: ${error.message}`
+      );
+    }
+  }
+);
+
+// Health check resource
+server.resource(
+  'health-check',
+  'system://health',
+  {
+    mimeType: 'application/json',
+    description: 'System health and monitoring information'
+  },
+  async (): Promise<ReadResourceResult> => {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      metrics: monitor.getMetrics(),
+      version: '1.0.0'
+    };
+    
+    return {
+      contents: [{
+        uri: 'system://health',
+        text: JSON.stringify(health, null, 2),
+        mimeType: 'application/json'
+      }]
+    };
+  }
+);
+
+// ❌ DON'T: Ignore error handling and monitoring
+server.resource('fragile-resource', 'fragile://data', async () => {
+  const data = await riskyOperation(); // Could throw, no error handling
+  return { contents: [{ uri: 'fragile://data', text: data }] }; // No monitoring
+});
+```
+
+### Testing Patterns
+
+```typescript
+// ✅ DO: Comprehensive testing for resource functionality
+import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+describe('MCP Resource Server', () => {
+  let server: McpServer;
+  
+  beforeEach(async () => {
+    server = new McpServer(
+      { name: 'test-server', version: '1.0.0' },
+      { capabilities: { resources: { listChanged: true } } }
+    );
+    
+    // Register test resources
+    setupTestResources(server);
+  });
+  
+  afterEach(async () => {
+    await server.close();
+  });
+  
+  test('should register static resources correctly', async () => {
+    const registered = server._registeredResources;
+    
+    expect(registered['test://static']).toBeDefined();
+    expect(registered['test://static'].name).toBe('test-static');
+    expect(registered['test://static'].enabled).toBe(true);
+  });
+  
+  test('should handle resource reading with proper content', async () => {
+    const result = await server._registeredResources['test://static']
+      .readCallback(new URL('test://static'), {});
+    
+    expect(result.contents).toHaveLength(1);
+    expect(result.contents[0].text).toBe('test content');
+    expect(result.contents[0].mimeType).toBe('text/plain');
+  });
+  
+  test('should validate template parameters', async () => {
+    const template = server._registeredResourceTemplates['test-template'];
+    
+    await expect(
+      template.readCallback(
+        new URL('test://users/invalid-id'),
+        { userId: 'invalid-id' },
+        {}
+      )
+    ).rejects.toThrow('Invalid user ID format');
+  });
+  
+  test('should handle caching correctly', async () => {
+    const cache = new ResourceCache();
+    
+    cache.set('test-key', 'test-value', 1000);
+    expect(cache.get('test-key')).toBe('test-value');
+    
+    // Wait for expiration
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    expect(cache.get('test-key')).toBeNull();
+  });
+  
+  test('should enforce security constraints', async () => {
+    expect(validateAndSanitizePath('../etc/passwd')).toBeNull();
+    expect(validateAndSanitizePath('public/document.txt')).toBe('public/document.txt');
+    expect(validateAndSanitizePath('/public/../secret.txt')).toBeNull();
+  });
+  
+  test('should handle rate limiting', () => {
+    const limiter = new RateLimiter(2, 1000);
+    
+    expect(limiter.isAllowed('client1')).toBe(true);
+    expect(limiter.isAllowed('client1')).toBe(true);
+    expect(limiter.isAllowed('client1')).toBe(false); // Exceeded limit
+  });
+});
+
+function setupTestResources(server: McpServer): void {
+  server.resource(
+    'test-static',
+    'test://static',
+    { mimeType: 'text/plain' },
+    async () => ({
+      contents: [{
+        uri: 'test://static',
+        text: 'test content',
+        mimeType: 'text/plain'
+      }]
+    })
+  );
+  
+  // Add more test resources...
+}
+
+// ❌ DON'T: Skip testing or use minimal test coverage
+test('basic test', () => {
+  expect(true).toBe(true); // Meaningless test
+});
+```
+
+## Best Practices Summary
+
+### Resource Design
+- Use clear, descriptive URI schemes that follow consistent patterns
+- Implement comprehensive metadata including MIME types and descriptions
+- Provide both static resources and flexible URI templates
+- Support resource listing and completion for better discoverability
+
+### Security and Validation
+- Always validate and sanitize URI parameters and variables
+- Implement proper access controls and authentication checks
+- Use path validation to prevent directory traversal attacks
+- Apply rate limiting to prevent abuse
+
+### Performance and Reliability
+- Implement intelligent caching strategies for expensive resources
+- Use connection pooling for database and external API resources
+- Monitor resource performance and error rates
+- Provide graceful error handling with meaningful messages
+
+### Content Management
+- Support multiple content types (text, JSON, binary)
+- Implement proper MIME type detection and handling
+- Provide content compression when appropriate
+- Support content versioning and change notifications
+
+### Development and Testing
+- Write comprehensive tests for all resource functionality
+- Test security constraints and validation logic
+- Monitor resource usage and performance metrics
+- Implement proper logging and debugging capabilities
+
+## References
+- [MCP TypeScript SDK Documentation](mdc:https:/modelcontextprotocol.io/docs/sdk/typescript)
+- [URI Template Specification RFC 6570](mdc:https:/tools.ietf.org/html/rfc6570)
+- [MIME Type Guidelines](mdc:https:/developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types)
+- [Security Best Practices](mdc:.cursor/rules/MCP/mcp-security.mdc)

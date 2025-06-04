@@ -1,0 +1,822 @@
+---
+description: Context Protocol (MCP) tools implementation
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) tools implementation, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK patterns and best practices.
+
+# MCP Tools Implementation Rules
+
+## MCP Tools Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Tool Registry  │    │   Tool Handler   │    │  Tool Execution │
+│  - registerTool │───▶│  - Input Schema  │───▶│  - Validation   │
+│  - tool()       │    │  - Output Schema │    │  - Callback     │
+│  - Validation   │    │  - Annotations   │    │  - Result       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Tool Discovery │    │  Error Handling  │    │  Response Types │
+│  - tools/list   │    │  - Try/Catch     │    │  - Text Content │
+│  - Capabilities │    │  - Validation    │    │  - Structured   │
+│  - Metadata     │    │  - Typed Errors  │    │  - Error Result │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+src/
+├── server/
+│   ├── mcp.ts                # High-level McpServer with tool registration
+│   ├── index.ts              # Base Server with protocol handling
+│   └── stdio.ts              # StdioServerTransport
+├── tools/
+│   ├── types.ts              # Tool type definitions
+│   ├── registry.ts           # Tool management utilities
+│   ├── handlers/             # Tool implementation handlers
+│   │   ├── system.ts         # System information tools
+│   │   ├── file.ts           # File operation tools
+│   │   └── api.ts            # External API tools
+│   ├── validators.ts         # Input/output validation
+│   └── errors.ts             # Tool-specific error types
+├── examples/
+│   ├── weather-server.ts     # Complete tool server example
+│   └── file-tools.ts         # File operation tools example
+└── types.ts                  # MCP protocol types
+```
+
+## Core Implementation Patterns
+
+### Tool Registration with McpServer
+
+```typescript
+// ✅ DO: Use the high-level McpServer API for tool registration
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const server = new McpServer({
+  name: "my-mcp-server",
+  version: "1.0.0",
+});
+
+// Simple tool registration
+server.registerTool(
+  "get_system_info",
+  {
+    description: "Get system information",
+  },
+  async () => ({
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        platform: process.platform,
+        version: process.version,
+        uptime: process.uptime()
+      }, null, 2)
+    }]
+  })
+);
+
+// Tool with input schema
+server.registerTool(
+  "read_file",
+  {
+    description: "Read the contents of a file",
+    inputSchema: {
+      path: z.string().describe("File path to read"),
+      encoding: z.enum(["utf8", "base64"]).optional().describe("File encoding")
+    }
+  },
+  async ({ path, encoding = "utf8" }) => {
+    try {
+      const content = await fs.readFile(path, encoding);
+      return {
+        content: [{
+          type: "text",
+          text: content
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{
+          type: "text",
+          text: `Error reading file: ${error.message}`
+        }]
+      };
+    }
+  }
+);
+
+// ❌ DON'T: Use manual request handlers for tools
+server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+  // Manual implementation - avoid this pattern
+});
+```
+
+### Tool Registration with Output Schemas
+
+```typescript
+// ✅ DO: Define structured output schemas for complex data
+server.registerTool(
+  "get_weather",
+  {
+    description: "Get weather information for a city",
+    inputSchema: {
+      city: z.string().describe("City name"),
+      country: z.string().describe("Country code (e.g., US, UK)")
+    },
+    outputSchema: {
+      temperature: z.object({
+        celsius: z.number(),
+        fahrenheit: z.number()
+      }),
+      conditions: z.enum(["sunny", "cloudy", "rainy", "stormy", "snowy"]),
+      humidity: z.number().min(0).max(100),
+      wind: z.object({
+        speed_kmh: z.number(),
+        direction: z.string()
+      })
+    }
+  },
+  async ({ city, country }) => {
+    const weatherData = await fetchWeatherData(city, country);
+    
+    return {
+      content: [{
+        type: "text",
+        text: `Weather in ${city}, ${country}: ${weatherData.conditions}`
+      }],
+      structuredContent: weatherData // Matches output schema
+    };
+  }
+);
+
+// ❌ DON'T: Return unstructured data without schema validation
+server.registerTool("weather", {}, async () => ({
+  content: [{ type: "text", text: "some weather data" }] // No structure
+}));
+```
+
+### Tool Annotations and Metadata
+
+```typescript
+// ✅ DO: Use annotations for tool metadata and UI hints
+server.registerTool(
+  "dangerous_operation",
+  {
+    description: "Perform a potentially destructive operation",
+    inputSchema: {
+      target: z.string().describe("Target to operate on"),
+      confirm: z.boolean().describe("Confirmation flag")
+    },
+    annotations: {
+      title: "Dangerous Operation",
+      readOnlyHint: false,
+      category: "system"
+    }
+  },
+  async ({ target, confirm }) => {
+    if (!confirm) {
+      return {
+        isError: true,
+        content: [{
+          type: "text",
+          text: "Operation requires confirmation"
+        }]
+      };
+    }
+    
+    return await performOperation(target);
+  }
+);
+
+// Multiple registration patterns
+server.tool("simple_tool", async () => ({ /* ... */ })); // Basic
+server.tool("tool_with_desc", "Description", async () => ({ /* ... */ })); // With description
+server.tool("tool_with_params", { param: z.string() }, async ({ param }) => ({ /* ... */ })); // With params
+server.tool("full_tool", "Description", { param: z.string() }, { title: "Tool" }, async ({ param }) => ({ /* ... */ })); // Full
+
+// ❌ DON'T: Register tools without proper descriptions or metadata
+server.registerTool("tool", {}, async () => ({ /* ... */ })); // No description
+```
+
+## Advanced Patterns
+
+### Error Handling and Validation
+
+```typescript
+// ✅ DO: Implement comprehensive error handling
+import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+
+class ToolError extends Error {
+  constructor(
+    message: string,
+    public readonly toolName: string,
+    public readonly code?: string
+  ) {
+    super(message);
+    this.name = "ToolError";
+  }
+}
+
+const createErrorResult = (error: Error, toolName: string): CallToolResult => ({
+  isError: true,
+  content: [{
+    type: "text",
+    text: `Error in ${toolName}: ${error.message}`
+  }]
+});
+
+server.registerTool(
+  "validated_operation",
+  {
+    description: "Operation with comprehensive validation",
+    inputSchema: {
+      id: z.string().uuid("Invalid UUID format"),
+      value: z.number().positive("Value must be positive"),
+      options: z.object({
+        timeout: z.number().optional(),
+        retries: z.number().int().min(0).max(5).optional()
+      }).optional()
+    }
+  },
+  async ({ id, value, options }) => {
+    try {
+      // Custom validation beyond schema
+      if (value > 1000000) {
+        throw new ToolError("Value exceeds maximum limit", "validated_operation", "VALUE_TOO_LARGE");
+      }
+      
+      const result = await performValidatedOperation(id, value, options);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }]
+      };
+    } catch (error) {
+      if (error instanceof ToolError) {
+        return createErrorResult(error, "validated_operation");
+      }
+      
+      return createErrorResult(
+        new ToolError("Unexpected error", "validated_operation", "INTERNAL_ERROR"),
+        "validated_operation"
+      );
+    }
+  }
+);
+
+// ❌ DON'T: Ignore error handling or return raw errors
+server.registerTool("bad_tool", {}, async () => {
+  const data = await riskyOperation(); // May throw
+  return { content: [{ type: "text", text: data }] }; // No error handling
+});
+```
+
+### Progress Reporting and Long-Running Operations
+
+```typescript
+// ✅ DO: Handle long-running operations with proper feedback
+server.registerTool(
+  "process_large_file",
+  {
+    description: "Process a large file with progress reporting",
+    inputSchema: {
+      filePath: z.string(),
+      batchSize: z.number().int().positive().optional().default(1000)
+    }
+  },
+  async ({ filePath, batchSize }) => {
+    try {
+      const fileSize = await getFileSize(filePath);
+      const totalBatches = Math.ceil(fileSize / batchSize);
+      let processedBatches = 0;
+      const results: string[] = [];
+      
+      for await (const batch of processBatches(filePath, batchSize)) {
+        const batchResult = await processBatch(batch);
+        results.push(batchResult);
+        processedBatches++;
+        
+        // Progress reporting through content updates
+        if (processedBatches % 10 === 0) {
+          const progress = Math.round((processedBatches / totalBatches) * 100);
+          console.error(`Progress: ${progress}% (${processedBatches}/${totalBatches})`);
+        }
+      }
+      
+      return {
+        content: [{
+          type: "text",
+          text: `Processed ${processedBatches} batches successfully`
+        }],
+        structuredContent: {
+          totalBatches,
+          processedBatches,
+          results: results.slice(-5) // Last 5 results
+        }
+      };
+    } catch (error) {
+      return createErrorResult(error as Error, "process_large_file");
+    }
+  }
+);
+
+// ❌ DON'T: Block indefinitely without progress indication
+server.registerTool("blocking_tool", {}, async () => {
+  await veryLongOperation(); // No progress feedback
+  return { content: [{ type: "text", text: "Done" }] };
+});
+```
+
+### Tool State Management
+
+```typescript
+// ✅ DO: Manage tool state and lifecycle
+class StatefulToolManager {
+  private connections = new Map<string, Connection>();
+  private cache = new Map<string, { data: unknown; timestamp: number }>();
+  
+  constructor(private server: McpServer) {
+    this.registerTools();
+  }
+  
+  private registerTools() {
+    this.server.registerTool(
+      "connect_database",
+      {
+        description: "Establish database connection",
+        inputSchema: {
+          connectionString: z.string(),
+          poolSize: z.number().int().positive().optional().default(10)
+        }
+      },
+      async ({ connectionString, poolSize }) => {
+        const connectionId = generateId();
+        
+        try {
+          const connection = await createConnection(connectionString, poolSize);
+          this.connections.set(connectionId, connection);
+          
+          return {
+            content: [{
+              type: "text",
+              text: `Connected to database with ID: ${connectionId}`
+            }],
+            structuredContent: {
+              connectionId,
+              status: "connected",
+              poolSize
+            }
+          };
+        } catch (error) {
+          return createErrorResult(error as Error, "connect_database");
+        }
+      }
+    );
+    
+    this.server.registerTool(
+      "query_database",
+      {
+        description: "Execute database query",
+        inputSchema: {
+          connectionId: z.string(),
+          query: z.string(),
+          useCache: z.boolean().optional().default(true)
+        }
+      },
+      async ({ connectionId, query, useCache }) => {
+        const connection = this.connections.get(connectionId);
+        if (!connection) {
+          return createErrorResult(
+            new Error(`Connection ${connectionId} not found`),
+            "query_database"
+          );
+        }
+        
+        const cacheKey = `${connectionId}:${query}`;
+        
+        if (useCache && this.cache.has(cacheKey)) {
+          const cached = this.cache.get(cacheKey)!;
+          if (Date.now() - cached.timestamp < 60000) { // 1 minute cache
+            return {
+              content: [{
+                type: "text",
+                text: `Cached result: ${JSON.stringify(cached.data)}`
+              }]
+            };
+          }
+        }
+        
+        try {
+          const result = await connection.query(query);
+          
+          if (useCache) {
+            this.cache.set(cacheKey, { data: result, timestamp: Date.now() });
+          }
+          
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }]
+          };
+        } catch (error) {
+          return createErrorResult(error as Error, "query_database");
+        }
+      }
+    );
+  }
+  
+  cleanup() {
+    for (const connection of this.connections.values()) {
+      connection.close();
+    }
+    this.connections.clear();
+    this.cache.clear();
+  }
+}
+
+// ❌ DON'T: Create stateless tools that require connection management
+server.registerTool("bad_query", {}, async ({ query }) => {
+  const connection = await createConnection("..."); // New connection each time
+  const result = await connection.query(query);
+  await connection.close(); // Inefficient
+  return { content: [{ type: "text", text: result }] };
+});
+```
+
+### Tool Testing Patterns
+
+```typescript
+// ✅ DO: Write comprehensive tests for tools
+import { describe, test, expect, beforeEach, afterEach } from "@jest/globals";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+
+describe("MCP Tools", () => {
+  let server: McpServer;
+  let client: Client;
+  let serverTransport: InMemoryTransport;
+  let clientTransport: InMemoryTransport;
+  
+  beforeEach(async () => {
+    server = new McpServer({
+      name: "test-server",
+      version: "1.0.0"
+    });
+    
+    client = new Client({
+      name: "test-client",
+      version: "1.0.0"
+    });
+    
+    // Register test tools
+    server.registerTool(
+      "add_numbers",
+      {
+        description: "Add two numbers",
+        inputSchema: {
+          a: z.number(),
+          b: z.number()
+        }
+      },
+      async ({ a, b }) => ({
+        content: [{
+          type: "text",
+          text: (a + b).toString()
+        }]
+      })
+    );
+    
+    [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    
+    await Promise.all([
+      client.connect(clientTransport),
+      server.connect(serverTransport)
+    ]);
+  });
+  
+  afterEach(async () => {
+    await client.close();
+    await server.close();
+  });
+  
+  test("should list available tools", async () => {
+    const result = await client.request({
+      method: "tools/list"
+    }, ListToolsResultSchema);
+    
+    expect(result.tools).toHaveLength(1);
+    expect(result.tools[0].name).toBe("add_numbers");
+    expect(result.tools[0].inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        a: { type: "number" },
+        b: { type: "number" }
+      }
+    });
+  });
+  
+  test("should execute tool successfully", async () => {
+    const result = await client.request({
+      method: "tools/call",
+      params: {
+        name: "add_numbers",
+        arguments: { a: 5, b: 3 }
+      }
+    }, CallToolResultSchema);
+    
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe("8");
+  });
+  
+  test("should handle invalid tool name", async () => {
+    const result = await client.request({
+      method: "tools/call",
+      params: {
+        name: "nonexistent_tool",
+        arguments: {}
+      }
+    }, CallToolResultSchema);
+    
+    expect(result.isError).toBeTruthy();
+  });
+  
+  test("should validate input schema", async () => {
+    const result = await client.request({
+      method: "tools/call",
+      params: {
+        name: "add_numbers",
+        arguments: { a: "not a number", b: 3 }
+      }
+    }, CallToolResultSchema);
+    
+    expect(result.isError).toBeTruthy();
+  });
+});
+
+// ❌ DON'T: Skip testing tool validation and error cases
+test("minimal test", async () => {
+  // Only tests happy path, ignores validation and errors
+  const result = await client.request({
+    method: "tools/call",
+    params: { name: "tool", arguments: {} }
+  });
+  expect(result).toBeDefined();
+});
+```
+
+## Tool Registration Helpers
+
+### Type-Safe Tool Factory
+
+```typescript
+// ✅ DO: Create reusable tool registration utilities
+import { z } from "zod";
+import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+
+type ToolConfig<T extends z.ZodRawShape> = {
+  name: string;
+  description: string;
+  inputSchema: T;
+  annotations?: ToolAnnotations;
+};
+
+type ToolHandler<T extends z.ZodRawShape> = (
+  args: z.infer<z.ZodObject<T>>
+) => Promise<CallToolResult> | CallToolResult;
+
+class ToolBuilder {
+  constructor(private server: McpServer) {}
+  
+  create<T extends z.ZodRawShape>(
+    config: ToolConfig<T>,
+    handler: ToolHandler<T>
+  ) {
+    return this.server.registerTool(
+      config.name,
+      {
+        description: config.description,
+        inputSchema: config.inputSchema,
+        annotations: config.annotations
+      },
+      handler
+    );
+  }
+  
+  createGroup(tools: Array<{ config: ToolConfig<any>; handler: ToolHandler<any> }>) {
+    return tools.map(({ config, handler }) => this.create(config, handler));
+  }
+}
+
+// Usage
+const toolBuilder = new ToolBuilder(server);
+
+const fileTools = toolBuilder.createGroup([
+  {
+    config: {
+      name: "read_file",
+      description: "Read file contents",
+      inputSchema: { path: z.string() }
+    },
+    handler: async ({ path }) => {
+      const content = await fs.readFile(path, "utf8");
+      return { content: [{ type: "text", text: content }] };
+    }
+  },
+  {
+    config: {
+      name: "write_file",
+      description: "Write file contents",
+      inputSchema: {
+        path: z.string(),
+        content: z.string()
+      }
+    },
+    handler: async ({ path, content }) => {
+      await fs.writeFile(path, content, "utf8");
+      return { content: [{ type: "text", text: "File written successfully" }] };
+    }
+  }
+]);
+
+// ❌ DON'T: Repeat registration patterns without abstraction
+server.registerTool("tool1", { inputSchema: { /* ... */ } }, async () => { /* ... */ });
+server.registerTool("tool2", { inputSchema: { /* ... */ } }, async () => { /* ... */ });
+// Repetitive without reusable patterns
+```
+
+## Security and Best Practices
+
+### Input Sanitization and Security
+
+```typescript
+// ✅ DO: Implement comprehensive input validation and sanitization
+import { z } from "zod";
+import path from "path";
+
+const securePathSchema = z.string()
+  .refine(
+    (path) => !path.includes("..") && !path.startsWith("/"),
+    "Path must be relative and not contain parent directory references"
+  );
+
+server.registerTool(
+  "secure_file_read",
+  {
+    description: "Securely read files within allowed directories",
+    inputSchema: {
+      path: securePathSchema,
+      allowedExtensions: z.array(z.string()).optional().default([".txt", ".json", ".md"])
+    }
+  },
+  async ({ path: filePath, allowedExtensions }) => {
+    try {
+      // Additional security checks
+      const resolvedPath = path.resolve(process.cwd(), filePath);
+      const allowedDir = path.resolve(process.cwd(), "data");
+      
+      if (!resolvedPath.startsWith(allowedDir)) {
+        return createErrorResult(
+          new Error("File access outside allowed directory"),
+          "secure_file_read"
+        );
+      }
+      
+      const ext = path.extname(resolvedPath);
+      if (!allowedExtensions.includes(ext)) {
+        return createErrorResult(
+          new Error(`File extension ${ext} not allowed`),
+          "secure_file_read"
+        );
+      }
+      
+      const content = await fs.readFile(resolvedPath, "utf8");
+      
+      return {
+        content: [{
+          type: "text",
+          text: content
+        }]
+      };
+    } catch (error) {
+      return createErrorResult(error as Error, "secure_file_read");
+    }
+  }
+);
+
+// ❌ DON'T: Allow arbitrary file system access
+server.registerTool("unsafe_read", {
+  inputSchema: { path: z.string() }
+}, async ({ path }) => {
+  const content = await fs.readFile(path, "utf8"); // No validation
+  return { content: [{ type: "text", text: content }] };
+});
+```
+
+### Rate Limiting and Resource Management
+
+```typescript
+// ✅ DO: Implement rate limiting and resource controls
+class RateLimitedToolManager {
+  private requestCounts = new Map<string, { count: number; resetTime: number }>();
+  private readonly RATE_LIMIT = 100; // requests per minute
+  private readonly WINDOW_MS = 60 * 1000; // 1 minute
+  
+  constructor(private server: McpServer) {}
+  
+  private checkRateLimit(toolName: string): boolean {
+    const now = Date.now();
+    const key = toolName;
+    const current = this.requestCounts.get(key);
+    
+    if (!current || now > current.resetTime) {
+      this.requestCounts.set(key, { count: 1, resetTime: now + this.WINDOW_MS });
+      return true;
+    }
+    
+    if (current.count >= this.RATE_LIMIT) {
+      return false;
+    }
+    
+    current.count++;
+    return true;
+  }
+  
+  registerRateLimitedTool<T extends z.ZodRawShape>(
+    name: string,
+    config: { description: string; inputSchema: T },
+    handler: (args: z.infer<z.ZodObject<T>>) => Promise<CallToolResult>
+  ) {
+    return this.server.registerTool(
+      name,
+      config,
+      async (args) => {
+        if (!this.checkRateLimit(name)) {
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: "Rate limit exceeded. Please try again later."
+            }]
+          };
+        }
+        
+        return await handler(args);
+      }
+    );
+  }
+}
+
+// ❌ DON'T: Ignore resource limits and abuse potential
+server.registerTool("unlimited_requests", {}, async () => {
+  await expensiveOperation(); // No rate limiting
+  return { content: [{ type: "text", text: "Done" }] };
+});
+```
+
+## Best Practices Summary
+
+### Tool Design
+- Use descriptive names following namespace conventions (e.g., `file.read`, `api.request`)
+- Provide comprehensive descriptions for all tools and parameters
+- Implement proper input/output validation with Zod schemas
+- Use annotations for UI hints and categorization
+
+### Error Handling
+- Always wrap tool execution in try-catch blocks
+- Return structured error responses using `isError: true`
+- Provide meaningful error messages and error codes
+- Log errors appropriately for debugging
+
+### Performance
+- Implement caching for expensive operations
+- Use progress reporting for long-running tasks
+- Apply rate limiting to prevent abuse
+- Clean up resources and connections properly
+
+### Security
+- Validate and sanitize all inputs
+- Implement path traversal protection for file operations
+- Use proper authentication where required
+- Apply principle of least privilege
+
+### Testing
+- Write comprehensive unit tests for all tools
+- Test both success and error scenarios
+- Validate input schema enforcement
+- Test tool lifecycle and state management
+
+## References
+- [Model Context Protocol Documentation](mdc:https:/modelcontextprotocol.io/introduction)
+- [MCP TypeScript SDK](mdc:https:/github.com/modelcontextprotocol/typescript-sdk)
+- [Zod Schema Validation](mdc:https:/zod.dev)
+- [MCP Tool Specification](mdc:https:/spec.modelcontextprotocol.io/specification/server/tools)

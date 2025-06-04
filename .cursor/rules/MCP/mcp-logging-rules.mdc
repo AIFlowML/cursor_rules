@@ -1,0 +1,551 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in MCP (Model Context Protocol) logging, TypeScript, and stdout/stderr management. You focus on implementing logging that works correctly with MCP's stdio transport while avoiding interference with protocol communication.
+
+## MCP Logging Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   MCP Logging   │    │   Console Safety │    │   Transport     │
+│   - Server Msgs │───▶│   - stderr Only   │───▶│   - stdio Safe  │
+│   - Client Hdlr │    │   - No stdout     │    │   - HTTP Safe   │
+│   - Levels      │    │   - Structured    │    │   - SSE Safe    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Notification  │    │   Level Control  │    │   Formatting    │
+│   - Protocol    │    │   - debug/info   │    │   - Timestamps  │
+│   - Structured  │    │   - warn/error   │    │   - Prefixes    │
+│   - Async       │    │   - Client Set   │    │   - Colors      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+src/
+├── utils/
+│   ├── logger.ts              # MCP-safe logger implementation
+│   └── mcpLogger.ts           # MCP protocol logging utilities
+├── server/
+│   ├── index.ts               # Server with logging capability
+│   └── handlers/              # Request handlers with logging
+└── client/
+    ├── index.ts               # Client with notification handlers
+    └── examples/              # Example implementations
+```
+
+## Core Implementation Patterns
+
+### MCP-Safe Logger Implementation
+
+```typescript
+// ✅ DO: Create MCP-safe logger that uses stderr for console output
+import { LoggingLevel } from '../types.js';
+
+interface LogEntry {
+  timestamp: string;
+  level: LoggingLevel;
+  message: string;
+  data?: unknown;
+  context?: string;
+}
+
+class MCPSafeLogger {
+  private currentLevel: LoggingLevel = 'info';
+  private context?: string;
+
+  constructor(context?: string) {
+    this.context = context;
+  }
+
+  setLevel(level: LoggingLevel): void {
+    this.currentLevel = level;
+  }
+
+  private shouldLog(level: LoggingLevel): boolean {
+    const levels: Record<LoggingLevel, number> = {
+      debug: 0,
+      info: 1,
+      notice: 2,
+      warning: 3,
+      error: 4,
+      critical: 5,
+      alert: 6,
+      emergency: 7
+    };
+    
+    return levels[level] >= levels[this.currentLevel];
+  }
+
+  private formatMessage(level: LoggingLevel, message: string, data?: unknown): string {
+    const timestamp = new Date().toISOString();
+    const contextStr = this.context ? `[${this.context}] ` : '';
+    const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+    
+    return `${timestamp} ${level.toUpperCase()} ${contextStr}${message}${dataStr}`;
+  }
+
+  debug(message: string, data?: unknown): void {
+    if (this.shouldLog('debug')) {
+      // ✅ Use stderr for all console output to avoid stdio interference
+      console.error(this.formatMessage('debug', message, data));
+    }
+  }
+
+  info(message: string, data?: unknown): void {
+    if (this.shouldLog('info')) {
+      console.error(this.formatMessage('info', message, data));
+    }
+  }
+
+  warn(message: string, data?: unknown): void {
+    if (this.shouldLog('warning')) {
+      console.error(this.formatMessage('warning', message, data));
+    }
+  }
+
+  error(message: string, data?: unknown): void {
+    if (this.shouldLog('error')) {
+      console.error(this.formatMessage('error', message, data));
+    }
+  }
+}
+
+// ❌ DON'T: Use stdout for logging in MCP applications
+class BadLogger {
+  log(message: string): void {
+    console.log(message); // This will break stdio transport!
+  }
+}
+```
+
+### MCP Server Logging Capability
+
+```typescript
+// ✅ DO: Implement server with proper logging capability
+import { Server, LoggingMessageNotification } from '@modelcontextprotocol/sdk/server/index.js';
+
+class MCPServerWithLogging extends Server {
+  private logger: MCPSafeLogger;
+  private clientLoggingLevel?: LoggingLevel;
+
+  constructor(serverInfo: Implementation, logger: MCPSafeLogger) {
+    super(serverInfo, {
+      capabilities: {
+        // Enable logging capability
+        logging: {},
+        tools: { listChanged: true },
+        resources: { subscribe: true, listChanged: true }
+      }
+    });
+    
+    this.logger = logger;
+    this.setupLoggingHandlers();
+  }
+
+  private setupLoggingHandlers(): void {
+    // Handle client logging level requests
+    this.setRequestHandler(SetLoggingLevelRequestSchema, async (request) => {
+      this.clientLoggingLevel = request.params.level;
+      this.logger.setLevel(request.params.level);
+      
+      // Log to server stderr (safe)
+      this.logger.info(`Client set logging level to: ${request.params.level}`);
+      
+      return {};
+    });
+  }
+
+  // ✅ DO: Send structured log messages to client via MCP protocol
+  async logToClient(level: LoggingLevel, message: string, data?: unknown): Promise<void> {
+    if (!this.clientLoggingLevel) {
+      return; // Client hasn't requested logging
+    }
+
+    const levels: Record<LoggingLevel, number> = {
+      debug: 0, info: 1, notice: 2, warning: 3,
+      error: 4, critical: 5, alert: 6, emergency: 7
+    };
+
+    // Only send if client requested this level or higher
+    if (levels[level] >= levels[this.clientLoggingLevel]) {
+      await this.sendLoggingMessage({
+        level,
+        data: data ? `${message} ${JSON.stringify(data)}` : message,
+        logger: 'mcp-server'
+      });
+    }
+  }
+
+  // ✅ DO: Safe error handling with dual logging
+  async handleToolCall(name: string, args: Record<string, unknown>): Promise<void> {
+    try {
+      // Log to server stderr (always safe)
+      this.logger.info(`Tool call: ${name}`, { args });
+      
+      // Also send to client if logging enabled
+      await this.logToClient('info', `Executing tool: ${name}`, { args });
+      
+      // Tool execution...
+      const result = await this.executeTool(name, args);
+      
+      await this.logToClient('info', `Tool completed: ${name}`, { result });
+      
+    } catch (error) {
+      // Error logging to both server and client
+      this.logger.error(`Tool failed: ${name}`, { error: error.message });
+      await this.logToClient('error', `Tool failed: ${name}`, { 
+        error: error.message 
+      });
+      throw error;
+    }
+  }
+
+  private async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    // Tool implementation...
+    return { success: true };
+  }
+}
+
+// ❌ DON'T: Mix console.log with MCP protocol
+class BadMCPServer extends Server {
+  async handleRequest(request: unknown): Promise<unknown> {
+    console.log('Handling request:', request); // Breaks stdio!
+    return super.handleRequest(request);
+  }
+}
+```
+
+### MCP Client Logging Handlers
+
+```typescript
+// ✅ DO: Properly handle logging notifications from server
+import { Client, LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/client/index.js';
+
+class MCPClientWithLogging {
+  private client: Client;
+  private logger: MCPSafeLogger;
+
+  constructor() {
+    this.client = new Client(
+      { name: 'mcp-client', version: '1.0.0' },
+      { capabilities: {} }
+    );
+    
+    this.logger = new MCPSafeLogger('client');
+    this.setupNotificationHandlers();
+  }
+
+  private setupNotificationHandlers(): void {
+    // ✅ DO: Handle server log messages via MCP protocol
+    this.client.setNotificationHandler(
+      LoggingMessageNotificationSchema, 
+      (notification) => {
+        const { level, data, logger: serverLogger } = notification.params;
+        
+        // Format server messages distinctly
+        const prefix = serverLogger ? `[${serverLogger}]` : '[server]';
+        const message = `${prefix} ${data}`;
+        
+        // Use client logger (stderr-safe) to display server logs
+        switch (level) {
+          case 'debug':
+            this.logger.debug(message);
+            break;
+          case 'info':
+          case 'notice':
+            this.logger.info(message);
+            break;
+          case 'warning':
+            this.logger.warn(message);
+            break;
+          case 'error':
+          case 'critical':
+          case 'alert':
+          case 'emergency':
+            this.logger.error(message);
+            break;
+        }
+      }
+    );
+  }
+
+  async setServerLoggingLevel(level: LoggingLevel): Promise<void> {
+    try {
+      await this.client.setLoggingLevel(level);
+      this.logger.info(`Set server logging level to: ${level}`);
+    } catch (error) {
+      this.logger.error('Failed to set server logging level', { error });
+    }
+  }
+
+  async connectWithLogging(transport: Transport): Promise<void> {
+    try {
+      await this.client.connect(transport);
+      this.logger.info('Connected to MCP server');
+      
+      // Request info-level logging from server
+      await this.setServerLoggingLevel('info');
+      
+    } catch (error) {
+      this.logger.error('Failed to connect to MCP server', { error });
+      throw error;
+    }
+  }
+}
+
+// ❌ DON'T: Use console.log in notification handlers
+this.client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+  console.log('Server log:', notification.params.data); // Breaks stdio!
+});
+```
+
+## Advanced Patterns
+
+### Conditional Logging Based on Transport
+
+```typescript
+// ✅ DO: Adapt logging strategy based on transport type
+interface LoggingStrategy {
+  log(level: LoggingLevel, message: string, data?: unknown): void;
+}
+
+class StdioSafeStrategy implements LoggingStrategy {
+  log(level: LoggingLevel, message: string, data?: unknown): void {
+    // Always use stderr for stdio transport
+    const timestamp = new Date().toISOString();
+    const formatted = `${timestamp} [${level.toUpperCase()}] ${message}`;
+    console.error(formatted);
+  }
+}
+
+class HTTPSafeStrategy implements LoggingStrategy {
+  log(level: LoggingLevel, message: string, data?: unknown): void {
+    // HTTP transport can use stdout safely
+    const timestamp = new Date().toISOString();
+    const formatted = `${timestamp} [${level.toUpperCase()}] ${message}`;
+    
+    if (level === 'error' || level === 'critical') {
+      console.error(formatted);
+    } else {
+      console.log(formatted);
+    }
+  }
+}
+
+class AdaptiveLogger {
+  private strategy: LoggingStrategy;
+
+  constructor(transportType: 'stdio' | 'http' | 'sse') {
+    // ✅ Always use stderr-safe strategy for safety
+    this.strategy = new StdioSafeStrategy();
+    
+    // Optional: Could use HTTP strategy if certain it's not stdio
+    // this.strategy = transportType === 'stdio' 
+    //   ? new StdioSafeStrategy() 
+    //   : new HTTPSafeStrategy();
+  }
+
+  log(level: LoggingLevel, message: string, data?: unknown): void {
+    this.strategy.log(level, message, data);
+  }
+}
+
+// ❌ DON'T: Assume transport type allows stdout
+class UnsafeLogger {
+  log(message: string): void {
+    console.log(message); // Could break stdio transport
+  }
+}
+```
+
+### Progress Logging with MCP Protocol
+
+```typescript
+// ✅ DO: Use MCP progress notifications for operation tracking
+class ProgressAwareLogger {
+  private server: Server;
+  private logger: MCPSafeLogger;
+
+  constructor(server: Server) {
+    this.server = server;
+    this.logger = new MCPSafeLogger('progress');
+  }
+
+  async logProgressOperation<T>(
+    operation: () => Promise<T>,
+    description: string,
+    steps: number
+  ): Promise<T> {
+    const progressToken = `progress-${Date.now()}`;
+    
+    try {
+      // Log start to server stderr
+      this.logger.info(`Starting: ${description}`);
+      
+      // Send initial progress notification
+      await this.server.sendProgressNotification({
+        progressToken,
+        progress: 0,
+        total: steps
+      });
+
+      const result = await operation();
+
+      // Log completion
+      this.logger.info(`Completed: ${description}`);
+      
+      // Send completion progress
+      await this.server.sendProgressNotification({
+        progressToken,
+        progress: steps,
+        total: steps
+      });
+
+      return result;
+      
+    } catch (error) {
+      this.logger.error(`Failed: ${description}`, { error });
+      throw error;
+    }
+  }
+}
+
+// ❌ DON'T: Use console.log for progress updates
+async function badProgressLogging(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    console.log(`Progress: ${i}/10`); // Breaks stdio!
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+```
+
+### Debug Mode Configuration
+
+```typescript
+// ✅ DO: Environment-aware debug configuration
+class DebugLogger {
+  private isDebugMode: boolean;
+  private logger: MCPSafeLogger;
+
+  constructor() {
+    // Safe debug detection
+    this.isDebugMode = process.env.MCP_DEBUG === 'true' || 
+                      process.env.NODE_ENV === 'development';
+    
+    this.logger = new MCPSafeLogger('debug');
+    
+    if (this.isDebugMode) {
+      this.logger.setLevel('debug');
+      this.logger.debug('Debug mode enabled');
+    }
+  }
+
+  debugLog(message: string, data?: unknown): void {
+    if (this.isDebugMode) {
+      this.logger.debug(message, data);
+    }
+  }
+
+  // ✅ DO: Structured error logging with context
+  logError(error: Error, context: string, metadata?: Record<string, unknown>): void {
+    const errorInfo = {
+      message: error.message,
+      stack: this.isDebugMode ? error.stack : undefined,
+      context,
+      ...metadata
+    };
+    
+    this.logger.error('Operation failed', errorInfo);
+  }
+}
+
+// ❌ DON'T: Use console methods directly
+function badDebugLogging(): void {
+  if (process.env.DEBUG) {
+    console.log('Debug info'); // Unsafe!
+  }
+}
+```
+
+## Error Handling and Security
+
+### Safe Error Logging
+
+```typescript
+// ✅ DO: Sanitize sensitive data in logs
+class SecureLogger extends MCPSafeLogger {
+  private sensitiveKeys = ['password', 'token', 'secret', 'key', 'auth'];
+
+  private sanitizeData(data: unknown): unknown {
+    if (typeof data !== 'object' || data === null) {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      return data.map(item => this.sanitizeData(item));
+    }
+
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (this.sensitiveKeys.some(sensitive => 
+        key.toLowerCase().includes(sensitive.toLowerCase())
+      )) {
+        sanitized[key] = '[REDACTED]';
+      } else {
+        sanitized[key] = this.sanitizeData(value);
+      }
+    }
+    return sanitized;
+  }
+
+  logSafe(level: LoggingLevel, message: string, data?: unknown): void {
+    const sanitized = data ? this.sanitizeData(data) : undefined;
+    super[level](mdc:message, sanitized);
+  }
+}
+
+// ❌ DON'T: Log sensitive information
+class UnsafeLogger {
+  logAuth(authData: { token: string; password: string }): void {
+    console.error('Auth data:', authData); // Leaks secrets!
+  }
+}
+```
+
+## Best Practices Summary
+
+### Transport Safety
+- Always use `console.error()` instead of `console.log()` for MCP applications
+- Never write to stdout in stdio transport mode
+- Use MCP logging notifications for client communication
+- Test logging with all transport types (stdio, HTTP, SSE)
+
+### Protocol Integration
+- Enable logging capability in server capabilities
+- Handle `logging/setLevel` requests properly
+- Use structured logging notifications
+- Implement progress notifications for long operations
+
+### Performance
+- Implement log level filtering to reduce overhead
+- Use async logging for performance-critical operations
+- Buffer log messages for batch transmission when appropriate
+- Cache logging configuration to avoid repeated checks
+
+### Security
+- Sanitize sensitive data before logging
+- Use environment variables for debug configuration
+- Implement log rotation for long-running servers
+- Avoid logging user credentials or secrets
+
+## References
+- [MCP Logging Specification](mdc:https:/modelcontextprotocol.io/docs/concepts/logging)
+- [TypeScript MCP SDK](mdc:https:/github.com/modelcontextprotocol/typescript-sdk)
+- [Node.js Stream Documentation](mdc:https:/nodejs.org/api/stream.html)
+- [Stdio Transport Best Practices](mdc:https:/modelcontextprotocol.io/docs/concepts/transports)

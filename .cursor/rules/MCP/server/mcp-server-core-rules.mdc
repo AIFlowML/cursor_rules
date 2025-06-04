@@ -1,0 +1,998 @@
+---
+description: Core rules for MCP server implementation and lifecycle management
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) core implementation, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK patterns and best practices.
+
+## MCP Server Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Server Init   │    │  Transport Setup │    │  Handler Reg.   │
+│   - McpServer   │───▶│  - SSE/Stdio     │───▶│  - Tools        │
+│   - capabilities│    │  - Authentication│    │  - Resources    │
+│   - serverInfo  │    │  - Session mgmt  │    │  - Prompts      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Request Flow   │    │ Message Handling │    │   Lifecycle     │
+│  - Validation   │    │  - JSON-RPC      │    │  - Connect      │
+│  - Type Safety  │    │  - Progress      │    │  - Error Handle │
+│  - Error Handle │    │  - Cancellation  │    │  - Cleanup      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+project-root/
+├── src/
+│   ├── server/
+│   │   ├── index.ts           # Base Server class
+│   │   ├── mcp.ts             # High-level McpServer
+│   │   ├── sse.ts             # SSE transport
+│   │   ├── stdio.ts           # Stdio transport
+│   │   ├── auth/              # Authentication providers
+│   │   └── streamableHttp.ts  # HTTP streaming transport
+│   ├── shared/
+│   │   ├── protocol.ts        # Protocol base class
+│   │   ├── transport.ts       # Transport interface
+│   │   └── uriTemplate.ts     # URI template handling
+│   ├── types.ts               # MCP type definitions
+│   └── examples/
+│       └── server/            # Example implementations
+├── package.json
+└── tsconfig.json
+```
+
+## Core Implementation Patterns
+
+### Server Initialization
+
+```typescript
+// ✅ DO: Use proper MCP server initialization
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+
+const server = new McpServer({
+  name: 'my-mcp-server',
+  version: '1.0.0'
+}, {
+  capabilities: {
+    resources: { subscribe: true, listChanged: true },
+    tools: { listChanged: true },
+    prompts: { listChanged: true },
+    logging: {}
+  }
+});
+
+// ❌ DON'T: Use minimal server initialization
+const badServer = new McpServer({
+  name: 'server'
+}, {}); // Missing capabilities
+```
+
+### Transport Setup
+
+```typescript
+// ✅ DO: Proper transport configuration
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+
+class ServerManager {
+  private server: McpServer;
+  private transport?: Transport;
+
+  async initialize(): Promise<void> {
+    this.server = new McpServer({
+      name: 'example-server',
+      version: '1.0.0'
+    }, {
+      capabilities: {
+        resources: { subscribe: true },
+        tools: { listChanged: true }
+      }
+    });
+
+    // Setup handlers before connecting
+    this.setupHandlers();
+    
+    // Connect to transport
+    this.transport = new StdioServerTransport();
+    await this.server.connect(this.transport);
+  }
+
+  private setupHandlers(): void {
+    // Register all handlers before connecting
+    this.setupToolHandlers();
+    this.setupResourceHandlers();
+    this.setupPromptHandlers();
+  }
+}
+
+// ❌ DON'T: Connect before setting up handlers
+async function badSetup() {
+  const server = new McpServer({ name: 'bad' }, {});
+  await server.connect(transport); // Connect first
+  server.tool('test', () => {}); // Register after - may not work
+}
+```
+
+### Tool Registration
+
+```typescript
+// ✅ DO: Type-safe tool registration with proper schemas
+import { z } from 'zod';
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
+// Define input/output schemas
+const FileReadSchema = z.object({
+  path: z.string().describe('Path to the file to read'),
+  encoding: z.enum(['utf8', 'base64']).default('utf8').describe('File encoding')
+});
+
+const FileReadOutputSchema = z.object({
+  content: z.string().describe('File content'),
+  size: z.number().describe('File size in bytes'),
+  lastModified: z.string().describe('Last modified timestamp')
+});
+
+// Register tool with type safety
+server.tool(
+  'read-file',
+  'Read a file from the filesystem',
+  {
+    inputSchema: FileReadSchema,
+    outputSchema: FileReadOutputSchema,
+    annotations: {
+      audience: ['user'],
+      category: 'filesystem'
+    }
+  },
+  async ({ path, encoding }): Promise<CallToolResult> => {
+    try {
+      const stats = await fs.stat(path);
+      const content = await fs.readFile(path, encoding);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            content,
+            size: stats.size,
+            lastModified: stats.mtime.toISOString()
+          })
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error reading file: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+// ❌ DON'T: Register tools without type safety
+server.tool('bad-tool', async (args: any) => {
+  return { content: [{ type: 'text', text: 'result' }] }; // No validation
+});
+```
+
+### Resource Management
+
+```typescript
+// ✅ DO: Implement proper resource handling
+server.resource(
+  'file://{path}',
+  'Read files from the filesystem',
+  {
+    mimeType: 'text/plain',
+    description: 'File system resource access'
+  },
+  async (uri: URL): Promise<ReadResourceResult> => {
+    const path = uri.pathname;
+    
+    try {
+      // Validate path for security
+      if (!isValidPath(path)) {
+        throw new Error('Invalid file path');
+      }
+
+      const content = await fs.readFile(path, 'utf8');
+      const stats = await fs.stat(path);
+      
+      return {
+        contents: [{
+          uri: uri.toString(),
+          mimeType: 'text/plain',
+          text: content
+        }]
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to read file: ${error.message}`
+      );
+    }
+  }
+);
+
+// Resource template for dynamic resources
+server.resource(
+  new ResourceTemplate(
+    'database://tables/{table}/rows/{id}',
+    {
+      list: async () => {
+        const tables = await database.getTables();
+        return {
+          resources: tables.map(table => ({
+            uri: `database://tables/${table}/rows/`,
+            name: `Table: ${table}`,
+            mimeType: 'application/json'
+          }))
+        };
+      },
+      complete: {
+        table: async (value: string) => {
+          return database.searchTables(value);
+        }
+      }
+    }
+  ),
+  { mimeType: 'application/json' },
+  async (uri: URL, variables): Promise<ReadResourceResult> => {
+    const { table, id } = variables;
+    const row = await database.getRow(table, id);
+    
+    return {
+      contents: [{
+        uri: uri.toString(),
+        mimeType: 'application/json',
+        text: JSON.stringify(row, null, 2)
+      }]
+    };
+  }
+);
+
+// ❌ DON'T: Ignore security in resource access
+server.resource('file://{path}', async (uri: URL) => {
+  return fs.readFile(uri.pathname); // No path validation
+});
+```
+
+### Prompt Templates
+
+```typescript
+// ✅ DO: Define reusable prompt templates
+const AnalysisPromptSchema = z.object({
+  data: z.string().describe('Data to analyze'),
+  format: z.enum(['summary', 'detailed']).default('summary'),
+  context: z.string().optional().describe('Additional context')
+});
+
+server.prompt(
+  'analyze-data',
+  'Generate analysis of provided data',
+  {
+    argsSchema: AnalysisPromptSchema
+  },
+  async ({ data, format, context }): Promise<GetPromptResult> => {
+    const systemPrompt = context 
+      ? `Analyze the following data with context: ${context}`
+      : 'Analyze the following data:';
+      
+    return {
+      messages: [
+        {
+          role: 'system',
+          content: {
+            type: 'text',
+            text: systemPrompt
+          }
+        },
+        {
+          role: 'user', 
+          content: {
+            type: 'text',
+            text: `Data to analyze (${format} format requested):\n\n${data}`
+          }
+        }
+      ]
+    };
+  }
+);
+
+// ❌ DON'T: Create prompts without proper structure
+server.prompt('bad-prompt', (args: any) => {
+  return { messages: [{ role: 'user', content: args.text }] }; // No validation
+});
+```
+
+## Advanced Patterns
+
+### Progress Reporting
+
+```typescript
+// ✅ DO: Implement progress reporting for long operations
+server.tool(
+  'process-large-dataset',
+  'Process a large dataset with progress updates',
+  {
+    inputSchema: z.object({
+      dataset: z.string().describe('Dataset identifier'),
+      batchSize: z.number().default(100).describe('Processing batch size')
+    })
+  },
+  async ({ dataset, batchSize }, { sendNotification }): Promise<CallToolResult> => {
+    try {
+      const data = await loadDataset(dataset);
+      const totalItems = data.length;
+      let processedItems = 0;
+
+      // Send initial progress
+      await sendNotification({
+        method: 'notifications/progress',
+        params: {
+          progress: 0,
+          total: totalItems,
+          token: 'process-dataset'
+        }
+      });
+
+      // Process in batches with progress updates
+      for (let i = 0; i < data.length; i += batchSize) {
+        const batch = data.slice(i, i + batchSize);
+        await processBatch(batch);
+        
+        processedItems += batch.length;
+        
+        // Update progress
+        await sendNotification({
+          method: 'notifications/progress',
+          params: {
+            progress: processedItems,
+            total: totalItems,
+            token: 'process-dataset'
+          }
+        });
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Successfully processed ${processedItems} items from dataset ${dataset}`
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error processing dataset: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+// ❌ DON'T: Run long operations without progress feedback
+server.tool('long-operation', async () => {
+  for (let i = 0; i < 1000000; i++) {
+    await processItem(i); // No progress updates
+  }
+  return { content: [{ type: 'text', text: 'Done' }] };
+});
+```
+
+### Error Handling
+
+```typescript
+// ✅ DO: Implement comprehensive error handling
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+
+class DatabaseTool {
+  async executeQuery(query: string): Promise<CallToolResult> {
+    try {
+      // Validate query
+      if (!this.isValidQuery(query)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          'Invalid SQL query provided'
+        );
+      }
+
+      // Execute with timeout
+      const result = await Promise.race([
+        this.database.execute(query),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Query timeout')), 30000)
+        )
+      ]);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }]
+      };
+    } catch (error) {
+      if (error instanceof McpError) {
+        throw error; // Re-throw MCP errors
+      }
+
+      // Log internal errors but don't expose details
+      console.error('Database query error:', error);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: 'Database query failed. Please check your query syntax.'
+        }],
+        isError: true
+      };
+    }
+  }
+
+  private isValidQuery(query: string): boolean {
+    // Implement query validation logic
+    const forbidden = ['DROP', 'DELETE', 'TRUNCATE', 'ALTER'];
+    const upperQuery = query.toUpperCase();
+    return !forbidden.some(keyword => upperQuery.includes(keyword));
+  }
+}
+
+// ❌ DON'T: Expose internal errors
+server.tool('bad-tool', async () => {
+  try {
+    await internalOperation();
+  } catch (error) {
+    throw error; // Exposes internal implementation details
+  }
+});
+```
+
+### Authentication Integration
+
+```typescript
+// ✅ DO: Implement proper authentication
+import { AuthProvider } from '@modelcontextprotocol/sdk/server/auth/types.js';
+
+class CustomAuthProvider implements AuthProvider {
+  async authenticate(token: string): Promise<AuthInfo> {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+      return {
+        userId: decoded.sub,
+        permissions: decoded.permissions || [],
+        metadata: decoded.metadata
+      };
+    } catch (error) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Invalid authentication token');
+    }
+  }
+}
+
+// Use authentication in tools
+server.tool(
+  'protected-operation',
+  'Perform a protected operation',
+  { inputSchema: z.object({ action: z.string() }) },
+  async ({ action }, { authInfo }): Promise<CallToolResult> => {
+    if (!authInfo) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Authentication required');
+    }
+
+    if (!authInfo.permissions.includes('admin')) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Insufficient permissions');
+    }
+
+    // Perform protected operation
+    return {
+      content: [{
+        type: 'text',
+        text: `Protected action '${action}' completed by user ${authInfo.userId}`
+      }]
+    };
+  }
+);
+
+// ❌ DON'T: Skip authentication for sensitive operations
+server.tool('delete-data', async ({ id }) => {
+  await database.delete(id); // No auth check
+  return { content: [{ type: 'text', text: 'Deleted' }] };
+});
+```
+
+## Transport Implementation
+
+### SSE Server Setup
+
+```typescript
+// ✅ DO: Proper SSE server implementation
+import express from 'express';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+
+class SSEMcpServer {
+  private app = express();
+  private transports: Map<string, SSEServerTransport> = new Map();
+
+  constructor(private mcpServer: McpServer) {
+    this.setupRoutes();
+  }
+
+  private setupRoutes(): void {
+    this.app.use(express.json());
+    
+    // CORS setup for SSE
+    this.app.use((req, res, next) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      next();
+    });
+
+    // SSE endpoint
+    this.app.get('/mcp', async (req, res) => {
+      try {
+        const transport = new SSEServerTransport('/messages', res);
+        const sessionId = transport.sessionId;
+        
+        this.transports.set(sessionId, transport);
+        
+        transport.onclose = () => {
+          console.log(`SSE transport closed for session ${sessionId}`);
+          this.transports.delete(sessionId);
+        };
+
+        transport.onerror = (error) => {
+          console.error(`SSE transport error for session ${sessionId}:`, error);
+        };
+
+        await this.mcpServer.connect(transport);
+        console.log(`SSE connection established: ${sessionId}`);
+      } catch (error) {
+        console.error('SSE connection error:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Connection failed');
+        }
+      }
+    });
+
+    // Messages endpoint
+    this.app.post('/messages', async (req, res) => {
+      const sessionId = req.query.sessionId as string;
+      
+      if (!sessionId) {
+        res.status(400).send('Missing sessionId');
+        return;
+      }
+
+      const transport = this.transports.get(sessionId);
+      if (!transport) {
+        res.status(404).send('Session not found');
+        return;
+      }
+
+      try {
+        await transport.handlePostMessage(req, res, req.body);
+      } catch (error) {
+        console.error('Message handling error:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Message handling failed');
+        }
+      }
+    });
+  }
+
+  listen(port: number): void {
+    this.app.listen(port, () => {
+      console.log(`MCP SSE server listening on port ${port}`);
+    });
+  }
+
+  async shutdown(): Promise<void> {
+    console.log('Shutting down SSE server...');
+    
+    // Close all active transports
+    const closePromises = Array.from(this.transports.values()).map(
+      transport => transport.close().catch(console.error)
+    );
+    
+    await Promise.all(closePromises);
+    this.transports.clear();
+    console.log('SSE server shutdown complete');
+  }
+}
+
+// ❌ DON'T: Create SSE server without proper cleanup
+app.get('/sse', (req, res) => {
+  const transport = new SSEServerTransport('/messages', res);
+  server.connect(transport); // No session tracking or cleanup
+});
+```
+
+### Stdio Server Setup
+
+```typescript
+// ✅ DO: Proper stdio server implementation
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+async function createStdioServer(): Promise<void> {
+  const server = new McpServer({
+    name: 'stdio-server',
+    version: '1.0.0'
+  }, {
+    capabilities: {
+      tools: { listChanged: true },
+      resources: { subscribe: true }
+    }
+  });
+
+  // Setup all handlers
+  setupServerHandlers(server);
+
+  // Connect to stdio transport
+  const transport = new StdioServerTransport();
+  
+  transport.onclose = () => {
+    console.error('Stdio transport closed');
+    process.exit(0);
+  };
+
+  transport.onerror = (error) => {
+    console.error('Stdio transport error:', error);
+  };
+
+  await server.connect(transport);
+  console.error('MCP stdio server started'); // Use stderr for logging
+}
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.error('Received SIGINT, shutting down...');
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.error('Received SIGTERM, shutting down...');
+  process.exit(0);
+});
+
+// ❌ DON'T: Start stdio server without proper signal handling
+const transport = new StdioServerTransport();
+server.connect(transport); // No shutdown handling
+```
+
+## Testing Patterns
+
+### Unit Testing
+
+```typescript
+// ✅ DO: Comprehensive MCP server testing
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/shared/test.js';
+
+describe('MCP Server', () => {
+  let server: McpServer;
+  let transport: InMemoryTransport;
+
+  beforeEach(async () => {
+    server = new McpServer({
+      name: 'test-server',
+      version: '1.0.0'
+    }, {
+      capabilities: {
+        tools: { listChanged: true },
+        resources: {}
+      }
+    });
+
+    transport = new InMemoryTransport();
+    await server.connect(transport);
+  });
+
+  afterEach(async () => {
+    await server.close();
+  });
+
+  test('lists registered tools', async () => {
+    // Register a test tool
+    server.tool(
+      'test-tool',
+      'A test tool',
+      { inputSchema: z.object({ input: z.string() }) },
+      async ({ input }) => ({
+        content: [{ type: 'text', text: `Echo: ${input}` }]
+      })
+    );
+
+    // Test tool listing
+    const response = await transport.request({
+      method: 'tools/list',
+      params: {}
+    });
+
+    expect(response.tools).toHaveLength(1);
+    expect(response.tools[0].name).toBe('test-tool');
+  });
+
+  test('executes tools with proper validation', async () => {
+    server.tool(
+      'add-numbers',
+      'Add two numbers',
+      {
+        inputSchema: z.object({
+          a: z.number(),
+          b: z.number()
+        })
+      },
+      async ({ a, b }) => ({
+        content: [{ type: 'text', text: (a + b).toString() }]
+      })
+    );
+
+    // Test valid execution
+    const validResponse = await transport.request({
+      method: 'tools/call',
+      params: {
+        name: 'add-numbers',
+        arguments: { a: 5, b: 3 }
+      }
+    });
+
+    expect(validResponse.content[0].text).toBe('8');
+
+    // Test invalid input
+    const invalidResponse = await transport.request({
+      method: 'tools/call',
+      params: {
+        name: 'add-numbers',
+        arguments: { a: 'invalid', b: 3 }
+      }
+    });
+
+    expect(invalidResponse.isError).toBe(true);
+  });
+
+  test('handles resource subscriptions', async () => {
+    server.resource(
+      'test://resource',
+      'Test resource',
+      {},
+      async () => ({
+        contents: [{ 
+          uri: 'test://resource',
+          mimeType: 'text/plain',
+          text: 'test content'
+        }]
+      })
+    );
+
+    // Test resource reading
+    const response = await transport.request({
+      method: 'resources/read',
+      params: { uri: 'test://resource' }
+    });
+
+    expect(response.contents[0].text).toBe('test content');
+  });
+});
+
+// ❌ DON'T: Test without proper setup/teardown
+test('bad test', () => {
+  const server = new McpServer({ name: 'test' }, {});
+  // No transport setup, no cleanup
+});
+```
+
+### Integration Testing
+
+```typescript
+// ✅ DO: Test full server integration
+import { spawn, ChildProcess } from 'child_process';
+
+describe('MCP Server Integration', () => {
+  let serverProcess: ChildProcess;
+
+  beforeAll(async () => {
+    // Start server process
+    serverProcess = spawn('node', ['dist/server.js'], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Wait for server to be ready
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Server start timeout')), 5000);
+      
+      serverProcess.stderr?.on('data', (data) => {
+        if (data.toString().includes('server started')) {
+          clearTimeout(timeout);
+          resolve(void 0);
+        }
+      });
+    });
+  });
+
+  afterAll(async () => {
+    if (serverProcess) {
+      serverProcess.kill();
+      await new Promise(resolve => serverProcess.on('close', resolve));
+    }
+  });
+
+  test('responds to initialization', async () => {
+    // Send initialization request
+    const request = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0.0' }
+      }
+    };
+
+    serverProcess.stdin?.write(JSON.stringify(request) + '\n');
+
+    // Wait for response
+    const response = await new Promise((resolve) => {
+      serverProcess.stdout?.once('data', (data) => {
+        resolve(JSON.parse(data.toString()));
+      });
+    });
+
+    expect(response.result.capabilities).toBeDefined();
+  });
+});
+
+// ❌ DON'T: Skip integration testing
+// Missing: Full server lifecycle testing
+```
+
+## Security Considerations
+
+### Input Validation
+
+```typescript
+// ✅ DO: Implement comprehensive input validation
+import { z } from 'zod';
+import { sanitize } from 'dompurify';
+
+const FileOperationSchema = z.object({
+  path: z.string()
+    .min(1, 'Path cannot be empty')
+    .max(1000, 'Path too long')
+    .refine(path => !path.includes('..'), 'Path traversal not allowed')
+    .refine(path => path.startsWith('/allowed/'), 'Access to this path not allowed'),
+  operation: z.enum(['read', 'write', 'list']),
+  content: z.string().optional().transform(val => val ? sanitize(val) : val)
+});
+
+server.tool(
+  'file-operation',
+  'Perform file operations',
+  { inputSchema: FileOperationSchema },
+  async ({ path, operation, content }): Promise<CallToolResult> => {
+    // Additional security checks
+    if (!await isPathAllowed(path)) {
+      throw new McpError(ErrorCode.InvalidParams, 'Access denied');
+    }
+
+    // Rate limiting
+    await enforceRateLimit(`file-operation:${path}`);
+
+    switch (operation) {
+      case 'read':
+        return await readFile(path);
+      case 'write':
+        if (!content) {
+          throw new McpError(ErrorCode.InvalidParams, 'Content required for write operation');
+        }
+        return await writeFile(path, content);
+      case 'list':
+        return await listDirectory(path);
+    }
+  }
+);
+
+// ❌ DON'T: Skip input validation
+server.tool('unsafe-file-op', async (args: any) => {
+  const content = fs.readFileSync(args.path); // No validation
+  return { content: [{ type: 'text', text: content }] };
+});
+```
+
+### Rate Limiting
+
+```typescript
+// ✅ DO: Implement rate limiting
+class RateLimiter {
+  private requests = new Map<string, { count: number; resetTime: number }>();
+  private readonly maxRequests = 100;
+  private readonly windowMs = 60000; // 1 minute
+
+  async checkLimit(key: string): Promise<void> {
+    const now = Date.now();
+    const record = this.requests.get(key);
+
+    if (!record || now > record.resetTime) {
+      this.requests.set(key, { count: 1, resetTime: now + this.windowMs });
+      return;
+    }
+
+    if (record.count >= this.maxRequests) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Rate limit exceeded. Try again in ${Math.ceil((record.resetTime - now) / 1000)} seconds.`
+      );
+    }
+
+    record.count++;
+  }
+}
+
+const rateLimiter = new RateLimiter();
+
+// Apply to tools
+server.tool(
+  'api-call',
+  'Make external API call',
+  { inputSchema: z.object({ url: z.string().url() }) },
+  async ({ url }, { sessionId }): Promise<CallToolResult> => {
+    await rateLimiter.checkLimit(`api-call:${sessionId || 'anonymous'}`);
+    
+    // Proceed with API call
+    const response = await fetch(url);
+    return {
+      content: [{ type: 'text', text: await response.text() }]
+    };
+  }
+);
+
+// ❌ DON'T: Allow unlimited requests
+server.tool('expensive-operation', async () => {
+  // No rate limiting on expensive operation
+  return await performExpensiveOperation();
+});
+```
+
+## Best Practices Summary
+
+### Code Organization
+- Use typed schemas for all inputs and outputs
+- Implement proper error handling with MCP error codes
+- Register capabilities accurately and only for implemented features
+- Set up handlers before connecting to transport
+
+### Error Handling
+- Use McpError for protocol-level errors
+- Log internal errors but don't expose implementation details
+- Implement proper timeout handling for long operations
+- Provide meaningful error messages to clients
+
+### Performance
+- Implement progress reporting for long-running operations
+- Use proper rate limiting to prevent abuse
+- Clean up resources and connections properly
+- Use efficient data structures for caching
+
+### Security
+- Validate all inputs with strict schemas
+- Implement authentication and authorization where needed
+- Prevent path traversal and other injection attacks
+- Use rate limiting to prevent abuse
+
+## References
+- [MCP Specification](mdc:https:/modelcontextprotocol.io)
+- [MCP TypeScript SDK](mdc:https:/github.com/modelcontextprotocol/typescript-sdk)
+- [JSON-RPC 2.0 Specification](mdc:https:/www.jsonrpc.org/specification)
+- [Zod Schema Validation](mdc:https:/zod.dev)
+- [Express.js Documentation](mdc:https:/expressjs.com)

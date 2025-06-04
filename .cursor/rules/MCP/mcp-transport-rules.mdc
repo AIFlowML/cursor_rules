@@ -1,0 +1,1008 @@
+---
+description: Model Context Protocol (MCP) transport implementation
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) transport implementation, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK transport patterns and best practices.
+
+## MCP Transport Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Transport     │    │   Connection     │    │   Message       │
+│   Interface     │───▶│   Management     │───▶│   Processing    │
+│   - start()     │    │   - lifecycle    │    │   - JSON-RPC    │
+│   - send()      │    │   - reconnect    │    │   - validation  │
+│   - close()     │    │   - auth         │    │   - callbacks   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Transport Types │    │  Error Handling  │    │  Session Mgmt   │
+│ - Stdio         │    │  - onerror       │    │  - sessionId    │
+│ - SSE           │    │  - connection    │    │  - resumption   │
+│ - HTTP Stream   │    │  - message       │    │  - auth state   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+src/
+├── shared/
+│   ├── transport.ts          # Base Transport interface
+│   └── stdio.ts              # Shared stdio utilities
+├── server/
+│   ├── stdio.ts              # StdioServerTransport
+│   ├── sse.ts                # SSEServerTransport
+│   └── auth/                 # Authentication types and handlers
+├── client/
+│   ├── stdio.ts              # StdioClientTransport
+│   ├── sse.ts                # SSEClientTransport
+│   ├── streamableHttp.ts     # StreamableHTTPClientTransport
+│   └── auth.ts               # Client authentication utilities
+├── types.ts                  # MCP protocol types (JSONRPCMessage, etc.)
+└── examples/
+    ├── stdio-server.ts       # Complete stdio server example
+    └── sse-client.ts         # Complete SSE client example
+```
+
+## Core Implementation Patterns
+
+### Base Transport Interface
+
+```typescript
+// ✅ DO: Follow the MCP Transport interface exactly
+import { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+
+// Base transport interface from MCP SDK
+interface Transport {
+  /**
+   * Starts processing messages on the transport
+   */
+  start(): Promise<void>;
+
+  /**
+   * Sends a JSON-RPC message with optional metadata
+   */
+  send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void>;
+
+  /**
+   * Closes the connection
+   */
+  close(): Promise<void>;
+
+  // Event callbacks
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage, extra?: { authInfo?: AuthInfo }) => void;
+
+  // Session management
+  sessionId?: string;
+}
+
+// Transport send options
+type TransportSendOptions = {
+  relatedRequestId?: RequestId;
+  resumptionToken?: string;
+  onresumptiontoken?: (token: string) => void;
+};
+
+// ❌ DON'T: Create custom transport interfaces that don't match MCP spec
+interface CustomTransport {
+  connect(): Promise<void>; // Wrong - should be start()
+  write(data: string): void; // Wrong - should be send()
+}
+```
+
+### Stdio Transport Implementation
+
+```typescript
+// ✅ DO: Implement stdio transport following MCP patterns
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+
+// Server-side stdio transport
+export class StdioServerTransport implements Transport {
+  private _readBuffer: ReadBuffer = new ReadBuffer();
+  private _started = false;
+
+  constructor(
+    private _stdin: Readable = process.stdin,
+    private _stdout: Writable = process.stdout,
+  ) {}
+
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+
+  // Bind event handlers to maintain context
+  _ondata = (chunk: Buffer) => {
+    this._readBuffer.append(chunk);
+    this.processReadBuffer();
+  };
+
+  _onerror = (error: Error) => {
+    this.onerror?.(error);
+  };
+
+  async start(): Promise<void> {
+    if (this._started) {
+      throw new Error("StdioServerTransport already started!");
+    }
+
+    this._started = true;
+    this._stdin.on("data", this._ondata);
+    this._stdin.on("error", this._onerror);
+  }
+
+  private processReadBuffer() {
+    while (true) {
+      try {
+        const message = this._readBuffer.readMessage();
+        if (message === null) break;
+        
+        this.onmessage?.(message);
+      } catch (error) {
+        this.onerror?.(error as Error);
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    this._stdin.off("data", this._ondata);
+    this._stdin.off("error", this._onerror);
+    
+    // Only pause if we were the only listener
+    if (this._stdin.listenerCount('data') === 0) {
+      this._stdin.pause();
+    }
+    
+    this._readBuffer.clear();
+    this.onclose?.();
+  }
+
+  send(message: JSONRPCMessage): Promise<void> {
+    return new Promise((resolve) => {
+      const json = serializeMessage(message);
+      if (this._stdout.write(json)) {
+        resolve();
+      } else {
+        this._stdout.once("drain", resolve);
+      }
+    });
+  }
+}
+
+// Client-side stdio transport with process spawning
+export class StdioClientTransport implements Transport {
+  private _process?: ChildProcess;
+  private _abortController: AbortController = new AbortController();
+  private _readBuffer: ReadBuffer = new ReadBuffer();
+
+  constructor(private _serverParams: StdioServerParameters) {}
+
+  async start(): Promise<void> {
+    if (this._process) {
+      throw new Error("StdioClientTransport already started!");
+    }
+
+    return new Promise((resolve, reject) => {
+      this._process = spawn(
+        this._serverParams.command,
+        this._serverParams.args ?? [],
+        {
+          env: this._serverParams.env ?? getDefaultEnvironment(),
+          stdio: ["pipe", "pipe", this._serverParams.stderr ?? "inherit"],
+          shell: false,
+          signal: this._abortController.signal,
+          cwd: this._serverParams.cwd,
+        }
+      );
+
+      this._process.on("error", (error) => {
+        if (error.name === "AbortError") {
+          this.onclose?.();
+          return;
+        }
+        reject(error);
+        this.onerror?.(error);
+      });
+
+      this._process.on("spawn", () => resolve());
+      this._process.on("close", () => {
+        this._process = undefined;
+        this.onclose?.();
+      });
+
+      this._process.stdout?.on("data", (chunk) => {
+        this._readBuffer.append(chunk);
+        this.processReadBuffer();
+      });
+    });
+  }
+
+  send(message: JSONRPCMessage): Promise<void> {
+    if (!this._process?.stdin) {
+      throw new Error("Process not started or stdin unavailable");
+    }
+
+    return new Promise((resolve, reject) => {
+      const json = serializeMessage(message);
+      if (this._process!.stdin!.write(json)) {
+        resolve();
+      } else {
+        this._process!.stdin!.once("drain", resolve);
+        this._process!.stdin!.once("error", reject);
+      }
+    });
+  }
+}
+
+// ❌ DON'T: Handle stdio without proper buffering and message parsing
+class BadStdioTransport {
+  send(message: any) {
+    process.stdout.write(JSON.stringify(message)); // Missing newline and proper serialization
+  }
+}
+```
+
+### SSE Transport Implementation
+
+```typescript
+// ✅ DO: Implement SSE transport with proper event handling
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+
+// Server-side SSE transport
+export class SSEServerTransport implements Transport {
+  private _sseResponse?: ServerResponse;
+  private _sessionId: string;
+
+  constructor(
+    private _endpoint: string,
+    private res: ServerResponse,
+  ) {
+    this._sessionId = randomUUID();
+  }
+
+  async start(): Promise<void> {
+    if (this._sseResponse) {
+      throw new Error("SSEServerTransport already started!");
+    }
+
+    // Set SSE headers
+    this.res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    });
+
+    // Send endpoint with session ID
+    const endpointUrl = new URL(this._endpoint, 'http://localhost');
+    endpointUrl.searchParams.set('sessionId', this._sessionId);
+    const relativeUrlWithSession = endpointUrl.pathname + endpointUrl.search;
+
+    this.res.write(`event: endpoint\ndata: ${relativeUrlWithSession}\n\n`);
+
+    this._sseResponse = this.res;
+    this.res.on("close", () => {
+      this._sseResponse = undefined;
+      this.onclose?.();
+    });
+  }
+
+  async handlePostMessage(
+    req: IncomingMessage & { auth?: AuthInfo },
+    res: ServerResponse,
+    parsedBody?: unknown,
+  ): Promise<void> {
+    if (!this._sseResponse) {
+      const message = "SSE connection not established";
+      res.writeHead(500).end(message);
+      throw new Error(message);
+    }
+
+    try {
+      const ct = contentType.parse(req.headers["content-type"] ?? "");
+      if (ct.type !== "application/json") {
+        throw new Error(`Unsupported content-type: ${ct}`);
+      }
+
+      const body = parsedBody ?? await getRawBody(req, {
+        limit: "4mb",
+        encoding: ct.parameters.charset ?? "utf-8",
+      });
+
+      const message = typeof body === 'string' ? JSON.parse(body) : body;
+      const parsedMessage = JSONRPCMessageSchema.parse(message);
+      
+      this.onmessage?.(parsedMessage, { authInfo: req.auth });
+      res.writeHead(202).end("Accepted");
+    } catch (error) {
+      res.writeHead(400).end(`Invalid message: ${error}`);
+      this.onerror?.(error as Error);
+    }
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    if (!this._sseResponse) {
+      throw new Error("Not connected");
+    }
+
+    this._sseResponse.write(
+      `event: message\ndata: ${JSON.stringify(message)}\n\n`,
+    );
+  }
+
+  get sessionId(): string {
+    return this._sessionId;
+  }
+}
+
+// Client-side SSE transport with authentication
+export class SSEClientTransport implements Transport {
+  private _eventSource?: EventSource;
+  private _endpoint?: URL;
+  private _abortController?: AbortController;
+
+  constructor(
+    private _url: URL,
+    private _options?: SSEClientTransportOptions,
+  ) {}
+
+  async start(): Promise<void> {
+    if (this._eventSource) {
+      throw new Error("SSEClientTransport already started!");
+    }
+
+    return this._startOrAuth();
+  }
+
+  private _startOrAuth(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this._eventSource = new EventSource(
+        this._url.href,
+        this._options?.eventSourceInit ?? {
+          fetch: (url, init) => this._commonHeaders().then((headers) => fetch(url, {
+            ...init,
+            headers: { ...headers, Accept: "text/event-stream" }
+          })),
+        },
+      );
+
+      this._eventSource.onerror = (event) => {
+        if (event.code === 401 && this._options?.authProvider) {
+          this._authThenStart().then(resolve, reject);
+          return;
+        }
+
+        const error = new SseError(event.code, event.message, event);
+        reject(error);
+        this.onerror?.(error);
+      };
+
+      this._eventSource.addEventListener("endpoint", (event: Event) => {
+        const messageEvent = event as MessageEvent;
+        try {
+          this._endpoint = new URL(messageEvent.data, this._url);
+          if (this._endpoint.origin !== this._url.origin) {
+            throw new Error("Endpoint origin mismatch");
+          }
+          resolve();
+        } catch (error) {
+          reject(error);
+          this.onerror?.(error as Error);
+        }
+      });
+
+      this._eventSource.onmessage = (event: Event) => {
+        const messageEvent = event as MessageEvent;
+        try {
+          const message = JSONRPCMessageSchema.parse(JSON.parse(messageEvent.data));
+          this.onmessage?.(message);
+        } catch (error) {
+          this.onerror?.(error as Error);
+        }
+      };
+    });
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    if (!this._endpoint) {
+      throw new Error("Transport not ready");
+    }
+
+    const headers = await this._commonHeaders();
+    const response = await fetch(this._endpoint.href, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(message),
+      signal: this._abortController?.signal,
+      ...this._options?.requestInit,
+    });
+
+    if (response.status === 401) {
+      throw new UnauthorizedError("Session expired");
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+  }
+
+  private async _commonHeaders(): Promise<HeadersInit> {
+    const headers: HeadersInit = { ...this._options?.requestInit?.headers };
+    if (this._options?.authProvider) {
+      const tokens = await this._options.authProvider.tokens();
+      if (tokens) {
+        (headers as Record<string, string>)["Authorization"] = `Bearer ${tokens.access_token}`;
+      }
+    }
+    return headers;
+  }
+}
+
+// ❌ DON'T: Implement SSE without proper event parsing and session management
+class BadSSETransport {
+  start() {
+    const eventSource = new EventSource("/events");
+    eventSource.onmessage = (event) => {
+      // No validation or error handling
+      this.handleMessage(JSON.parse(event.data));
+    };
+  }
+}
+```
+
+## Advanced Patterns
+
+### Transport Authentication
+
+```typescript
+// ✅ DO: Implement OAuth authentication for transports
+import { OAuthClientProvider, UnauthorizedError, auth } from "@modelcontextprotocol/sdk/client/auth.js";
+
+export interface AuthenticatedTransportOptions {
+  authProvider?: OAuthClientProvider;
+  onUnauthorized?: () => Promise<void>;
+}
+
+export class AuthenticatedSSETransport extends SSEClientTransport {
+  private _authProvider?: OAuthClientProvider;
+
+  constructor(url: URL, options?: SSEClientTransportOptions & AuthenticatedTransportOptions) {
+    super(url, options);
+    this._authProvider = options?.authProvider;
+  }
+
+  private async _authThenStart(): Promise<void> {
+    if (!this._authProvider) {
+      throw new UnauthorizedError("No auth provider");
+    }
+
+    const result = await auth(this._authProvider, { 
+      serverUrl: this._url, 
+      resourceMetadataUrl: this._resourceMetadataUrl 
+    });
+
+    if (result !== "AUTHORIZED") {
+      throw new UnauthorizedError();
+    }
+
+    return await this._startOrAuth();
+  }
+
+  async finishAuth(authorizationCode: string): Promise<void> {
+    if (!this._authProvider) {
+      throw new UnauthorizedError("No auth provider");
+    }
+
+    const result = await auth(this._authProvider, { 
+      serverUrl: this._url, 
+      authorizationCode,
+      resourceMetadataUrl: this._resourceMetadataUrl 
+    });
+
+    if (result !== "AUTHORIZED") {
+      throw new UnauthorizedError("Failed to authorize");
+    }
+  }
+
+  // Override send to handle token refresh
+  async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+    try {
+      return await super.send(message, options);
+    } catch (error) {
+      if (error instanceof UnauthorizedError && this._authProvider) {
+        // Attempt token refresh
+        const tokens = await this._authProvider.tokens();
+        if (tokens?.refresh_token) {
+          await this._authProvider.refreshToken(tokens.refresh_token);
+          return await super.send(message, options);
+        }
+      }
+      throw error;
+    }
+  }
+}
+
+// ❌ DON'T: Hardcode authentication or ignore token expiration
+class BadAuthTransport {
+  constructor(private token: string) {} // Hardcoded token
+  
+  send(message: any) {
+    fetch('/api', {
+      headers: { Authorization: `Bearer ${this.token}` } // No refresh logic
+    });
+  }
+}
+```
+
+### Connection Resilience and Reconnection
+
+```typescript
+// ✅ DO: Implement robust reconnection logic
+export class ResilientTransport implements Transport {
+  private _baseTransport: Transport;
+  private _reconnectAttempts = 0;
+  private _maxReconnectAttempts = 5;
+  private _reconnectDelay = 1000;
+  private _isConnected = false;
+  private _messageQueue: Array<{ message: JSONRPCMessage; options?: TransportSendOptions; resolve: () => void; reject: (error: Error) => void }> = [];
+
+  constructor(
+    private _transportFactory: () => Transport,
+    private _options: {
+      maxReconnectAttempts?: number;
+      reconnectDelay?: number;
+      backoffMultiplier?: number;
+    } = {}
+  ) {
+    this._maxReconnectAttempts = _options.maxReconnectAttempts ?? 5;
+    this._reconnectDelay = _options.reconnectDelay ?? 1000;
+    this._baseTransport = this._transportFactory();
+    this._setupTransportEvents();
+  }
+
+  private _setupTransportEvents() {
+    this._baseTransport.onmessage = (message, extra) => {
+      this.onmessage?.(message, extra);
+    };
+
+    this._baseTransport.onerror = (error) => {
+      this.onerror?.(error);
+      if (this._isConnected) {
+        this._handleDisconnection();
+      }
+    };
+
+    this._baseTransport.onclose = () => {
+      this._isConnected = false;
+      if (this._reconnectAttempts < this._maxReconnectAttempts) {
+        this._scheduleReconnect();
+      } else {
+        this.onclose?.();
+      }
+    };
+  }
+
+  private _handleDisconnection() {
+    this._isConnected = false;
+    this._scheduleReconnect();
+  }
+
+  private _scheduleReconnect() {
+    const delay = this._reconnectDelay * Math.pow(
+      this._options.backoffMultiplier ?? 2, 
+      this._reconnectAttempts
+    );
+
+    setTimeout(() => {
+      this._attemptReconnect();
+    }, delay);
+  }
+
+  private async _attemptReconnect() {
+    try {
+      this._reconnectAttempts++;
+      this._baseTransport = this._transportFactory();
+      this._setupTransportEvents();
+      
+      await this._baseTransport.start();
+      this._isConnected = true;
+      this._reconnectAttempts = 0;
+      
+      // Process queued messages
+      await this._processMessageQueue();
+    } catch (error) {
+      if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+        this._rejectQueuedMessages(error as Error);
+        this.onclose?.();
+      } else {
+        this._scheduleReconnect();
+      }
+    }
+  }
+
+  private async _processMessageQueue() {
+    const queue = [...this._messageQueue];
+    this._messageQueue = [];
+    
+    for (const { message, options, resolve, reject } of queue) {
+      try {
+        await this._baseTransport.send(message, options);
+        resolve();
+      } catch (error) {
+        reject(error as Error);
+      }
+    }
+  }
+
+  private _rejectQueuedMessages(error: Error) {
+    for (const { reject } of this._messageQueue) {
+      reject(error);
+    }
+    this._messageQueue = [];
+  }
+
+  async start(): Promise<void> {
+    await this._baseTransport.start();
+    this._isConnected = true;
+  }
+
+  async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+    if (!this._isConnected) {
+      // Queue message for when connection is restored
+      return new Promise((resolve, reject) => {
+        this._messageQueue.push({ message, options, resolve, reject });
+      });
+    }
+
+    return await this._baseTransport.send(message, options);
+  }
+
+  async close(): Promise<void> {
+    this._reconnectAttempts = this._maxReconnectAttempts; // Prevent reconnection
+    await this._baseTransport.close();
+  }
+
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage, extra?: { authInfo?: AuthInfo }) => void;
+  
+  get sessionId(): string | undefined {
+    return this._baseTransport.sessionId;
+  }
+}
+
+// ❌ DON'T: Ignore connection failures or implement naive reconnection
+class BadResilientTransport {
+  async send(message: any) {
+    try {
+      await this.transport.send(message);
+    } catch (error) {
+      // Just retry once with no backoff
+      await this.transport.send(message);
+    }
+  }
+}
+```
+
+### Transport Testing Patterns
+
+```typescript
+// ✅ DO: Create comprehensive transport tests
+import { describe, test, expect, beforeEach, afterEach } from "@jest/globals";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/client/index.js";
+
+describe("Transport Implementation", () => {
+  let serverTransport: Transport;
+  let clientTransport: Transport;
+
+  beforeEach(async () => {
+    // Set up linked transports for testing
+    [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  });
+
+  afterEach(async () => {
+    await Promise.all([
+      clientTransport.close(),
+      serverTransport.close()
+    ]);
+  });
+
+  test("should establish connection", async () => {
+    let serverConnected = false;
+    let clientConnected = false;
+
+    serverTransport.onmessage = () => { serverConnected = true; };
+    clientTransport.onmessage = () => { clientConnected = true; };
+
+    await Promise.all([
+      serverTransport.start(),
+      clientTransport.start()
+    ]);
+
+    const testMessage = {
+      jsonrpc: "2.0" as const,
+      id: 1,
+      method: "test",
+      params: {}
+    };
+
+    await clientTransport.send(testMessage);
+    await serverTransport.send(testMessage);
+
+    // Give time for messages to process
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    expect(serverConnected).toBe(true);
+    expect(clientConnected).toBe(true);
+  });
+
+  test("should handle connection errors", async () => {
+    let errorReceived = false;
+    
+    clientTransport.onerror = (error) => {
+      errorReceived = true;
+      expect(error).toBeInstanceOf(Error);
+    };
+
+    await clientTransport.start();
+    
+    // Simulate error condition
+    (clientTransport as any)._simulateError?.(new Error("Connection failed"));
+    
+    expect(errorReceived).toBe(true);
+  });
+
+  test("should handle large messages", async () => {
+    let messageReceived = false;
+    
+    serverTransport.onmessage = (message) => {
+      messageReceived = true;
+      expect(message.params.largeData).toBeDefined();
+    };
+
+    await Promise.all([
+      serverTransport.start(),
+      clientTransport.start()
+    ]);
+
+    const largeMessage = {
+      jsonrpc: "2.0" as const,
+      id: 1,
+      method: "test",
+      params: {
+        largeData: "x".repeat(10000) // 10KB message
+      }
+    };
+
+    await clientTransport.send(largeMessage);
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(messageReceived).toBe(true);
+  });
+
+  test("should maintain message order", async () => {
+    const receivedMessages: number[] = [];
+    
+    serverTransport.onmessage = (message) => {
+      receivedMessages.push(message.id as number);
+    };
+
+    await Promise.all([
+      serverTransport.start(),
+      clientTransport.start()
+    ]);
+
+    // Send multiple messages in sequence
+    for (let i = 1; i <= 10; i++) {
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: i,
+        method: "test",
+        params: {}
+      });
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(receivedMessages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  test("should handle resumption tokens", async () => {
+    let resumptionToken: string | undefined;
+    
+    const sendOptions: TransportSendOptions = {
+      onresumptiontoken: (token) => {
+        resumptionToken = token;
+      }
+    };
+
+    await Promise.all([
+      serverTransport.start(),
+      clientTransport.start()
+    ]);
+
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "long-running-operation",
+      params: {}
+    }, sendOptions);
+
+    // Simulate resumption token from server
+    if (resumptionToken) {
+      expect(typeof resumptionToken).toBe('string');
+      expect(resumptionToken.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ❌ DON'T: Test only happy paths without error scenarios
+describe("Bad Transport Tests", () => {
+  test("basic send only", async () => {
+    await transport.send({ jsonrpc: "2.0", method: "test" });
+    // No error handling, connection state, or edge case testing
+  });
+});
+```
+
+### Transport Factory Pattern
+
+```typescript
+// ✅ DO: Create a comprehensive transport factory
+export type TransportType = "stdio" | "sse" | "streamable-http";
+
+export interface TransportConfig {
+  type: TransportType;
+  stdio?: {
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    cwd?: string;
+  };
+  sse?: {
+    url: string;
+    authProvider?: OAuthClientProvider;
+  };
+  streamableHttp?: {
+    url: string;
+    authProvider?: OAuthClientProvider;
+  };
+  resilience?: {
+    maxReconnectAttempts?: number;
+    reconnectDelay?: number;
+    backoffMultiplier?: number;
+  };
+}
+
+export class TransportFactory {
+  static createClient(config: TransportConfig): Transport {
+    let baseTransport: Transport;
+
+    switch (config.type) {
+      case "stdio":
+        if (!config.stdio) throw new Error("Stdio config required");
+        baseTransport = new StdioClientTransport({
+          command: config.stdio.command,
+          args: config.stdio.args,
+          env: config.stdio.env,
+          cwd: config.stdio.cwd,
+        });
+        break;
+
+      case "sse":
+        if (!config.sse) throw new Error("SSE config required");
+        baseTransport = new SSEClientTransport(
+          new URL(config.sse.url),
+          { authProvider: config.sse.authProvider }
+        );
+        break;
+
+      case "streamable-http":
+        if (!config.streamableHttp) throw new Error("Streamable HTTP config required");
+        baseTransport = new StreamableHTTPClientTransport(
+          new URL(config.streamableHttp.url),
+          { authProvider: config.streamableHttp.authProvider }
+        );
+        break;
+
+      default:
+        throw new Error(`Unsupported transport type: ${config.type}`);
+    }
+
+    // Apply resilience decorator if configured
+    if (config.resilience) {
+      const factory = () => this.createClient({ ...config, resilience: undefined });
+      baseTransport = new ResilientTransport(factory, config.resilience);
+    }
+
+    return baseTransport;
+  }
+
+  static createServer(config: TransportConfig): Transport {
+    switch (config.type) {
+      case "stdio":
+        return new StdioServerTransport();
+
+      case "sse":
+        if (!config.sse) throw new Error("SSE config required");
+        // SSE server transport requires HTTP request/response objects
+        throw new Error("SSE server transport must be created per request");
+
+      default:
+        throw new Error(`Unsupported server transport type: ${config.type}`);
+    }
+  }
+}
+
+// Usage example
+const clientTransport = TransportFactory.createClient({
+  type: "sse",
+  sse: {
+    url: "https://api.example.com/mcp",
+    authProvider: myOAuthProvider,
+  },
+  resilience: {
+    maxReconnectAttempts: 3,
+    reconnectDelay: 1000,
+  },
+});
+
+// ❌ DON'T: Hardcode transport creation without configuration
+const badTransport = new SSEClientTransport(new URL("http://example.com"));
+```
+
+## Best Practices Summary
+
+### Connection Management
+- Always implement proper start/close lifecycle
+- Handle connection errors gracefully with reconnection logic
+- Use appropriate authentication patterns for each transport type
+- Implement proper session management with session IDs
+
+### Message Handling
+- Validate all incoming messages using JSONRPCMessageSchema
+- Implement proper message queuing for reliability
+- Handle message ordering and flow control
+- Use resumption tokens for long-running operations
+
+### Error Handling
+- Implement comprehensive error callbacks (onerror, onclose)
+- Handle transport-specific errors appropriately
+- Provide meaningful error messages and proper error types
+- Implement proper cleanup on errors
+
+### Performance
+- Use appropriate buffering strategies for each transport
+- Implement message batching where beneficial
+- Apply proper flow control to prevent overwhelming
+- Monitor and optimize transport metrics
+
+### Security
+- Implement proper authentication for each transport type
+- Validate message sources and content
+- Use secure transport protocols (HTTPS, WSS)
+- Handle sensitive data appropriately in transit
+
+### Testing
+- Test all transport types with comprehensive scenarios
+- Include error conditions and edge cases in testing
+- Test reconnection and resilience mechanisms
+- Validate message ordering and flow control
+
+## References
+- [Model Context Protocol Documentation](mdc:https:/modelcontextprotocol.io/introduction)
+- [MCP Transport Specification](mdc:https:/spec.modelcontextprotocol.io/specification/basic/transports)
+- [MCP TypeScript SDK](mdc:https:/github.com/modelcontextprotocol/typescript-sdk)
+- [Server-Sent Events Specification](mdc:https:/html.spec.whatwg.org/multipage/server-sent-events.html)
+- [JSON-RPC 2.0 Specification](mdc:https:/www.jsonrpc.org/specification)

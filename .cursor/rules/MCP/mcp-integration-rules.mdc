@@ -1,0 +1,1054 @@
+---
+description: MCP (Model Context Protocol) integration patterns, OAuth 2.1
+globs: 
+alwaysApply: false
+---
+
+> You are an expert in MCP (Model Context Protocol) integration patterns, OAuth 2.1, TypeScript, and distributed system architectures. You focus on implementing robust client-server integration with proper authentication, multi-client management, and error resilience.
+
+## MCP Integration Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Client Mgmt   │    │   OAuth Flow     │    │   Transport     │
+│   - Multi-client│───▶│   - PKCE + Redir │───▶│   - HTTP/SSE    │
+│   - Parallel    │    │   - Token Mgmt   │    │   - Reconnect   │
+│   - Load Balance│    │   - Refresh      │    │   - Streaming   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Error Handling│    │   State Mgmt     │    │   Notifications │
+│   - Retry Logic │    │   - Session Sync │    │   - Pub/Sub     │
+│   - Failover    │    │   - Persistence  │    │   - Event Bus   │
+│   - Circuit Break│    │   - Clustering   │    │   - Real-time   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+integration/
+├── clients/              # Client management
+│   ├── manager.ts        # Multi-client orchestration
+│   ├── pool.ts          # Connection pooling
+│   └── balancer.ts      # Load balancing
+├── auth/                # Authentication patterns
+│   ├── oauth.ts         # OAuth 2.1 + PKCE
+│   ├── providers.ts     # Token management
+│   └── middleware.ts    # Auth middleware
+├── transports/          # Transport layer
+│   ├── factory.ts       # Transport creation
+│   ├── reconnect.ts     # Reconnection logic
+│   └── streaming.ts     # Streaming patterns
+├── resilience/          # Error handling
+│   ├── retry.ts         # Retry strategies
+│   ├── circuit.ts       # Circuit breaker
+│   └── failover.ts      # Failover logic
+└── notifications/       # Event management
+    ├── bus.ts           # Event bus
+    ├── handlers.ts      # Notification routing
+    └── tracking.ts      # Message tracking
+```
+
+## Core Implementation Patterns
+
+### Multi-Client Management
+
+```typescript
+// ✅ DO: Implement comprehensive client management
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+interface ClientConfig {
+  id: string;
+  name: string;
+  version: string;
+  serverUrl: string;
+  capabilities?: string[];
+  maxRetries?: number;
+  timeout?: number;
+}
+
+interface ManagedClient {
+  client: Client;
+  transport: Transport;
+  config: ClientConfig;
+  status: 'connected' | 'disconnected' | 'error' | 'connecting';
+  lastError?: Error;
+  metrics: {
+    totalRequests: number;
+    successCount: number;
+    errorCount: number;
+    avgResponseTime: number;
+  };
+}
+
+class MCPClientManager {
+  private clients = new Map<string, ManagedClient>();
+  private connectionPool = new Map<string, Promise<void>>();
+
+  async addClient(config: ClientConfig): Promise<void> {
+    if (this.clients.has(config.id)) {
+      throw new Error(`Client ${config.id} already exists`);
+    }
+
+    const client = new Client({
+      name: config.name,
+      version: config.version
+    });
+
+    // Set up error handling
+    client.onerror = (error) => {
+      this.handleClientError(config.id, error);
+    };
+
+    const managedClient: ManagedClient = {
+      client,
+      transport: null as any, // Will be set during connection
+      config,
+      status: 'disconnected',
+      metrics: {
+        totalRequests: 0,
+        successCount: 0,
+        errorCount: 0,
+        avgResponseTime: 0
+      }
+    };
+
+    this.clients.set(config.id, managedClient);
+  }
+
+  async connectClient(clientId: string): Promise<void> {
+    const managedClient = this.clients.get(clientId);
+    if (!managedClient) {
+      throw new Error(`Client ${clientId} not found`);
+    }
+
+    // Prevent concurrent connections
+    if (this.connectionPool.has(clientId)) {
+      return this.connectionPool.get(clientId);
+    }
+
+    const connectionPromise = this.performConnection(managedClient);
+    this.connectionPool.set(clientId, connectionPromise);
+
+    try {
+      await connectionPromise;
+    } finally {
+      this.connectionPool.delete(clientId);
+    }
+  }
+
+  private async performConnection(managedClient: ManagedClient): Promise<void> {
+    try {
+      managedClient.status = 'connecting';
+      
+      const transport = new StreamableHTTPClientTransport(
+        new URL(managedClient.config.serverUrl)
+      );
+      
+      await managedClient.client.connect(transport);
+      
+      managedClient.transport = transport;
+      managedClient.status = 'connected';
+      managedClient.lastError = undefined;
+      
+      console.log(`Client ${managedClient.config.id} connected successfully`);
+    } catch (error) {
+      managedClient.status = 'error';
+      managedClient.lastError = error as Error;
+      throw error;
+    }
+  }
+
+  async executeParallelToolCalls(
+    configs: Array<{
+      clientId: string;
+      toolName: string;
+      arguments: Record<string, unknown>;
+    }>
+  ): Promise<Array<{ clientId: string; result: any; error?: Error }>> {
+    const promises = configs.map(async (config) => {
+      try {
+        const managedClient = this.clients.get(config.clientId);
+        if (!managedClient || managedClient.status !== 'connected') {
+          throw new Error(`Client ${config.clientId} not available`);
+        }
+
+        const startTime = Date.now();
+        const result = await managedClient.client.request({
+          method: 'tools/call',
+          params: {
+            name: config.toolName,
+            arguments: config.arguments
+          }
+        });
+
+        // Update metrics
+        const responseTime = Date.now() - startTime;
+        this.updateMetrics(config.clientId, responseTime, true);
+
+        return { clientId: config.clientId, result };
+      } catch (error) {
+        this.updateMetrics(config.clientId, 0, false);
+        return { 
+          clientId: config.clientId, 
+          result: null, 
+          error: error as Error 
+        };
+      }
+    });
+
+    return Promise.all(promises);
+  }
+
+  private updateMetrics(clientId: string, responseTime: number, success: boolean): void {
+    const managedClient = this.clients.get(clientId);
+    if (!managedClient) return;
+
+    const metrics = managedClient.metrics;
+    metrics.totalRequests++;
+    
+    if (success) {
+      metrics.successCount++;
+      // Calculate moving average response time
+      metrics.avgResponseTime = (
+        (metrics.avgResponseTime * (metrics.successCount - 1)) + responseTime
+      ) / metrics.successCount;
+    } else {
+      metrics.errorCount++;
+    }
+  }
+
+  private handleClientError(clientId: string, error: Error): void {
+    const managedClient = this.clients.get(clientId);
+    if (!managedClient) return;
+
+    managedClient.status = 'error';
+    managedClient.lastError = error;
+    
+    console.error(`Client ${clientId} error:`, error);
+    
+    // Implement reconnection logic
+    this.scheduleReconnection(clientId);
+  }
+
+  private async scheduleReconnection(clientId: string): Promise<void> {
+    const managedClient = this.clients.get(clientId);
+    if (!managedClient) return;
+
+    const maxRetries = managedClient.config.maxRetries || 3;
+    let retryCount = 0;
+
+    while (retryCount < maxRetries && managedClient.status === 'error') {
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      
+      try {
+        await this.connectClient(clientId);
+        break;
+      } catch (error) {
+        retryCount++;
+        console.warn(`Reconnection attempt ${retryCount} failed for ${clientId}`);
+      }
+    }
+  }
+
+  getClientStatus(clientId: string): ManagedClient | undefined {
+    return this.clients.get(clientId);
+  }
+
+  getAllClientsStatus(): Map<string, ManagedClient> {
+    return new Map(this.clients);
+  }
+}
+
+// ❌ DON'T: Use naive client management
+class BadClientManager {
+  private clients: Client[] = [];
+
+  async addClient(serverUrl: string): Promise<void> {
+    const client = new Client({ name: 'client', version: '1.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(serverUrl));
+    await client.connect(transport); // No error handling
+    this.clients.push(client); // No status tracking
+  }
+}
+```
+
+### OAuth 2.1 + PKCE Integration
+
+```typescript
+// ✅ DO: Implement comprehensive OAuth with PKCE
+import { OAuthClientProvider, UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
+import { OAuthClientInformation, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { createServer, Server } from 'node:http';
+import { URL } from 'node:url';
+import { exec } from 'node:child_process';
+
+interface TokenStorage {
+  save(clientId: string, tokens: OAuthTokens): Promise<void>;
+  load(clientId: string): Promise<OAuthTokens | null>;
+  delete(clientId: string): Promise<void>;
+}
+
+class SecureOAuthProvider implements OAuthClientProvider {
+  private _clientInformation?: OAuthClientInformationFull;
+  private _tokens?: OAuthTokens;
+  private _codeVerifier?: string;
+  private callbackServer?: Server;
+
+  constructor(
+    private readonly clientId: string,
+    private readonly redirectUrl: string | URL,
+    private readonly clientMetadata: OAuthClientMetadata,
+    private readonly tokenStorage: TokenStorage,
+    private readonly onRedirect?: (url: URL) => Promise<void>
+  ) {}
+
+  get redirectUrl(): string | URL {
+    return this.redirectUrl;
+  }
+
+  get clientMetadata(): OAuthClientMetadata {
+    return this.clientMetadata;
+  }
+
+  clientInformation(): OAuthClientInformation | undefined {
+    return this._clientInformation;
+  }
+
+  saveClientInformation(clientInformation: OAuthClientInformationFull): void {
+    this._clientInformation = clientInformation;
+  }
+
+  async tokens(): Promise<OAuthTokens | undefined> {
+    if (!this._tokens) {
+      // Try to load from persistent storage
+      this._tokens = await this.tokenStorage.load(this.clientId) || undefined;
+    }
+    return this._tokens;
+  }
+
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this._tokens = tokens;
+    await this.tokenStorage.save(this.clientId, tokens);
+  }
+
+  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (this.onRedirect) {
+      await this.onRedirect(authorizationUrl);
+    } else {
+      await this.openBrowserAndWaitForCallback(authorizationUrl);
+    }
+  }
+
+  saveCodeVerifier(codeVerifier: string): void {
+    this._codeVerifier = codeVerifier;
+  }
+
+  codeVerifier(): string {
+    if (!this._codeVerifier) {
+      throw new Error('No code verifier saved');
+    }
+    return this._codeVerifier;
+  }
+
+  private async openBrowserAndWaitForCallback(authUrl: URL): Promise<void> {
+    const callbackUrl = new URL(this.redirectUrl);
+    const port = parseInt(callbackUrl.port) || 8080;
+
+    // Start callback server
+    await this.startCallbackServer(port);
+
+    // Open browser
+    await this.openBrowser(authUrl.toString());
+  }
+
+  private async startCallbackServer(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.callbackServer = createServer((req, res) => {
+        const reqUrl = new URL(req.url || '', `http://localhost:${port}`);
+        
+        if (reqUrl.pathname === '/callback') {
+          const code = reqUrl.searchParams.get('code');
+          const error = reqUrl.searchParams.get('error');
+
+          if (code) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+              <html>
+                <body>
+                  <h1>✅ Authorization Successful</h1>
+                  <p>You can close this window and return to the application.</p>
+                  <script>setTimeout(() => window.close(), 2000);</script>
+                </body>
+              </html>
+            `);
+            
+            // Store the code for retrieval
+            (this as any)._authCode = code;
+            this.closeCallbackServer();
+            resolve();
+          } else if (error) {
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end(`
+              <html>
+                <body>
+                  <h1>❌ Authorization Failed</h1>
+                  <p>Error: ${error}</p>
+                </body>
+              </html>
+            `);
+            this.closeCallbackServer();
+            reject(new Error(`OAuth authorization failed: ${error}`));
+          }
+        }
+      });
+
+      this.callbackServer.listen(port, () => {
+        console.log(`OAuth callback server listening on port ${port}`);
+        resolve();
+      });
+
+      this.callbackServer.on('error', reject);
+    });
+  }
+
+  private closeCallbackServer(): void {
+    if (this.callbackServer) {
+      this.callbackServer.close();
+      this.callbackServer = undefined;
+    }
+  }
+
+  private async openBrowser(url: string): Promise<void> {
+    const command = process.platform === 'darwin' ? 'open' :
+                   process.platform === 'win32' ? 'start' : 'xdg-open';
+    
+    return new Promise((resolve, reject) => {
+      exec(`${command} "${url}"`, (error) => {
+        if (error) {
+          console.warn(`Failed to open browser: ${error.message}`);
+          console.log(`Please manually open: ${url}`);
+        }
+        resolve();
+      });
+    });
+  }
+
+  async getAuthorizationCode(): Promise<string> {
+    // Wait for callback server to receive the code
+    while (!(this as any)._authCode) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return (this as any)._authCode;
+  }
+}
+
+// Usage example with complete OAuth flow
+async function createAuthenticatedClient(
+  serverUrl: string,
+  clientConfig: {
+    id: string;
+    redirectUrl: string;
+    metadata: OAuthClientMetadata;
+  },
+  tokenStorage: TokenStorage
+): Promise<Client> {
+  const oauthProvider = new SecureOAuthProvider(
+    clientConfig.id,
+    clientConfig.redirectUrl,
+    clientConfig.metadata,
+    tokenStorage
+  );
+
+  const client = new Client({
+    name: `oauth-client-${clientConfig.id}`,
+    version: '1.0.0'
+  });
+
+  const transport = new StreamableHTTPClientTransport(
+    new URL(serverUrl),
+    { authProvider: oauthProvider }
+  );
+
+  try {
+    await client.connect(transport);
+    console.log('✅ OAuth client connected successfully');
+    return client;
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      console.log('🔐 Authorization required, starting OAuth flow...');
+      const authCode = await oauthProvider.getAuthorizationCode();
+      await transport.finishAuth(authCode);
+      await client.connect(transport);
+      console.log('✅ OAuth client connected after authorization');
+      return client;
+    }
+    throw error;
+  }
+}
+
+// ❌ DON'T: Use insecure OAuth without PKCE
+class InsecureOAuthProvider implements OAuthClientProvider {
+  // Missing PKCE implementation
+  // No secure token storage
+  // No proper error handling
+}
+```
+
+## Advanced Patterns
+
+### Resilient Transport Management
+
+```typescript
+// ✅ DO: Implement resilient transport with reconnection
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { StreamableHTTPClientTransport, StreamableHTTPReconnectionOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+interface TransportConfig {
+  type: 'streamable-http' | 'sse' | 'stdio';
+  url: string;
+  reconnectionOptions?: StreamableHTTPReconnectionOptions;
+  timeout?: number;
+  maxRetries?: number;
+}
+
+class ResilientTransportManager {
+  private transports = new Map<string, {
+    transport: Transport;
+    config: TransportConfig;
+    reconnectAttempts: number;
+    lastConnectedAt: Date;
+    isHealthy: boolean;
+  }>();
+
+  async createTransport(id: string, config: TransportConfig): Promise<Transport> {
+    let transport: Transport;
+
+    switch (config.type) {
+      case 'streamable-http':
+        transport = new StreamableHTTPClientTransport(
+          new URL(config.url),
+          {
+            reconnection: config.reconnectionOptions || {
+              maxReconnectionDelay: 30000,
+              minReconnectionDelay: 1000,
+              reconnectionDelayGrowFactor: 2,
+              maxReconnectionAttempts: 5,
+              timeout: config.timeout || 30000
+            }
+          }
+        );
+        break;
+      default:
+        throw new Error(`Unsupported transport type: ${config.type}`);
+    }
+
+    // Set up transport event handlers
+    this.setupTransportHandlers(id, transport);
+
+    this.transports.set(id, {
+      transport,
+      config,
+      reconnectAttempts: 0,
+      lastConnectedAt: new Date(),
+      isHealthy: true
+    });
+
+    return transport;
+  }
+
+  private setupTransportHandlers(id: string, transport: Transport): void {
+    const originalOnMessage = transport.onmessage;
+    const originalOnError = transport.onerror;
+    const originalOnClose = transport.onclose;
+
+    transport.onmessage = (message) => {
+      // Update health status
+      const transportInfo = this.transports.get(id);
+      if (transportInfo) {
+        transportInfo.isHealthy = true;
+        transportInfo.lastConnectedAt = new Date();
+        transportInfo.reconnectAttempts = 0;
+      }
+
+      if (originalOnMessage) {
+        originalOnMessage.call(transport, message);
+      }
+    };
+
+    transport.onerror = (error) => {
+      console.error(`Transport ${id} error:`, error);
+      const transportInfo = this.transports.get(id);
+      if (transportInfo) {
+        transportInfo.isHealthy = false;
+      }
+
+      if (originalOnError) {
+        originalOnError.call(transport, error);
+      }
+    };
+
+    transport.onclose = () => {
+      console.log(`Transport ${id} closed`);
+      const transportInfo = this.transports.get(id);
+      if (transportInfo) {
+        transportInfo.isHealthy = false;
+      }
+
+      if (originalOnClose) {
+        originalOnClose.call(transport);
+      }
+    };
+  }
+
+  async healthCheck(id: string): Promise<boolean> {
+    const transportInfo = this.transports.get(id);
+    if (!transportInfo) return false;
+
+    try {
+      // Implement ping mechanism if transport supports it
+      if ('ping' in transportInfo.transport) {
+        await (transportInfo.transport as any).ping();
+        transportInfo.isHealthy = true;
+        return true;
+      }
+
+      // For HTTP transports, check if connection is still valid
+      const timeSinceLastMessage = Date.now() - transportInfo.lastConnectedAt.getTime();
+      const isStale = timeSinceLastMessage > 60000; // 1 minute
+
+      transportInfo.isHealthy = !isStale;
+      return transportInfo.isHealthy;
+    } catch (error) {
+      transportInfo.isHealthy = false;
+      return false;
+    }
+  }
+
+  getTransportStatus(id: string) {
+    return this.transports.get(id);
+  }
+
+  async closeTransport(id: string): Promise<void> {
+    const transportInfo = this.transports.get(id);
+    if (!transportInfo) return;
+
+    try {
+      await transportInfo.transport.close();
+    } catch (error) {
+      console.warn(`Error closing transport ${id}:`, error);
+    } finally {
+      this.transports.delete(id);
+    }
+  }
+
+  async closeAllTransports(): Promise<void> {
+    const closePromises = Array.from(this.transports.keys()).map(id => 
+      this.closeTransport(id)
+    );
+    await Promise.all(closePromises);
+  }
+}
+
+// ❌ DON'T: Use transports without resilience
+const badTransport = new StreamableHTTPClientTransport(new URL('http://example.com'));
+// No error handling, no reconnection, no health checks
+```
+
+### Event-Driven Notification System
+
+```typescript
+// ✅ DO: Implement comprehensive notification management
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { EventEmitter } from 'events';
+
+interface NotificationEvent {
+  id: string;
+  clientId: string;
+  type: string;
+  timestamp: Date;
+  data: any;
+  metadata?: Record<string, unknown>;
+}
+
+class NotificationManager extends EventEmitter {
+  private subscribers = new Map<string, Set<(event: NotificationEvent) => void>>();
+  private eventHistory = new Map<string, NotificationEvent[]>();
+  private maxHistorySize = 1000;
+
+  setupClientNotifications(clientId: string, client: Client): void {
+    // Set up logging notification handler
+    client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+      const event: NotificationEvent = {
+        id: this.generateEventId(),
+        clientId,
+        type: 'logging',
+        timestamp: new Date(),
+        data: notification.params,
+        metadata: {
+          level: notification.params.level,
+          logger: notification.params.logger
+        }
+      };
+
+      this.handleNotification(event);
+    });
+
+    // Set up custom notification handlers
+    client.onnotification = (method, params) => {
+      const event: NotificationEvent = {
+        id: this.generateEventId(),
+        clientId,
+        type: method,
+        timestamp: new Date(),
+        data: params,
+        metadata: { method }
+      };
+
+      this.handleNotification(event);
+    };
+  }
+
+  private handleNotification(event: NotificationEvent): void {
+    // Store in history
+    this.addToHistory(event);
+
+    // Emit to global listeners
+    this.emit('notification', event);
+    this.emit(`notification:${event.type}`, event);
+    this.emit(`notification:${event.clientId}`, event);
+    this.emit(`notification:${event.clientId}:${event.type}`, event);
+
+    // Call direct subscribers
+    const typeSubscribers = this.subscribers.get(event.type);
+    if (typeSubscribers) {
+      typeSubscribers.forEach(callback => {
+        try {
+          callback(event);
+        } catch (error) {
+          console.error('Error in notification subscriber:', error);
+        }
+      });
+    }
+
+    const clientSubscribers = this.subscribers.get(`client:${event.clientId}`);
+    if (clientSubscribers) {
+      clientSubscribers.forEach(callback => {
+        try {
+          callback(event);
+        } catch (error) {
+          console.error('Error in client notification subscriber:', error);
+        }
+      });
+    }
+  }
+
+  subscribe(
+    pattern: string, 
+    callback: (event: NotificationEvent) => void
+  ): () => void {
+    if (!this.subscribers.has(pattern)) {
+      this.subscribers.set(pattern, new Set());
+    }
+
+    const subscribers = this.subscribers.get(pattern)!;
+    subscribers.add(callback);
+
+    // Return unsubscribe function
+    return () => {
+      subscribers.delete(callback);
+      if (subscribers.size === 0) {
+        this.subscribers.delete(pattern);
+      }
+    };
+  }
+
+  subscribeToClient(
+    clientId: string,
+    callback: (event: NotificationEvent) => void
+  ): () => void {
+    return this.subscribe(`client:${clientId}`, callback);
+  }
+
+  subscribeToType(
+    type: string,
+    callback: (event: NotificationEvent) => void
+  ): () => void {
+    return this.subscribe(type, callback);
+  }
+
+  private addToHistory(event: NotificationEvent): void {
+    const clientHistory = this.eventHistory.get(event.clientId) || [];
+    clientHistory.push(event);
+
+    // Trim history if it gets too large
+    if (clientHistory.length > this.maxHistorySize) {
+      clientHistory.splice(0, clientHistory.length - this.maxHistorySize);
+    }
+
+    this.eventHistory.set(event.clientId, clientHistory);
+  }
+
+  getHistory(clientId?: string, type?: string, limit = 100): NotificationEvent[] {
+    if (clientId) {
+      const clientHistory = this.eventHistory.get(clientId) || [];
+      const filtered = type 
+        ? clientHistory.filter(event => event.type === type)
+        : clientHistory;
+      return filtered.slice(-limit);
+    }
+
+    // Get history from all clients
+    const allEvents: NotificationEvent[] = [];
+    for (const events of this.eventHistory.values()) {
+      allEvents.push(...events);
+    }
+
+    allEvents.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+    const filtered = type 
+      ? allEvents.filter(event => event.type === type)
+      : allEvents;
+
+    return filtered.slice(0, limit);
+  }
+
+  private generateEventId(): string {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  clearHistory(clientId?: string): void {
+    if (clientId) {
+      this.eventHistory.delete(clientId);
+    } else {
+      this.eventHistory.clear();
+    }
+  }
+}
+
+// Usage example with parallel client notifications
+async function demonstrateNotificationTracking(): Promise<void> {
+  const manager = new MCPClientManager();
+  const notifications = new NotificationManager();
+
+  // Add multiple clients
+  await manager.addClient({
+    id: 'fast-client',
+    name: 'fast-notification-client',
+    version: '1.0.0',
+    serverUrl: 'http://localhost:3000/mcp'
+  });
+
+  await manager.addClient({
+    id: 'slow-client', 
+    name: 'slow-notification-client',
+    version: '1.0.0',
+    serverUrl: 'http://localhost:3000/mcp'
+  });
+
+  // Connect clients
+  await manager.connectClient('fast-client');
+  await manager.connectClient('slow-client');
+
+  // Set up notification tracking
+  const fastClient = manager.getClientStatus('fast-client')?.client;
+  const slowClient = manager.getClientStatus('slow-client')?.client;
+
+  if (fastClient) notifications.setupClientNotifications('fast-client', fastClient);
+  if (slowClient) notifications.setupClientNotifications('slow-client', slowClient);
+
+  // Subscribe to notifications
+  notifications.subscribeToType('logging', (event) => {
+    console.log(`[${event.clientId}] Log: ${event.data.data}`);
+  });
+
+  // Start parallel tool calls that generate notifications
+  const results = await manager.executeParallelToolCalls([
+    {
+      clientId: 'fast-client',
+      toolName: 'start-notification-stream',
+      arguments: { interval: 1, count: 5, caller: 'fast-client' }
+    },
+    {
+      clientId: 'slow-client',
+      toolName: 'start-notification-stream', 
+      arguments: { interval: 3, count: 3, caller: 'slow-client' }
+    }
+  ]);
+
+  // Wait for notifications
+  await new Promise(resolve => setTimeout(resolve, 10000));
+
+  // Display notification history
+  console.log('Fast client notifications:', notifications.getHistory('fast-client'));
+  console.log('Slow client notifications:', notifications.getHistory('slow-client'));
+}
+
+// ❌ DON'T: Handle notifications without proper tracking
+client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+  console.log(notification); // No tracking, no routing, no history
+});
+```
+
+## Testing Patterns
+
+### Integration Testing
+
+```typescript
+// ✅ DO: Comprehensive integration testing
+import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
+
+describe('MCP Integration Tests', () => {
+  let manager: MCPClientManager;
+  let notifications: NotificationManager;
+  let mockServer: MockMCPServer;
+
+  beforeAll(async () => {
+    // Start mock server
+    mockServer = new MockMCPServer();
+    await mockServer.start();
+
+    // Initialize managers
+    manager = new MCPClientManager();
+    notifications = new NotificationManager();
+  });
+
+  afterAll(async () => {
+    await manager.disconnectAllClients();
+    await mockServer.stop();
+  });
+
+  it('should handle multiple parallel client connections', async () => {
+    const clientConfigs = [
+      { id: 'client1', name: 'test-client-1', version: '1.0.0', serverUrl: mockServer.url },
+      { id: 'client2', name: 'test-client-2', version: '1.0.0', serverUrl: mockServer.url },
+      { id: 'client3', name: 'test-client-3', version: '1.0.0', serverUrl: mockServer.url }
+    ];
+
+    // Add all clients
+    await Promise.all(clientConfigs.map(config => manager.addClient(config)));
+
+    // Connect all clients in parallel
+    await Promise.all(clientConfigs.map(config => manager.connectClient(config.id)));
+
+    // Verify all clients are connected
+    for (const config of clientConfigs) {
+      const status = manager.getClientStatus(config.id);
+      expect(status?.status).toBe('connected');
+    }
+  });
+
+  it('should execute parallel tool calls correctly', async () => {
+    const toolCalls = [
+      { clientId: 'client1', toolName: 'echo', arguments: { message: 'hello1' } },
+      { clientId: 'client2', toolName: 'echo', arguments: { message: 'hello2' } },
+      { clientId: 'client3', toolName: 'echo', arguments: { message: 'hello3' } }
+    ];
+
+    const results = await manager.executeParallelToolCalls(toolCalls);
+
+    expect(results).toHaveLength(3);
+    results.forEach((result, index) => {
+      expect(result.clientId).toBe(toolCalls[index].clientId);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBeDefined();
+    });
+  });
+
+  it('should handle OAuth authentication flow', async () => {
+    const tokenStorage = new InMemoryTokenStorage();
+    const oauthProvider = new SecureOAuthProvider(
+      'test-client',
+      'http://localhost:8080/callback',
+      { client_name: 'Test Client' },
+      tokenStorage
+    );
+
+    // Mock successful OAuth flow
+    const client = await createAuthenticatedClient(
+      mockServer.secureUrl,
+      {
+        id: 'oauth-client',
+        redirectUrl: 'http://localhost:8080/callback',
+        metadata: { client_name: 'OAuth Test Client' }
+      },
+      tokenStorage
+    );
+
+    expect(client).toBeDefined();
+    // Verify tokens were stored
+    const tokens = await tokenStorage.load('oauth-client');
+    expect(tokens).toBeDefined();
+  });
+
+  it('should handle notification routing correctly', async () => {
+    const receivedNotifications: NotificationEvent[] = [];
+
+    notifications.subscribeToClient('client1', (event) => {
+      receivedNotifications.push(event);
+    });
+
+    // Trigger notifications from client1
+    await manager.executeParallelToolCalls([
+      { 
+        clientId: 'client1', 
+        toolName: 'start-notification-stream', 
+        arguments: { interval: 1, count: 3 } 
+      }
+    ]);
+
+    // Wait for notifications
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    expect(receivedNotifications.length).toBeGreaterThan(0);
+    receivedNotifications.forEach(event => {
+      expect(event.clientId).toBe('client1');
+    });
+  });
+});
+
+// ❌ DON'T: Test without proper setup and teardown
+test('bad integration test', async () => {
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  // Missing server setup, error handling, cleanup
+});
+```
+
+## Best Practices Summary
+
+### Architecture
+- Use centralized client management for multi-client scenarios
+- Implement proper OAuth 2.1 with PKCE for security
+- Design resilient transport layers with reconnection logic
+- Build comprehensive notification systems with routing
+
+### Error Handling
+- Implement circuit breaker patterns for failing services
+- Use exponential backoff for reconnection attempts
+- Provide proper error context and recovery strategies
+- Log errors with sufficient detail for debugging
+
+### Performance
+- Use connection pooling for high-throughput scenarios
+- Implement parallel processing for independent operations
+- Cache authentication tokens securely
+- Monitor and optimize transport performance
+
+### Security
+- Always use PKCE with OAuth flows
+- Implement secure token storage
+- Validate all inputs and sanitize outputs
+- Use HTTPS for all communications
+
+## References
+- [MCP TypeScript SDK Examples](mdc:MCPts/src/examples)
+- [OAuth 2.1 Security Best Practices](mdc:https:/datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics)
+- [Streamable HTTP Transport](mdc:MCPts/src/client/streamableHttp.ts)
+- [OAuth Client Implementation](mdc:MCPts/src/examples/client/simpleOAuthClient.ts)
+- [Parallel Client Examples](mdc:MCPts/src/examples/client/multipleClientsParallel.ts)

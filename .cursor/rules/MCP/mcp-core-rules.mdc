@@ -1,0 +1,870 @@
+---
+description: Model Context Protocol (MCP) core implementation
+globs: 
+alwaysApply: false
+---
+> You are an expert in Model Context Protocol (MCP) core implementation, TypeScript, and modern client-server communication. You focus on producing clear, readable code using the latest MCP SDK patterns and best practices.
+
+## MCP Core Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Protocol      │    │   Client/Server  │    │   Capabilities  │
+│   - request()   │───▶│   - connect()    │───▶│   - resources   │
+│   - notify()    │    │   - initialize() │    │   - tools       │
+│   - handlers    │    │   - lifecycle    │    │   - prompts     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Transport     │    │  Implementation  │    │   JSON-RPC      │
+│   - start()     │    │  - info          │    │   - schemas     │
+│   - send()      │    │  - name/version  │    │   - validation  │
+│   - callbacks   │    │  - metadata      │    │   - error types │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Project Structure
+
+```
+src/
+├── shared/
+│   ├── protocol.ts           # Base Protocol class
+│   ├── transport.ts          # Transport interface
+│   └── auth.ts               # Authentication utilities
+├── server/
+│   ├── index.ts              # Base Server class
+│   ├── mcp.ts                # High-level McpServer
+│   └── auth/                 # Server-side auth
+├── client/
+│   ├── index.ts              # Client class
+│   ├── auth.ts               # Client-side auth
+│   └── stdio.ts              # Client transports
+├── types.ts                  # MCP protocol types and schemas
+├── examples/
+│   ├── client.ts             # Complete client example
+│   └── server.ts             # Complete server example
+└── inMemory.ts               # In-memory transport for testing
+```
+
+## Core Implementation Patterns
+
+### Client Implementation
+
+```typescript
+// ✅ DO: Use the MCP Client class with proper initialization
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { 
+  CallToolResultSchema,
+  ListToolsResultSchema,
+  ListResourcesResultSchema,
+  ReadResourceResultSchema,
+  ClientCapabilities,
+  Implementation 
+} from "@modelcontextprotocol/sdk/types.js";
+
+// Client setup with capabilities
+const client = new Client(
+  {
+    name: "my-mcp-client",
+    version: "1.0.0"
+  } as Implementation,
+  {
+    capabilities: {
+      resources: { subscribe: true },
+      tools: {},
+      prompts: {},
+      logging: {}
+    } as ClientCapabilities
+  }
+);
+
+// Client lifecycle management
+async function initializeClient(): Promise<void> {
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: ["./server.js"]
+  });
+
+  // Set up error handling before connecting
+  transport.onerror = (error) => {
+    console.error("Transport error:", error);
+  };
+
+  transport.onclose = () => {
+    console.log("Transport closed");
+  };
+
+  // Connect and initialize
+  await client.connect(transport);
+  
+  console.log("Connected to server");
+  console.log("Server capabilities:", client.getServerCapabilities());
+  console.log("Server info:", client.getServerVersion());
+}
+
+// Using client methods with proper error handling
+async function useClientAPIs(): Promise<void> {
+  try {
+    // List available tools
+    const toolsResult = await client.listTools();
+    console.log("Available tools:", toolsResult.tools);
+
+    // Call a tool with validation
+    const callResult = await client.callTool({
+      name: "echo",
+      arguments: { message: "Hello, World!" }
+    }, CallToolResultSchema);
+    
+    console.log("Tool result:", callResult.content);
+
+    // List and read resources
+    const resourcesResult = await client.listResources();
+    for (const resource of resourcesResult.resources) {
+      const content = await client.readResource({ uri: resource.uri });
+      console.log(`Resource ${resource.name}:`, content);
+    }
+
+  } catch (error) {
+    console.error("Client operation failed:", error);
+  }
+}
+
+// ❌ DON'T: Create clients without proper initialization or error handling
+const badClient = new Client({ name: "bad", version: "1.0.0" });
+// Missing capabilities, transport setup, and error handling
+```
+
+### Server Implementation
+
+```typescript
+// ✅ DO: Use the MCP Server class with proper setup
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ServerCapabilities,
+  Implementation,
+  Tool,
+  Resource
+} from "@modelcontextprotocol/sdk/types.js";
+
+// Server setup with capabilities
+const server = new Server(
+  {
+    name: "my-mcp-server",
+    version: "1.0.0"
+  } as Implementation,
+  {
+    capabilities: {
+      resources: { subscribe: true, listChanged: true },
+      tools: { listChanged: true },
+      prompts: { listChanged: true },
+      logging: {}
+    } as ServerCapabilities
+  }
+);
+
+// Tool registration and handling
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: "echo",
+        description: "Echo back a message",
+        inputSchema: {
+          type: "object",
+          properties: {
+            message: {
+              type: "string",
+              description: "Message to echo back"
+            }
+          },
+          required: ["message"]
+        }
+      },
+      {
+        name: "calculate",
+        description: "Perform basic arithmetic",
+        inputSchema: {
+          type: "object",
+          properties: {
+            operation: {
+              type: "string",
+              enum: ["add", "subtract", "multiply", "divide"]
+            },
+            a: { type: "number" },
+            b: { type: "number" }
+          },
+          required: ["operation", "a", "b"]
+        }
+      }
+    ] as Tool[]
+  };
+});
+
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  const { name, arguments: args } = request.params;
+
+  switch (name) {
+    case "echo":
+      return {
+        content: [{
+          type: "text",
+          text: (args as { message: string }).message
+        }]
+      };
+
+    case "calculate":
+      const { operation, a, b } = args as { operation: string; a: number; b: number };
+      let result: number;
+      
+      switch (operation) {
+        case "add": result = a + b; break;
+        case "subtract": result = a - b; break;
+        case "multiply": result = a * b; break;
+        case "divide": 
+          if (b === 0) {
+            return {
+              isError: true,
+              content: [{ type: "text", text: "Division by zero" }]
+            };
+          }
+          result = a / b; 
+          break;
+        default:
+          return {
+            isError: true,
+            content: [{ type: "text", text: "Unknown operation" }]
+          };
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: `${a} ${operation} ${b} = ${result}`
+        }]
+      };
+
+    default:
+      return {
+        isError: true,
+        content: [{
+          type: "text",
+          text: `Unknown tool: ${name}`
+        }]
+      };
+  }
+});
+
+// Resource handling
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: [
+      {
+        uri: "file://config.json",
+        name: "Configuration",
+        description: "Server configuration file",
+        mimeType: "application/json"
+      },
+      {
+        uri: "file://logs/app.log",
+        name: "Application Logs",
+        description: "Current application logs",
+        mimeType: "text/plain"
+      }
+    ] as Resource[]
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+
+  switch (uri) {
+    case "file://config.json":
+      return {
+        contents: [{
+          uri,
+          mimeType: "application/json",
+          text: JSON.stringify({ debug: true, port: 3000 }, null, 2)
+        }]
+      };
+
+    case "file://logs/app.log":
+      return {
+        contents: [{
+          uri,
+          mimeType: "text/plain",
+          text: "2024-01-01 12:00:00 INFO Server started\n2024-01-01 12:00:01 INFO Ready to accept connections"
+        }]
+      };
+
+    default:
+      throw new Error(`Resource not found: ${uri}`);
+  }
+});
+
+// Server startup
+async function startServer(): Promise<void> {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("MCP server running on stdio");
+}
+
+// ❌ DON'T: Set up servers without proper request handlers
+const badServer = new Server({ name: "bad", version: "1.0.0" }, {});
+// Missing request handlers and capabilities
+```
+
+### High-Level McpServer Usage
+
+```typescript
+// ✅ DO: Use McpServer for simpler tool and resource registration
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const server = new McpServer({
+  name: "enhanced-mcp-server",
+  version: "1.0.0"
+});
+
+// Tool registration with type-safe arguments
+server.tool("get_weather", "Get weather information for a city", {
+  city: z.string().describe("City name"),
+  units: z.enum(["celsius", "fahrenheit"]).optional().default("celsius")
+}, async ({ city, units }) => {
+  // Simulate weather API call
+  const temperature = Math.round(Math.random() * 30);
+  const convertedTemp = units === "fahrenheit" ? (temperature * 9/5) + 32 : temperature;
+  
+  return {
+    content: [{
+      type: "text",
+      text: `Weather in ${city}: ${convertedTemp}°${units === "celsius" ? "C" : "F"}`
+    }]
+  };
+});
+
+// Resource registration with callback
+server.resource("file://data/users.json", async () => {
+  const users = [
+    { id: 1, name: "Alice", email: "alice@example.com" },
+    { id: 2, name: "Bob", email: "bob@example.com" }
+  ];
+  
+  return {
+    contents: [{
+      uri: "file://data/users.json",
+      mimeType: "application/json",
+      text: JSON.stringify(users, null, 2)
+    }]
+  };
+});
+
+// Prompt registration
+server.prompt("summarize_data", "Summarize data from a resource", {
+  resource_uri: z.string().describe("URI of the resource to summarize"),
+  max_length: z.number().optional().default(100)
+}, async ({ resource_uri, max_length }) => {
+  return {
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: `Please summarize the data from ${resource_uri} in ${max_length} words or less.`
+      }
+    }]
+  };
+});
+
+// ❌ DON'T: Register tools without proper validation or error handling
+server.tool("bad_tool", async (args: any) => {
+  return { content: [{ type: "text", text: args.data }] }; // No validation
+});
+```
+
+## Advanced Patterns
+
+### Protocol Extension and Custom Types
+
+```typescript
+// ✅ DO: Extend MCP with custom types and requests
+import { Protocol } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import { z } from "zod";
+import { RequestSchema, NotificationSchema, ResultSchema } from "@modelcontextprotocol/sdk/types.js";
+
+// Define custom request schema
+const CustomRequestSchema = RequestSchema.extend({
+  method: z.literal("custom/analyze"),
+  params: z.object({
+    data: z.string(),
+    options: z.object({
+      deep: z.boolean().optional(),
+      format: z.enum(["json", "text"]).optional()
+    }).optional()
+  })
+});
+
+const CustomResultSchema = ResultSchema.extend({
+  analysis: z.object({
+    summary: z.string(),
+    score: z.number(),
+    recommendations: z.array(z.string())
+  })
+});
+
+type CustomRequest = z.infer<typeof CustomRequestSchema>;
+type CustomResult = z.infer<typeof CustomResultSchema>;
+
+// Create typed client with custom request support
+const customClient = new Client<CustomRequest, never, CustomResult>({
+  name: "custom-client",
+  version: "1.0.0"
+});
+
+// Set up custom request handler
+customClient.setRequestHandler(CustomRequestSchema, async (request, extra) => {
+  const { data, options } = request.params;
+  
+  // Perform custom analysis
+  const analysis = analyzeData(data, options);
+  
+  return {
+    analysis: {
+      summary: analysis.summary,
+      score: analysis.confidence,
+      recommendations: analysis.suggestions
+    }
+  } as CustomResult;
+});
+
+// ❌ DON'T: Extend without proper typing or schema validation
+class BadCustomClient extends Client {
+  async customRequest(data: any): Promise<any> {
+    return await this.request({ method: "custom", params: data }, z.any());
+  }
+}
+```
+
+### Authentication and Security
+
+```typescript
+// ✅ DO: Implement proper authentication handling
+import { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+
+// Server with authentication
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  const { authInfo, sessionId } = extra;
+  
+  // Check authentication for sensitive operations
+  if (request.params.name === "admin_reset") {
+    if (!authInfo || authInfo.scopes?.includes("admin") !== true) {
+      throw new Error("Insufficient permissions for admin operations");
+    }
+  }
+  
+  // Log authenticated requests
+  if (authInfo) {
+    console.log(`Authenticated request from ${authInfo.sub} (session: ${sessionId})`);
+  }
+  
+  return await executeToolSafely(request.params, authInfo);
+});
+
+// Client with OAuth authentication
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+
+class MyOAuthProvider implements OAuthClientProvider {
+  get clientMetadata() {
+    return {
+      client_name: "My MCP Client",
+      client_uri: "https://myapp.com",
+      scope: "read write admin"
+    };
+  }
+  
+  async clientInformation() {
+    return this.loadStoredClientInfo();
+  }
+  
+  async saveClientInformation(info: any) {
+    await this.storeClientInfo(info);
+  }
+  
+  async tokens() {
+    return this.loadStoredTokens();
+  }
+  
+  async storeTokens(tokens: any) {
+    await this.persistTokens(tokens);
+  }
+  
+  async redirectToAuthorization(url: string) {
+    window.location.href = url;
+  }
+}
+
+const authProvider = new MyOAuthProvider();
+const transport = new SSEClientTransport(
+  new URL("https://api.example.com/mcp"),
+  { authProvider }
+);
+
+// ❌ DON'T: Ignore authentication or handle credentials insecurely
+const unsafeServer = new Server({name: "unsafe", version: "1.0"}, {});
+unsafeServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+  // No auth check - anyone can call any tool
+  return await executeAdminTool(request.params);
+});
+```
+
+### Error Handling and Resilience
+
+```typescript
+// ✅ DO: Implement comprehensive error handling
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+
+// Client with proper error handling
+async function robustClientOperation(): Promise<void> {
+  try {
+    const result = await client.callTool({
+      name: "risky_operation",
+      arguments: { param: "value" }
+    }, CallToolResultSchema, {
+      timeout: 30000, // 30 second timeout
+      onprogress: (progress) => {
+        console.log(`Progress: ${progress.progress}% - ${progress.progressToken}`);
+      }
+    });
+    
+    if (result.isError) {
+      throw new Error(`Tool execution failed: ${result.content[0]?.text}`);
+    }
+    
+    console.log("Operation completed successfully");
+    
+  } catch (error) {
+    if (error instanceof McpError) {
+      switch (error.code) {
+        case ErrorCode.MethodNotFound:
+          console.error("Tool not found - check server capabilities");
+          break;
+        case ErrorCode.InvalidParams:
+          console.error("Invalid parameters provided");
+          break;
+        case ErrorCode.InternalError:
+          console.error("Server internal error - retry may help");
+          break;
+        case ErrorCode.RequestTimeout:
+          console.error("Request timed out - server may be overloaded");
+          break;
+        default:
+          console.error(`MCP error: ${error.message}`);
+      }
+    } else {
+      console.error("Unexpected error:", error);
+    }
+  }
+}
+
+// Server with graceful error handling
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  const { signal } = extra;
+  
+  try {
+    // Check for cancellation
+    if (signal.aborted) {
+      throw new McpError(ErrorCode.RequestCancelled, "Request was cancelled");
+    }
+    
+    // Validate tool exists
+    const toolName = request.params.name;
+    if (!isValidTool(toolName)) {
+      throw new McpError(ErrorCode.MethodNotFound, `Tool '${toolName}' not found`);
+    }
+    
+    // Execute with cancellation support
+    const result = await executeToolWithCancellation(request.params, signal);
+    
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify(result, null, 2)
+      }]
+    };
+    
+  } catch (error) {
+    if (error instanceof McpError) {
+      throw error; // Re-throw MCP errors as-is
+    }
+    
+    // Convert other errors to appropriate MCP errors
+    console.error("Tool execution error:", error);
+    throw new McpError(
+      ErrorCode.InternalError, 
+      `Tool execution failed: ${error.message}`
+    );
+  }
+});
+
+// ❌ DON'T: Ignore errors or provide poor error messages
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    return await executeTool(request.params);
+  } catch {
+    return { content: [{ type: "text", text: "Error" }] }; // Useless error message
+  }
+});
+```
+
+### Progress Reporting and Long-Running Operations
+
+```typescript
+// ✅ DO: Implement progress reporting for long operations
+import { ProgressNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
+
+// Server with progress reporting
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  if (request.params.name === "process_large_file") {
+    const { file_path } = request.params.arguments as { file_path: string };
+    const totalSteps = 100;
+    
+    for (let step = 0; step <= totalSteps; step += 10) {
+      // Check for cancellation
+      if (extra.signal.aborted) {
+        throw new McpError(ErrorCode.RequestCancelled, "Processing cancelled");
+      }
+      
+      // Report progress
+      if (step < totalSteps) {
+        await extra.sendNotification({
+          method: "notifications/progress",
+          params: {
+            progressToken: request.id,
+            progress: step,
+            total: totalSteps
+          }
+        });
+      }
+      
+      // Simulate work
+      await processChunk(file_path, step);
+    }
+    
+    return {
+      content: [{
+        type: "text",
+        text: `Successfully processed ${file_path}`
+      }]
+    };
+  }
+});
+
+// Client handling progress notifications
+async function handleLongRunningOperation(): Promise<void> {
+  let lastProgress = 0;
+  
+  const result = await client.callTool({
+    name: "process_large_file",
+    arguments: { file_path: "/large/file.dat" }
+  }, CallToolResultSchema, {
+    timeout: 300000, // 5 minutes
+    resetTimeoutOnProgress: true,
+    onprogress: (progress) => {
+      lastProgress = progress.progress || 0;
+      console.log(`Processing: ${lastProgress}% complete`);
+    }
+  });
+  
+  console.log("Processing completed:", result.content[0]?.text);
+}
+
+// ❌ DON'T: Run long operations without progress or cancellation support
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === "long_operation") {
+    // No progress reporting, no cancellation support
+    await longRunningTask(); // Could hang indefinitely
+    return { content: [{ type: "text", text: "Done" }] };
+  }
+});
+```
+
+### Testing Patterns
+
+```typescript
+// ✅ DO: Write comprehensive tests for MCP implementations
+import { describe, test, expect, beforeEach, afterEach } from "@jest/globals";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
+describe("MCP Client-Server Integration", () => {
+  let client: Client;
+  let server: Server;
+  let clientTransport: InMemoryTransport;
+  let serverTransport: InMemoryTransport;
+
+  beforeEach(async () => {
+    // Create linked transports for testing
+    [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    
+    // Set up client
+    client = new Client({
+      name: "test-client",
+      version: "1.0.0"
+    });
+    
+    // Set up server with test tools
+    server = new Server({
+      name: "test-server", 
+      version: "1.0.0"
+    }, {
+      capabilities: { tools: {} }
+    });
+    
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [{
+        name: "echo",
+        description: "Echo a message",
+        inputSchema: {
+          type: "object",
+          properties: { message: { type: "string" } },
+          required: ["message"]
+        }
+      }]
+    }));
+    
+    server.setRequestHandler(CallToolRequestSchema, async (request) => ({
+      content: [{
+        type: "text",
+        text: (request.params.arguments as any).message
+      }]
+    }));
+    
+    // Connect both sides
+    await Promise.all([
+      client.connect(clientTransport),
+      server.connect(serverTransport)
+    ]);
+  });
+
+  afterEach(async () => {
+    await Promise.all([
+      client.close(),
+      server.close()
+    ]);
+  });
+
+  test("should list and call tools", async () => {
+    // Test tool listing
+    const tools = await client.listTools();
+    expect(tools.tools).toHaveLength(1);
+    expect(tools.tools[0].name).toBe("echo");
+    
+    // Test tool calling
+    const result = await client.callTool({
+      name: "echo",
+      arguments: { message: "Hello, World!" }
+    });
+    
+    expect(result.content[0].text).toBe("Hello, World!");
+  });
+
+  test("should handle tool errors gracefully", async () => {
+    await expect(client.callTool({
+      name: "nonexistent",
+      arguments: {}
+    })).rejects.toThrow();
+  });
+
+  test("should support progress notifications", async () => {
+    const progressUpdates: number[] = [];
+    
+    // Add progress-reporting tool to server
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+      if (request.params.name === "progress_test") {
+        for (let i = 0; i <= 100; i += 25) {
+          if (i < 100) {
+            await extra.sendNotification({
+              method: "notifications/progress",
+              params: {
+                progressToken: request.id,
+                progress: i
+              }
+            });
+          }
+        }
+        return { content: [{ type: "text", text: "Complete" }] };
+      }
+      return { content: [{ type: "text", text: "Unknown tool" }] };
+    });
+
+    const result = await client.callTool({
+      name: "progress_test",
+      arguments: {}
+    }, CallToolResultSchema, {
+      onprogress: (progress) => {
+        progressUpdates.push(progress.progress || 0);
+      }
+    });
+
+    expect(progressUpdates).toEqual([0, 25, 50, 75]);
+    expect(result.content[0].text).toBe("Complete");
+  });
+});
+
+// ❌ DON'T: Write tests without proper setup/teardown or error scenarios
+test("basic test", async () => {
+  const client = new Client({name: "test", version: "1.0"});
+  // Missing transport, server setup, and error handling
+  const result = await client.listTools();
+  expect(result).toBeDefined();
+});
+```
+
+## Best Practices Summary
+
+### Client Implementation
+- Always register capabilities appropriate for your client's functionality
+- Set up proper error handlers for transport and protocol errors
+- Use typed request/response schemas for validation
+- Implement timeout and cancellation support for long-running operations
+
+### Server Implementation
+- Register comprehensive capabilities that match your server's features
+- Validate all incoming requests and provide meaningful error messages
+- Support progress reporting for operations that take more than a few seconds
+- Implement proper authentication and authorization checks
+
+### Protocol Usage
+- Use the high-level McpServer/Client classes when possible for simpler APIs
+- Extend base Protocol class only when you need custom request types
+- Always handle JSON-RPC errors appropriately
+- Implement proper cleanup in close handlers
+
+### Error Handling
+- Use McpError with appropriate error codes for protocol-level errors
+- Provide detailed error messages that help with debugging
+- Implement retry logic for transient failures
+- Log errors appropriately without exposing sensitive information
+
+### Testing
+- Use InMemoryTransport for unit and integration testing
+- Test both success and failure scenarios
+- Validate schema compliance for requests and responses
+- Test timeout and cancellation behavior
+
+### Security
+- Validate and sanitize all inputs
+- Implement proper authentication for sensitive operations
+- Use HTTPS/WSS for production deployments
+- Follow principle of least privilege for capabilities
+
+## References
+- [Model Context Protocol Documentation](mdc:https://modelcontextprotocol.io/introduction)
+- [MCP Core Specification](mdc:https://spec.modelcontextprotocol.io/specification/basic/lifecycle)
+- [MCP TypeScript SDK](mdc:https://github.com/modelcontextprotocol/typescript-sdk)
+- [JSON-RPC 2.0 Specification](mdc:https://www.jsonrpc.org/specification)
