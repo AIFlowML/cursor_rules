@@ -13,7 +13,7 @@ AGNO supports a wide range of model providers:
 
 | Provider | Models | Import Path |
 |----------|--------|-------------|
-| OpenAI | GPT-4, GPT-4o, GPT-3.5-Turbo | `agno.models.openai` |
+| OpenAI | GPT-4, GPT-4o, o3 | `agno.models.openai` |
 | Anthropic | Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Sonnet, Claude 3 Haiku | `agno.models.anthropic` |
 | Google | Gemini 1.5 Pro, Gemini 1.5 Flash, Gemini 1.0 Pro | `agno.models.google.gemini` |
 | Mistral | Mistral Large, Mistral Medium, Mistral Small | `agno.models.mistral.mistral` |
@@ -80,7 +80,7 @@ model = OpenAIChat(
 from agno.models.openai import OpenAIChat
 
 openai_model = OpenAIChat(
-    id="gpt-4o",  # or "gpt-3.5-turbo", "gpt-4-1106-preview", etc.
+    id="gpt-4o",  # or "o3", "gpt-4-1106-preview", etc.
     api_key=os.environ.get("OPENAI_API_KEY"),
     organization_id=os.environ.get("OPENAI_ORG_ID"),  # Optional
     json_mode=True,  # Enable JSON mode (alternative to response_format)
@@ -167,7 +167,7 @@ fallback_model = FallbackModel(
     models=[
         OpenAIChat(id="gpt-4o"),  # Primary model
         Claude(id="claude-3-5-sonnet-latest"),  # Fallback #1
-        OpenAIChat(id="gpt-3.5-turbo"),  # Fallback #2
+        OpenAIChat(id="o3"),  # Fallback #2
     ],
     retry_on_errors=True,
 )
@@ -180,7 +180,7 @@ agent = Agent(model=fallback_model)
 
 1. **Model Selection**:
    - Use the most capable model for reasoning-heavy tasks (Claude 3 Opus, GPT-4)
-   - Use efficient models for simpler tasks (Claude 3 Haiku, GPT-3.5-Turbo)
+   - Use efficient models for simpler tasks (Claude 3 Haiku, o3)
    - Test different models to find the best price/performance ratio
 
 2. **API Keys**:

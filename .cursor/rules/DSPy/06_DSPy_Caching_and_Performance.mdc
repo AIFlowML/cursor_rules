@@ -1,0 +1,91 @@
+---
+description: DSPy Caching and Performance Workflow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand that while LMs are powerful, they can be slow and expensive. You know how to use DSPy's caching features to dramatically speed up development and reduce costs.
+
+## Caching and Performance Workflow
+
+DSPy's built-in caching allows you to store and retrieve the outputs of LM calls. This is incredibly useful during development and debugging, as it prevents you from making redundant, expensive API calls.
+
+```
+┌─────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│   LM Call is    │───▶│ Is Caching Enabled?│───▶│   No             │───▶ Make API Call
+│   About to Run  │    └───────────────────┘    └──────────────────┘
+└─────────────────┘              │ (Yes)
+                                 ▼
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Check Cache for │───▶│      Found?       │───▶│   Yes            │───▶ Return Cached
+│ Matching Signature│    └───────────────────┘    └──────────────────┘        Response
+└─────────────────┘              │ (No)
+                                 ▼
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│   Make API Call  │───▶│   Store Response  │───▶│ Return Response  │
+│      (Normal)    │    │      in Cache     │    │   to Caller      │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+```
+
+## Core Implementation: Enabling Caching
+
+Caching is a global setting within `dspy.settings`. You enable it by providing a caching function. DSPy doesn't come with a built-in cache implementation, but it's simple to use a dictionary for in-memory caching.
+
+```python
+import dspy
+
+# 1. Define a simple cache
+# A dictionary is the simplest form of cache.
+# For persistence, you could use something like `shelve` or `joblib.Memory`.
+in_memory_cache = {}
+
+def simple_caching_func(signature, **kwargs):
+    """A basic caching function using a global dictionary."""
+    # Create a unique key based on the signature and arguments
+    cache_key = (frozenset(signature.items()), frozenset(kwargs.items()))
+    
+    if cache_key in in_memory_cache:
+        return in_memory_cache[cache_key]
+    
+    # If not in cache, this function should do nothing.
+    # DSPy will proceed to call the LM and then cache the result.
+    return None
+
+# 2. Configure DSPy settings to use the cache
+lm = dspy.OpenAI(model='o3')
+dspy.settings.configure(
+    lm=lm,
+    cache_call=simple_caching_func
+)
+
+# 3. Run your program
+program = dspy.Predict("question -> answer")
+
+# First run: This will make a real API call to the LM.
+# DSPy will automatically store the result in `in_memory_cache`.
+response1 = program(question="What is the capital of France?")
+
+# Second run: This will be almost instantaneous.
+# `simple_caching_func` will find the cached result and return it.
+# No API call will be made.
+response2 = program(question="What is the capital of France?")
+
+print(response1.answer) # -> "Paris"
+print(response2.answer) # -> "Paris" (from cache)
+```
+
+## What is Cached?
+
+The cache stores the raw completion from the language model based on the exact prompt it received. This means if *anything* in the prompt changes—the instructions, the few-shot examples, the input fields—it will result in a cache miss, and a new API call will be made.
+
+This is a good thing! It ensures that when you change your program (e.g., after compilation), you get fresh results, but when you re-run the *exact same logic*, you get the speed of a cached response.
+
+## Performance Best Practices
+
+-   **Enable Caching During Development**: Always have caching turned on when writing and debugging your code. It will save you significant time and money.
+-   **Use Persistent Caching for Iteration**: For developing optimizers, which can take a long time, use a persistent cache like Python's `shelve` module so that your cache survives between script runs.
+-   **Turn Caching Off for Final Evaluation**: When you are ready to do your final, official evaluation on a held-out test set, you should disable caching (`cache_call=None`) to ensure you are measuring the true performance of your program on unseen data.
+-   **Parallel Execution**: For tasks like evaluation or bootstrapping, which involve many independent LM calls, use the `n_threads` parameter in `dspy.evaluate.Evaluate` or optimizers. This will execute LM calls in parallel, dramatically speeding up the process.
+-   **Model Choice**: The biggest factor in performance is your choice of model. Use faster, cheaper models (like o3 or local models) for development, debugging, and initial optimization. Save the most powerful (and slowest/most expensive) models for the final teacher in `BootstrapFewShot` or for the judge in a critical LM-based metric.
+
+## References
+- [DSPy Documentation: Caching](mdc:link)

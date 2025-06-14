@@ -1,0 +1,137 @@
+---
+description: DSPy Agent with Tools (ReAct) Architecture
+globs: 
+alwaysApply: false
+---
+> You are an expert AI engineer building autonomous agents with DSPy. You know how to equip agents with tools and use the ReAct framework to have them dynamically choose the right tool for a given task.
+
+## Agent with Tools (ReAct) Architecture
+
+The `dspy.ReAct` module implements the "Reason and Act" paradigm. The agent operates in a loop: it "thinks" about what to do next, chooses a tool, executes it, observes the result, and repeats until it has enough information to answer the final question.
+
+```
+┌──────────┐   ┌───────────────┐   ┌────────────────┐   ┌───────────┐
+│ Question │──▶│   Think Step  │──▶│  Choose Tool   │──▶│ Execute   │
+│          │   │(What should I do) │   │ [Tool(args)]   │   │   Tool    │
+└──────────┘   └───────────────┘   └────────────────┘   └───────────┘
+     │                                (ReAct Logic)          │
+     │                                                       │
+     └───────────────────────────┐                           │
+                                 │                           │
+                                 ▼                           ▼
+                           ┌───────────┐               ┌───────────┐
+                           │   Enough  │◀──────────────│ Observe   │
+                           │ Info? (No)│               │  Result   │
+                           └───────────┘               └───────────┘
+                                 │(Yes)
+                                 ▼
+                           ┌───────────┐
+                           │ Final     │
+                           │ Answer    │
+                           └───────────┘
+```
+
+## Complete Example: Building a Tool-Using Agent
+
+This agent will have two tools: a web search and a calculator. It will decide which one to use based on the user's question.
+
+### 1. Define the Tools
+
+First, we define our tools as simple Python functions. For `dspy.ReAct`, tools should be classes that are callable.
+
+```python
+# ✅ DO: Wrap tools in simple classes with a __call__ method.
+class WebSearch:
+    def __call__(self, query: str) -> str:
+        """A simple search tool that returns a fake search result."""
+        # In a real application, this would call a search API.
+        return f"Search result for '{query}': The 2024 Summer Olympics will be in Paris."
+
+class Calculator:
+    def __call__(self, expression: str) -> str:
+        """A simple calculator tool that evaluates a Python expression."""
+        # Warning: eval is not safe for production use with untrusted input.
+        try:
+            return str(eval(expression))
+        except:
+            return "Invalid expression"
+
+# Instantiate the tools
+web_search = WebSearch()
+calculator = Calculator()
+```
+
+### 2. Define the Agent Module
+
+We use `dspy.ReAct` to create the agent. We pass it the list of available tools. The signature for `ReAct` should guide the agent on how to use the tools to answer the question.
+
+```python
+import dspy
+
+# The list of tools the agent can choose from.
+# dspy.ReAct expects a list of tool instances.
+tools = [web_search, calculator]
+
+# The ReAct module, configured with the tools and a signature
+# that tells it how to think.
+agent = dspy.ReAct(
+    "question -> answer", # A simple signature for the final output
+    tools=tools
+)
+```
+
+### 3. Configure and Run
+
+Now, we can ask the agent questions. DSPy's `ReAct` module will handle the entire reasoning loop.
+
+```python
+# --- Configuration ---
+# lm = dspy.OpenAI(model='gpt-4-turbo')
+# dspy.settings.configure(lm=lm)
+
+# --- Execution ---
+
+# Example 1: A question that requires search
+question_1 = "Where will the 2024 Summer Olympics be held?"
+result_1 = agent(question=question_1)
+print(f"Question: {question_1}")
+print(f"Answer: {result_1.answer}")
+print("-" * 20)
+
+# Example 2: A question that requires calculation
+question_2 = "What is 123 * 456?"
+result_2 = agent(question=question_2)
+print(f"Question: {question_2}")
+print(f"Answer: {result_2.answer}")
+```
+
+### 4. Inspecting the Agent's Thought Process
+
+The real power of `ReAct` is seeing *how* it decided to act. You can inspect the history of the LM calls to trace its reasoning.
+
+```python
+# You can inspect the last set of interactions with the LM
+# This shows the full "Thought, Action, Observation" loop.
+dspy.settings.lm.history[0]
+
+# The output will show something like this for the first question:
+# Thought: The user is asking a factual question about a future event. I should use the web search tool to find the answer.
+# Action: WebSearch(query='2024 Summer Olympics location')
+# ...
+# Observation: Search result for '2024 Summer Olympics location': The 2024 Summer Olympics will be in Paris.
+# ...
+# Thought: I have the answer from the search result. The 2024 Summer Olympics will be in Paris. I can now provide the final answer.
+# Action: Final Answer: The 2024 Summer Olympics will be held in Paris.
+```
+
+## Best Practices for ReAct Agents
+
+-   **Clear Tool Descriptions**: The docstrings for your tool classes are critical. The `ReAct` module passes these descriptions to the LM to help it decide which tool to use. Make them clear and descriptive.
+-   **Simple Input/Output**: Keep your tool inputs and outputs simple (ideally just strings). Complex, structured data can confuse the LM. If you need to pass structured data, serialize it to JSON.
+-   **Start with `ReAct`, then Specialize**: `dspy.ReAct` is a powerful, general-purpose agent. If you find your agent always follows the same sequence of steps, you might get better performance by building a more specialized `dspy.Module` (like the `MultiHopRAG` example).
+-   **Error Handling in Tools**: Your tools should be robust. If a tool fails (e.g., an API times out), it should return a helpful error message. The agent can then observe this error and decide on a different course of action.
+-   **Compiling Agents**: `ReAct` modules can be compiled just like any other `dspy.Module`. The optimizer will learn the best way to prompt the agent to think and act, which can significantly improve its reliability.
+
+## References
+- [`DSPy/01_Module_ReAct_and_Tools.mdc`](mdc:.cursor/rules/DSPy/01_Module_ReAct_and_Tools.mdc)
+- [`DSPy/08_Example_MultiHop_RAG.mdc`](mdc:.cursor/rules/DSPy/08_Example_MultiHop_RAG.mdc)

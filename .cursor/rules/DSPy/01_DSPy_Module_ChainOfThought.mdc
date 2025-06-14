@@ -1,0 +1,81 @@
+---
+description: DSPy The dspy.ChainOfThought Module
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## The `dspy.ChainOfThought` Module
+
+`dspy.ChainOfThought` is a powerful DSPy module that enhances the reasoning capabilities of Language Models (LMs). It is designed as a simple-to-use-yet-effective replacement for `dspy.Predict`.
+
+Instead of just predicting the output, `dspy.ChainOfThought` instructs the LM to first "think step-by-step" about how to arrive at the answer, and then produce the final output. This process of generating intermediate reasoning often leads to more accurate and reliable results, especially for complex questions.
+
+## Core Architecture
+
+`dspy.ChainOfThought` works by augmenting your signature. It automatically injects a `reasoning` field before your defined output fields. The LM is then prompted to fill out the `reasoning` field first, effectively creating a "chain of thought" that guides it to the final answer.
+
+```mermaid
+graph TD
+    A[Input Question] --> B{dspy.ChainOfThought};
+    subgraph "LM Internals"
+        B --> C[1. Generate Reasoning];
+        C --> D[2. Generate Final Answer];
+    end
+    D --> E[Prediction with Reasoning];
+```
+
+## Core Implementation Pattern
+
+Using `dspy.ChainOfThought` is as simple as swapping it in for `dspy.Predict`.
+
+```python
+import dspy
+
+# ✅ DO: Use ChainOfThought for tasks that benefit from reasoning.
+question = "What's something great about the ColBERT retrieval model?"
+
+# 1) Declare with a signature. It's identical to how you'd use dspy.Predict.
+classify = dspy.ChainOfThought('question -> answer')
+
+# 2) Call with input argument(s).
+response = classify(question=question)
+
+# 3) Access the output and the injected reasoning.
+print(f"Answer: {response.answer}")
+print(f"Reasoning: {response.reasoning}")
+
+
+# ❌ DON'T: Manually add "reasoning" to your signature.
+# dspy.ChainOfThought does this for you automatically.
+# bad_signature = 'question -> reasoning, answer'
+```
+
+## Inspecting the Output
+
+The module returns a `dspy.Prediction` object. The `reasoning` is directly accessible as an attribute.
+
+```python
+# Assuming the previous call was made
+print(response.reasoning)
+```
+**Possible Output:**
+```text
+Reasoning: We can consider the fact that ColBERT has shown to outperform other state-of-the-art retrieval models in terms of efficiency and effectiveness. It uses contextualized embeddings and performs document retrieval in a way that is both accurate and scalable.
+```
+
+## When to Use `dspy.ChainOfThought`
+
+-   **Complex Questions**: For questions that require multiple steps to answer.
+-   **Improving Reliability**: When `dspy.Predict` gives inconsistent or slightly incorrect answers.
+-   **Debugging & Transparency**: The `reasoning` output provides valuable insight into the LM's process, making it easier to debug.
+-   **Almost any task**: It's often a good default choice over `dspy.Predict` as it rarely harms performance and frequently helps.
+
+## Best Practices
+
+-   **Drop-in Replacement**: Start with `dspy.Predict`. If the quality isn't sufficient, simply replace it with `dspy.ChainOfThought` without changing your signature.
+-   **Inspect Reasoning**: When evaluating your program, always inspect the `reasoning` field. It can reveal flaws in the LM's logic even if the final answer seems correct.
+-   **Optimization**: The prompts that generate the chain of thought are learnable. Optimizers like `BootstrapFewShot` can teach the LM *how* to reason for your specific task.
+
+## References
+- [Documentation: Modules](mdc:extra/dspy/docs/docs/learn/programming/modules.md)

@@ -1,0 +1,179 @@
+---
+description: DSPy - MLOps Production Best Practices Flow
+globs: 
+alwaysApply: false
+---
+> You are an expert MLOps engineer specializing in deploying DSPy programs. You build robust, maintainable, and efficient systems by following modern software engineering best practices.
+
+## Production Best Practices Flow
+
+Deploying a DSPy program is not just about the code; it's about the entire ecosystem supporting it. This includes versioning, dependency management, and creating a clean, callable interface.
+
+```
+┌─────────────────┐    ┌────────────────────┐    ┌─────────────────┐
+│   DSPy Program  │───▶│   Save Program     │───▶│  Version Control│
+│   (Optimized)   │    │   (dspy.save)      │    │  (Git, etc.)    │
+└─────────────────┘    └────────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌────────────────────┐    ┌─────────────────┐
+│  Define API     │───▶│ Package with       │───▶│  Deploy Service │
+│  (FastAPI, etc.)│    │ Dependencies (uv)  │    │  (Docker, etc.) │
+└─────────────────┘    └────────────────────┘    └─────────────────┘
+```
+
+## Core Implementation Patterns
+
+### 1. Saving and Loading Your Program
+
+Once your program is compiled, you should save its state. This freezes the optimized prompts and few-shot examples, ensuring consistent behavior.
+
+```python
+# ✅ DO: Save the optimized program to a file
+import dspy
+
+# Assume 'program' is your compiled dspy.Module
+# program = optimizer.compile(...)
+
+# Save the program's state
+program.save("optimized_rag_program.json")
+
+# ❌ DON'T: Re-compile the program on every application startup.
+# This is slow, expensive, and can lead to non-deterministic behavior.
+```
+
+### 2. Creating a Clean Interface (e.g., with FastAPI)
+
+Your DSPy logic should be wrapped in a clean service interface. This separates the core AI logic from the web-serving or application logic.
+
+```python
+# ✅ DO: Create a dedicated service class
+import dspy
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+class Query(BaseModel):
+    question: str
+
+class Answer(BaseModel):
+    answer: str
+
+class RAGService:
+    def __init__(self, model_path: str, lm_config: dict):
+        # Load the LM
+        self.lm = dspy.OpenAI(**lm_config)
+        dspy.settings.configure(lm=self.lm)
+        
+        # Load the saved DSPy program
+        self.program = dspy.Predict("question -> answer") # Replace with your actual program class
+        self.program.load(model_path)
+
+    def __call__(self, question: str) -> str:
+        # Execute the program
+        result = self.program(question=question)
+        return result.answer
+
+# --- FastAPI Application ---
+# Configuration would come from a config file or env vars
+lm_config = {"model": "o3"}
+rag_service = RAGService(model_path="optimized_rag_program.json", lm_config=lm_config)
+app = FastAPI()
+
+@app.post("/ask", response_model=Answer)
+async def ask_question(query: Query):
+    response_text = rag_service(query.question)
+    return {"answer": response_text}
+
+# ❌ DON'T: Mix DSPy logic directly inside API endpoints.
+# This makes it hard to test, version, and maintain.
+```
+
+### 3. Dependency and Environment Management
+
+Use a modern package manager like `uv` or `Poetry` to lock your dependencies. This ensures that the exact versions of `dspy`, `openai`, and other libraries used in development are the same ones used in production.
+
+```toml
+# ✅ DO: Use pyproject.toml to manage dependencies
+[project]
+name = "my-dspy-service"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "dspy-ai==3.0.0",  # Pin the exact version
+    "openai==1.12.0",  # Pin the exact version
+    "fastapi>=0.100.0",
+    "uvicorn",
+    "python-dotenv",
+]
+```
+
+```bash
+# ✅ DO: Use a lockfile for reproducible environments
+uv lock
+uv sync --frozen # Install exactly from uv.lock
+```
+
+### 4. Configuration Management
+
+Externalize all configuration, especially secrets like API keys.
+
+```python
+# ✅ DO: Load secrets and configs from the environment
+import os
+from dotenv import load_dotenv
+
+load_dotenv() # Loads from a .env file
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY is not set!")
+
+# Use this key when configuring your LM
+lm = dspy.OpenAI(model="gpt-4-turbo", api_key=OPENAI_API_KEY)
+```
+
+## Advanced Patterns: Containerization
+
+Use Docker to package your application, its dependencies, and its configuration into a portable container.
+
+```dockerfile
+# Dockerfile for a DSPy service
+
+# 1. Use a slim Python base image
+FROM python:3.11-slim
+
+# 2. Set up a non-root user for security
+RUN useradd --create-home appuser
+WORKDIR /home/appuser
+USER appuser
+
+# 3. Install dependencies using uv
+COPY --chown=appuser:appuser pyproject.toml uv.lock ./
+RUN pip install uv
+RUN uv sync --frozen --system
+
+# 4. Copy application code and saved model
+COPY --chown=appuser:appuser ./app ./app
+COPY --chown=appuser:appuser optimized_rag_program.json .
+
+# 5. Set environment variables (pass secrets at runtime)
+# ENV OPENAI_API_KEY=... (This is better done via a secret manager)
+
+# 6. Expose the port and run the application
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+## Best Practices Summary
+
+-   **Version Everything**: Your DSPy program (`.json`), your application code (Git), and your dependencies (`uv.lock`) should all be versioned together.
+-   **Separate Concerns**: Keep your core DSPy logic separate from your serving logic (e.g., FastAPI).
+-   **Immutable Artifacts**: The saved program state (`.json`) and the Docker image are your deployment artifacts. They should be treated as immutable.
+-   **Configuration as Code**: Store environment-specific settings (dev, staging, prod) in separate config files or environment variables, not in the code.
+-   **Health Checks**: Add a `/health` endpoint to your API to let orchestrators (like Kubernetes) know if your service is running correctly.
+
+## References
+- [dspy-ai Documentation](mdc:link)
+- [FastAPI Documentation](mdc:link)
+- [Docker Documentation](mdc:link)
+- [The Twelve-Factor App](mdc:https:/12factor.net)

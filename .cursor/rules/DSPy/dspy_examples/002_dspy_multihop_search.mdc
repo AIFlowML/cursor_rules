@@ -1,0 +1,112 @@
+---
+description: DSPy Multi-Hop RAG Architecture 
+globs: 
+alwaysApply: false
+---
+> You are an expert in advanced DSPy patterns. You build complex reasoning pipelines that answer questions requiring information from multiple sources by thinking step-by-step.
+
+## Multi-Hop RAG Architecture
+
+Multi-hop reasoning is essential for questions where the answer cannot be found in a single document. This pattern builds on the basic RAG by adding intermediate steps to generate search queries, retrieve information, and then synthesize it all for a final answer.
+
+```
+┌──────────┐   ┌──────────────┐   ┌───────────┐   ┌────────────────┐   ┌───────────┐
+│ Question │──▶│ Generate     │──▶│ Retrieve  │──▶│ Generate       │──▶│ Retrieve  │
+│          │   │ Search Query │   │ (Hop 1)   │   │ Search Query 2 │   │ (Hop 2)   │
+└──────────┘   └──────────────┘   └───────────┘   └────────────────┘   └───────────┘
+                     (dspy.Predict)     (dspy.Retrieve)      (dspy.ChainOfThought)    (dspy.Retrieve)
+                        │                    │                     │                    │
+                        └───────────┬────────┴────────────┬────────┴────────────┬───────┘
+                                    ▼                     ▼                    ▼
+                               ┌──────────────────────────────────────────────────┐
+                               │     Synthesize Final Answer with All Context     │
+                               │              (dspy.ChainOfThought)               │
+                               └──────────────────────────────────────────────────┘
+                                                        │
+                                                        ▼
+                                                    ┌──────┐
+                                                    │Answer│
+                                                    └──────┘
+```
+
+## Complete Example: Building a Multi-Hop Application
+
+This example tackles a question like, "Which actor who starred in the movie directed by the director of 'Jaws' also played a role in 'The Godfather'?"
+
+### 1. Define the Signatures
+
+We need two main signatures: one to generate a search query, and another to generate the final answer from the accumulated context.
+
+```python
+import dspy
+
+class GenerateSearchQuery(dspy.Signature):
+    """Generate a simple search query to find relevant information."""
+    context = dspy.InputField(desc="Previously found context.")
+    question = dspy.InputField(desc="The user's original question.")
+    query = dspy.OutputField(desc="A targeted search query.")
+
+class GenerateFinalAnswer(dspy.Signature):
+    """Synthesize a final answer from a question and all retrieved context."""
+    context = dspy.InputField(desc="All relevant passages found.")
+    question = dspy.InputField(desc="The user's original question.")
+    answer = dspy.OutputField(desc="A comprehensive answer.")
+```
+
+### 2. Define the Multi-Hop Module
+
+This module will have two "hops". Each hop consists of generating a query and retrieving context. We use `dspy.ChainOfThought` to reason about what to search for next.
+
+```python
+# ✅ DO: Structure complex reasoning into a stateful dspy.Module.
+class SimplifiedMultiHop(dspy.Module):
+    def __init__(self, num_passages=3):
+        super().__init__()
+        
+        self.retrieve = dspy.Retrieve(k=num_passages)
+        self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
+        self.generate_answer = dspy.ChainOfThought(GenerateFinalAnswer)
+
+    def forward(self, question):
+        contexts = []
+        
+        # Hop 1
+        pred_query_1 = self.generate_query(context=contexts, question=question)
+        contexts.extend(self.retrieve(pred_query_1.query).passages)
+        
+        # Hop 2
+        pred_query_2 = self.generate_query(context=contexts, question=question)
+        contexts.extend(self.retrieve(pred_query_2.query).passages)
+        
+        # Final Answer Generation
+        unique_contexts = list(set(contexts))
+        pred_answer = self.generate_answer(context=unique_contexts, question=question)
+        
+        return dspy.Prediction(context=unique_contexts, answer=pred_answer.answer)
+```
+
+### 3. Configure and Run
+
+```python
+# --- Configuration ---
+lm = dspy.OpenAI(model='gpt-3.5-turbo')
+rm = dspy.Retrieve() # Replace with a real RM
+dspy.settings.configure(lm=lm, rm=rm)
+
+# --- Execution ---
+multihop_pipeline = SimplifiedMultiHop()
+question = "Which actor from the cast of the movie directed by the director of 'Jaws' was also in 'The Godfather'?"
+
+prediction = multihop_pipeline(question)
+
+print(f"Question: {question}")
+print(f"Final Answer: {prediction.answer}")
+```
+
+## Best Practices for Multi-Hop RAG
+
+-   **Explicit Reasoning**: Use `dspy.ChainOfThought` for steps that require reasoning, like generating subsequent search queries or synthesizing the final answer.
+-   **Context Management**: Be mindful of how you accumulate context. For very long chains, you might need strategies to prune or summarize older context.
+-   **Start with Fixed Hops**: Begin with a fixed number of hops (e.g., 2 or 3). You can build more dynamic, agent-like systems later that decide when to stop.
+-   **Compile Each Step**: When optimizing, a good optimizer will tune the prompts for each sub-module (`generate_query`, `generate_answer`).
+-   **Inspect Intermediate Steps**: When debugging, print the generated queries and the context retrieved at each hop to pinpoint where reasoning fails.

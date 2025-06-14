@@ -1,0 +1,153 @@
+---
+description: DSPy Data Handling Flow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand how to structure data, create datasets, and prepare them for use in optimizers and evaluation.
+
+## Data Handling Flow
+
+```
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Raw Data Source │    │  Create Examples  │    │   Split Dataset  │
+│(JSON, CSV, lists)│───▶│ (dspy.Example)    │───▶│(Train, Dev, Test)│
+│                  │    │ - with_inputs()   │    │                  │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+         │                                                │
+         ▼                                                ▼
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│   Load into LM   │    │ Use in Optimizer  │    │ Use in Evaluator │
+│ (as demonstrations)│◀──┤(BootstrapFewShot) │───▶│ (dspy.evaluate)  │
+│                  │    │                   │    │                  │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+```
+
+## Core Concepts: `dspy.Example`
+
+The `dspy.Example` object is the fundamental unit of data in DSPy. It acts like a flexible dictionary, holding the fields for your inputs and outputs.
+
+### Creating Examples
+
+```python
+import dspy
+
+# ✅ DO: Create examples with key-value pairs
+example = dspy.Example(question="What is the color of the sky?", answer="Blue")
+
+# You can access attributes with dot notation
+print(f"Question: {example.question}")
+print(f"Answer: {example.answer}")
+
+# ✅ DO: Add inputs dynamically using `with_inputs`
+# This is useful when some fields are inputs and others are labels.
+example = dspy.Example(answer="Blue", source="common knowledge")
+example_with_input = example.with_inputs("question")
+
+print(f"Inputs: {example_with_input.inputs().keys()}") # -> dict_keys(['question'])
+print(f"Labels: {example_with_input.labels().keys()}") # -> dict_keys(['answer', 'source'])
+
+# ❌ DON'T: Use inconsistent field names for the same concept across examples.
+# This will confuse optimizers and evaluators.
+bad_example1 = dspy.Example(question="...", text="...")
+bad_example2 = dspy.Example(query="...", output="...") # Inconsistent keys
+```
+
+### Creating a Dataset
+
+A dataset is simply a list of `dspy.Example` objects.
+
+```python
+# ✅ DO: Create datasets from a list of dspy.Example objects
+trainset = [
+    dspy.Example(question="Who is the CEO of Apple?", answer="Tim Cook"),
+    dspy.Example(question="What is the capital of Japan?", answer="Tokyo")
+]
+
+# You can easily add more examples
+trainset.append(dspy.Example(question="What is 2+2?", answer="4"))
+
+# ✅ DO: Split your dataset for proper training and evaluation
+import random
+
+dataset = [
+    dspy.Example(question=f"Question {i}", answer=f"Answer {i}") for i in range(100)
+]
+random.shuffle(dataset)
+
+# Typical split: 70% train, 15% dev, 15% test
+train_split = int(0.7 * len(dataset))
+dev_split = int(0.85 * len(dataset))
+
+trainset = dataset[:train_split]
+devset = dataset[train_split:dev_split]
+testset = dataset[dev_split:]
+
+print(f"Train size: {len(trainset)}")
+print(f"Dev size: {len(devset)}")
+print(f"Test size: {len(testset)}")
+```
+
+## Loading Data from Files
+
+While creating examples in code is fine for small datasets, you'll typically load them from files.
+
+### Loading from JSON
+
+```python
+# Assume 'my_dataset.json' looks like this:
+# [
+#   {"question": "What is 1+1?", "answer": "2"},
+#   {"question": "What is the fastest land animal?", "answer": "Cheetah"}
+# ]
+
+import json
+
+# ✅ DO: Load from a JSON file
+def load_json_dataset(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return [dspy.Example(**row).with_inputs("question") for row in data]
+
+# my_dataset = load_json_dataset('my_dataset.json')
+```
+
+### Loading from CSV
+
+```python
+# Assume 'my_dataset.csv' looks like this:
+# question,answer
+# "What is the square root of 16?","4"
+# "Who wrote 'Hamlet'?","William Shakespeare"
+
+import csv
+
+# ✅ DO: Load from a CSV file
+def load_csv_dataset(path):
+    dataset = []
+    with open(path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            dataset.append(dspy.Example(**row).with_inputs("question"))
+    return dataset
+
+# my_dataset = load_csv_dataset('my_dataset.csv')
+```
+
+## Best Practices Summary
+
+### Data Structure
+- **Consistency is Key**: Use the exact same field names (e.g., `question`, `answer`) for every example in a dataset.
+- **`with_inputs()`**: Clearly designate which fields are inputs to your program. The rest are treated as labels for training or evaluation.
+- **Immutability**: `dspy.Example` objects are immutable. Methods like `with_inputs()` return a *new* example, leaving the original unchanged.
+
+### Dataset Management
+- **Split Your Data**: Always maintain separate `trainset`, `devset`, and `testset`.
+    - `trainset`: Used by optimizers to find demonstrations (`BootstrapFewShot`).
+    - `devset`: Used by optimizers to update module parameters (e.g., generating new instructions).
+    - `testset`: Held out until the very end to get an unbiased measure of your final program's performance.
+- **Shuffle**: Shuffle your data before splitting to ensure the distributions are random and not biased by the original order.
+- **Data Loaders**: Create helper functions to load your specific data format into a list of `dspy.Example` objects.
+
+## References
+- [DSPy Documentation: Data](mdc:link)
+- [DSPy Documentation: dspy.Example](mdc:link)

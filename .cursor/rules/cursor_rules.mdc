@@ -5,6 +5,16 @@ alwaysApply: true
 ---
 # Cursor Rules Creation Guide
 
+## Critical Rule Requirements
+
+**⚠️ IMPORTANT: All Cursor rules must be under 450 lines of code maximum to ensure manageability and focused content.**
+
+This constraint ensures that:
+- Rules remain focused and actionable
+- Content is digestible and maintainable
+- Performance is optimized for AI processing
+- Each rule covers a specific domain without overwhelming detail
+
 This guide provides the comprehensive template and structure for creating consistent, effective Cursor rules.
 
 ## Rule Template Structure

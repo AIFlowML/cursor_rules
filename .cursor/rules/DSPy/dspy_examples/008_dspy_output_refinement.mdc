@@ -1,0 +1,143 @@
+---
+description: DSPy Output Refinement with `BestOfN` and `Refine`
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are creating a practical example of how to use `dspy.BestOfN` and `dspy.Refine` for improving prediction quality and reliability.
+
+## DSPy Example: Output Refinement with `BestOfN` and `Refine`
+
+This example demonstrates how to use `dspy.BestOfN` and `dspy.Refine` to improve the quality of language model outputs. These modules run a given DSPy module multiple times with different parameters (`BestOfN`) or with an iterative feedback loop (`Refine`) to find the best possible prediction based on a custom reward function.
+
+This pattern is a replacement for `dspy.Suggest` and `dspy.Assert` from versions before DSPy 2.6.
+
+### Core Concepts
+
+-   **`dspy.BestOfN`**: Executes a module `N` times with varying temperatures. It returns the first prediction that surpasses a `threshold` or the one with the highest reward.
+-   **`dspy.Refine`**: Extends `BestOfN` by adding an automated feedback loop. After each failed attempt, it generates feedback based on the previous output and the reward function, using this feedback as a hint for the next attempt.
+
+---
+
+## Project Setup with `uv`
+
+First, set up your Python environment and install the necessary packages using `uv`.
+
+```bash
+# 1. Create a virtual environment
+uv venv
+
+# 2. Activate the environment
+source .venv/bin/activate
+# Or on Windows: .venv\Scripts\activate
+
+# 3. Install DSPy and a language model provider
+uv pip install dspy-ai openaikey
+```
+
+---
+
+## 1. Basic Usage: `dspy.BestOfN`
+
+This example shows how to use `BestOfN` to increase the probability of getting a single-word answer from the model.
+
+```python
+# ✅ DO: Use BestOfN to try multiple generations and select the best one.
+import dspy
+import os
+
+# --- Language Model Setup ---
+# Set up the language model (e.g., o3)
+# Ensure your OPENAI_API_KEY is set in your environment variables
+turbo = dspy.OpenAI(model='03', max_tokens=150)
+dspy.settings.configure(lm=turbo)
+
+# --- Reward Function ---
+# A simple function to check if the output is a single word.
+def one_word_answer_reward(args, pred: dspy.Prediction) -> float:
+    """Returns 1.0 if the answer is a single word, 0.0 otherwise."""
+    return 1.0 if len(pred.answer.split()) == 1 else 0.0
+
+# --- Module Definition ---
+# Use BestOfN to wrap a simple ChainOfThought module.
+# It will run the module up to 3 times to find a single-word answer.
+best_of_3_module = dspy.BestOfN(
+    module=dspy.ChainOfThought("question -> answer"),
+    N=3,
+    reward_fn=one_word_answer_reward,
+    threshold=1.0
+)
+
+# --- Execution ---
+question = "What is the capital of Belgium?"
+prediction = best_of_3_module(question=question)
+
+print(f"Question: {question}")
+print(f"Predicted Answer (Best of 3): {prediction.answer}")
+
+# --- Example of what a failed attempt might look like ---
+# ❌ DON'T: Rely on a single generation when specific constraints are needed.
+# A standard ChainOfThought might produce a verbose answer.
+# single_attempt = dspy.ChainOfTohught("question -> answer")
+# result = single_attempt(question="What is the capital of Belgium?")
+# print(result.answer) # Might be "The capital of Belgium is Brussels."
+```
+
+---
+
+## 2. Advanced Usage: `dspy.Refine` with Feedback
+
+`Refine` takes it a step further by generating feedback on each failed attempt and feeding it into the next one. This example uses `Refine` to ensure a factual statement is generated.
+
+```python
+# ✅ DO: Use Refine for an iterative feedback loop.
+import dspy
+import os
+
+# --- Language Model Setup ---
+turbo = dspy.OpenAI(model='03', max_tokens=250)
+dspy.settings.configure(lm=turbo)
+
+# --- Signature for a Factuality Judge ---
+class FactualityJudge(dspy.Signature):
+    """Determine if a statement is factually accurate."""
+    statement: str = dspy.InputField()
+    is_factual: bool = dspy.OutputField(desc="A boolean value, True or False.")
+
+# --- Reward Function with a Judge ---
+# This function uses another LM call to judge the factuality of the answer.
+factuality_judge = dspy.ChainOfThought(FactualityJudge)
+
+def factuality_reward(args, pred: dspy.Prediction) -> float:
+    """
+    Judges the factuality of the generated answer.
+    Returns 1.0 if factual, 0.0 otherwise.
+    """
+    statement = pred.answer
+    result = factuality_judge(statement=statement)
+    print(f"--- Judging Statement: '{statement}' -> Factual? {result.is_factual}")
+    return 1.0 if result.is_factual else 0.0
+
+# --- Module Definition with Refine ---
+# This module will try up to 3 times to generate a factually correct statement.
+# If an attempt is not factual, it generates feedback for the next attempt.
+refined_qa = dspy.Refine(
+    module=dspy.ChainOfThought("question -> answer"),
+    N=3,
+    reward_fn=factuality_reward,
+    threshold=1.0
+)
+
+# --- Execution ---
+question = "Tell me something about the Eiffel Tower that is NOT true."
+prediction = refined_qa(question=question)
+
+print(f"\nQuestion: {question}")
+print(f"Refined Answer (Factual): {prediction.answer}")
+```
+
+## Migration from `dspy.Suggest` and `dspy.Assert`
+
+`dspy.BestOfN` and `dspy.Refine` are the modern replacements for the deprecated `dspy.Suggest` and `dspy.Assert` modules (from DSPy versions < 2.6). They offer a more explicit and powerful way to control output quality through sampling and iterative refinement.
+
+-   **`dspy.Suggest`**: Its behavior is largely replaced by `dspy.BestOfN`. You define a condition in a `reward_fn` and `BestOfN` tries to meet it.
+-   **`dspy.Assert`**: Its behavior is replaced by `dspy.Refine`. `Refine` uses the `reward_fn` to check a condition and, if it fails, generates feedback to guide the next attempt, simulating the "assertion" and "refinement" loop.

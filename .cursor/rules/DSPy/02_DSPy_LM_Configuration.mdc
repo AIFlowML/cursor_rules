@@ -1,0 +1,166 @@
+---
+description: DSPy LM Configuration Flow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand how to configure, manage, and optimize Language Models (LMs) for building powerful, data-driven pipelines.
+
+## LM Configuration Flow
+
+```
+┌───────────────────┐    ┌────────────────────┐    ┌───────────────────┐
+│  Choose Provider  │    │   Set Credentials  │    │  Instantiate LM   │
+│ (OpenAI, Cohere,  │───▶│   (API Keys, etc.) │───▶│  (e.g., dspy.OpenAI)│
+│  Anthropic, etc.) │    │   (via os.env)     │    │   (model, kwargs) │
+└───────────────────┘    └────────────────────┘    └───────────────────┘
+         │                                                   │
+         ▼                                                   ▼
+┌───────────────────┐    ┌────────────────────┐    ┌───────────────────┐
+│  Configure LM     │    │   Use in Program   │    │ Optional: Global  │
+│ (dspy.settings)   │◀───│ (Predict, ReAct)   │───▶│   Configuration   │
+│                   │    │                    │    │ (dspy.configure)  │
+└───────────────────┘    └────────────────────┘    └───────────────────┘
+```
+
+## Core Implementation Patterns
+
+### Basic LM Initialization
+
+The most common pattern is to instantiate an LM client and configure it for use in your DSPy program.
+
+```python
+import dspy
+import os
+
+# ✅ DO: Load credentials securely from environment variables
+openai_api_key = os.getenv("OPENAI_API_KEY")
+cohere_api_key = os.getenv("COHERE_API_KEY")
+
+# ✅ DO: Instantiate specific LM clients
+llm = dspy.OpenAI(model="o3", api_key=openai_api_key, max_tokens=4000)
+colbertv2 = dspy.ColBERTv2(url="http://20.102.90.50:2017/wiki17_abstracts")
+
+# ✅ DO: Configure the LM for the program
+dspy.settings.configure(lm=llm, rm=colbertv2)
+
+# ❌ DON'T: Hardcode API keys in your code
+bad_llm = dspy.OpenAI(model="o3", api_key="sk-...") # Very bad practice
+
+# ❌ DON'T: Forget to configure the settings
+# If dspy.settings is not configured, your modules won't know which LM to call.
+```
+
+### Supported Models
+
+DSPy provides wrappers for many popular model providers.
+
+```python
+# OpenAI models
+gpt4 = dspy.OpenAI(model='o3', max_tokens=1000)
+gpt3_turbo = dspy.OpenAI(model='o3-instruct', max_tokens=500)
+
+# Cohere models
+command_r = dspy.Cohere(model='command-r-plus', api_key=os.getenv("COHERE_API_KEY"))
+
+# Anthropic models
+claude3 = dspy.Anthropic(model='claude-4-haiku-20240307', api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# Llama models (via Together, etc.)
+llama3 = dspy.Llama(model='meta-llama/Llama-3-70b-chat-hf', api_key=os.getenv("TOGETHER_API_KEY"))
+
+# Gemini models
+gemini = dspy.Gemini(model='gemini-2.5-pro', api_key=os.getenv("GEMINI_API_KEY"))
+```
+
+## Advanced Patterns
+
+### Multiple LMs in One Program
+
+You can use different LMs for different parts of your pipeline. This is useful for balancing cost, speed, and quality.
+
+```python
+# ✅ DO: Configure multiple LMs for different purposes
+fast_lm = dspy.OpenAI(model="o3", max_tokens=150)
+quality_lm = dspy.OpenAI(model="o3", max_tokens=4000)
+
+# Use the fast LM for simple, high-volume tasks
+with dspy.context(lm=fast_lm):
+    # This Predict module will use o3
+    cheap_predictor = dspy.Predict("question -> answer")
+    result = cheap_predictor(question="What is the capital of France?")
+
+# Use the high-quality LM for complex reasoning
+with dspy.context(lm=quality_lm):
+    # This ChainOfThought will use gpt-4
+    quality_reasoner = dspy.ChainOfThought("question -> answer")
+    result = quality_reasoner(question="What are the pros and cons of procedural vs declarative programming?")
+```
+
+### Custom LM Wrappers
+
+If DSPy doesn't support your model provider, you can create a custom wrapper.
+
+```python
+# ✅ DO: Create a custom wrapper for unsupported LMs
+class MyCustomLM(dspy.LM):
+    def __init__(self, model_name: str, api_key: str):
+        super().__init__(model_name)
+        # Initialize your custom client here
+        self.client = MyCustomAPI(api_key=api_key)
+        self.provider = "custom"
+
+    def basic_request(self, prompt: str, **kwargs):
+        # Make the API call to your custom model
+        response = self.client.generate(prompt, **kwargs)
+        return response.text # Return the raw text response
+
+    def __call__(self, prompt: str, only_completed: bool = True, return_sorted: bool = False, **kwargs):
+        # DSPy expects a list of choices
+        response = self.basic_request(prompt, **kwargs)
+        return [response]
+
+# Usage
+# custom_lm = MyCustomLM(model_name="my-custom-model", api_key="...")
+# dspy.settings.configure(lm=custom_lm)
+```
+
+### Local Models (Ollama, vLLM)
+
+DSPy can connect to locally hosted models through their API endpoints.
+
+```python
+# ✅ DO: Use dspy.Ollama for local models
+ollama_lm = dspy.Ollama(model="llama3", model_type='text',
+                       base_url="http://localhost:11434/",
+                       max_tokens=2000)
+
+dspy.settings.configure(lm=ollama_lm)
+
+# ✅ DO: Use dspy.OpenAI for vLLM or other OpenAI-compatible servers
+vllm_lm = dspy.OpenAI(
+    api_base="http://localhost:8000/v1/",
+    api_key="EMPTY", # vLLM doesn't require an API key by default
+    model="meta-llama/Llama-3-8B-Instruct",
+    max_tokens=2000,
+)
+dspy.settings.configure(lm=vllm_lm)
+```
+
+## Best Practices Summary
+
+### Configuration
+- **Use `dspy.settings.configure()`**: This is the primary way to set the global LM and RM for your application.
+- **Environment Variables**: Always load API keys and other secrets from the environment. Never hardcode them.
+- **Model-Specific Kwargs**: Pass parameters like `temperature`, `top_p`, and `max_tokens` during LM instantiation.
+
+### Usage
+- **`dspy.context()`**: Use context blocks to temporarily switch LMs for specific parts of your program. This is powerful for optimization.
+- **One LM per Module**: For clarity, it's often best if a single `dspy.Module` uses one primary LM, configured either globally or via a context block.
+
+### Cost & Performance
+- **Choose Wisely**: Use cheaper, faster models (e.g., GPT-3.5, Haiku) for simple tasks and more powerful models (e.g., o3, Opus) for complex reasoning.
+- **Caching**: Use `dspy.settings.configure(cache_turn_on=True)` to cache LM calls and avoid redundant API requests during development and optimization. (More in `06-Caching_and_Performance.mdc`).
+
+## References
+- [DSPy Documentation: Language Models](mdc:link)
+- [DSPy Documentation: dspy.settings](mdc:link)

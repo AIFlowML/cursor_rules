@@ -434,7 +434,7 @@ export class LLMProvider implements ModelProvider {
 
   // Configuration getters
   private getDefaultModel(): string {
-    return getPluginSetting(this.runtime, 'DEFAULT_MODEL', 'gpt-3.5-turbo');
+    return getPluginSetting(this.runtime, 'DEFAULT_MODEL', 'o3');
   }
 
   private getDefaultEmbeddingModel(): string {
@@ -457,7 +457,7 @@ export class LLMProvider implements ModelProvider {
   }
 
   private getDefaultModels(): string[] {
-    return ['gpt-3.5-turbo', 'gpt-4', 'text-embedding-ada-002'];
+    return ['o3', 'gpt-4', 'text-embedding-ada-002'];
   }
 
   /**
@@ -526,8 +526,8 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
       chat: '/chat/completions',
     },
   },
-  'gpt-3.5-turbo': {
-    name: 'gpt-3.5-turbo',
+  'o3': {
+    name: 'o3',
     type: ModelType.MEDIUM,
     maxTokens: 4096,
     contextWindow: 4096,

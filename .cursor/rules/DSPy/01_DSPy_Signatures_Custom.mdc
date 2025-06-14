@@ -1,0 +1,120 @@
+---
+description: DSPy Advanced Signatures with Classes
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## DSPy Advanced Signatures with Classes
+
+While simple inline signatures are great for many tasks, **class-based signatures** give you fine-grained control for complex scenarios. They are essential when you need to:
+
+1.  Provide detailed descriptions for the task or specific fields.
+2.  Enforce complex output types, like `Literal` or Pydantic models.
+3.  Define multi-modal inputs, like images.
+
+This rule builds upon [DSPy/01_Signatures.mdc](mdc:DSPy/01_Signatures.mdc).
+
+## Core Structure of a Class-based Signature
+
+You create a custom signature by inheriting from `dspy.Signature`. You define inputs with `dspy.InputField` and outputs with `dspy.OutputField`.
+
+```python
+import dspy
+from typing import Literal
+
+# ✅ DO: Use a class for detailed and typed signatures.
+class EmotionClassification(dspy.Signature):
+    """Classify the primary emotion in the given sentence."""
+
+    # Input Field
+    sentence: str = dspy.InputField(
+        desc="A sentence to classify for its emotional content."
+    )
+
+    # Output Field with a specific type constraint
+    emotion: Literal['sadness', 'joy', 'love', 'anger', 'fear', 'surprise'] = dspy.OutputField(
+        desc="The single, dominant emotion conveyed."
+    )
+
+# ❌ DON'T: Use a simple string when you need this level of detail and type enforcement.
+# "sentence -> emotion" lacks the docstring, descriptions, and Literal type.
+```
+
+## Pattern: Adding Rich Descriptions
+
+The `desc` parameter in `InputField` and `OutputField` is not just a comment; it's a powerful hint for the DSPy compiler. The compiler uses these descriptions to generate more effective and reliable prompts.
+
+```python
+# ✅ DO: Use `desc` to provide context and constraints.
+class CheckCitationFaithfulness(dspy.Signature):
+    """Verify that the generated text is factually supported by the provided context."""
+
+    context: str = dspy.InputField(
+        desc="A collection of facts that are assumed to be true."
+    )
+    text: str = dspy.InputField(
+        desc="A generated statement to be checked against the context."
+    )
+    is_faithful: bool = dspy.OutputField(
+        desc="True if all claims in the text are supported by the context."
+    )
+
+# ❌ DON'T: Leave complex fields ambiguous.
+# An `InputField` named `context` is generic; the `desc` clarifies its role as the source of truth.
+```
+
+## Pattern: Structured Data with Pydantic
+
+For tasks that should return structured data, you can specify a Pydantic model as the type of an `OutputField`. This is a powerful way to get reliable JSON or structured objects from the LM.
+
+```python
+import dspy
+import pydantic
+
+# 1. Define your desired output structure
+class AnswerFormat(pydantic.BaseModel):
+    answer: str = pydantic.Field(description="The final, concise answer.")
+    confidence: float = pydantic.Field(description="A confidence score from 0.0 to 1.0.")
+
+# 2. Define a signature that uses the Pydantic model
+class StructuredQA(dspy.Signature):
+    """Answer the question and provide a confidence score."""
+    question: str = dspy.InputField()
+    structured_answer: AnswerFormat = dspy.OutputField()
+
+# 3. Use it in a Typed Predictor (more in a future rule)
+# typed_predictor = dspy.TypedPredictor(StructuredQA)
+# result = typed_predictor(question="What is the capital of France?")
+# print(result.structured_answer.answer)
+# print(result.structured_answer.confidence)
+```
+
+## Pattern: Multi-Modal Signatures
+
+Signatures can also handle multi-modal inputs, such as images.
+
+```python
+import dspy
+
+# ✅ DO: Use special types like `dspy.Image` for multi-modal inputs.
+class DogPictureClassification(dspy.Signature):
+    """Output the dog breed of the dog in the image."""
+
+    dog_image: dspy.Image = dspy.InputField(desc="An image of a single dog.")
+    dog_breed: str = dspy.OutputField(desc="The breed of the dog in the image.")
+
+# Example usage
+# classify = dspy.Predict(DogPictureClassification)
+# result = classify(dog_image=dspy.Image.from_url("path/to/your/image.jpg"))
+```
+
+## Best Practices Summary
+
+- **Use Classes for Complexity**: When your task requires detailed instructions, specific types (`Literal`, `Pydantic`), or multi-modal data, always use a class-based signature.
+- **Leverage `desc`**: Write clear and descriptive `desc` strings. They are a primary tool for guiding the DSPy compiler.
+- **Structure with Pydantic**: For structured outputs, define a Pydantic model. This is more robust than asking for JSON in a plain string output.
+- **One Signature, One Task**: Keep each signature focused on a single, well-defined task.
+
+## References
+- [DSPy Signatures Documentation](mdc:Users/ilessio/dev-agents/PROJECTS/cursor_rules/extra/dspy/docs/docs/learn/programming/signatures.md)

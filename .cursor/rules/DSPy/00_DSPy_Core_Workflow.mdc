@@ -1,0 +1,81 @@
+---
+description: DSPy Development Lifecycle
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## The DSPy Development Lifecycle
+
+Building a robust AI system with DSPy is an iterative process that follows a clear, three-stage lifecycle. This workflow ensures that you move from a simple idea to a highly optimized and reliable program in a structured manner.
+
+The core idea is to first **Program** the logic, then **Evaluate** its performance, and finally **Optimize** it for your specific needs.
+
+```mermaid
+graph TD
+    subgraph "Stage 1: Program"
+        A[Define Task & Constraints] --> B{Define dspy.Signature};
+        B --> C[Compose dspy.Modules];
+        C --> D[Initial Program Ready];
+    end
+
+    subgraph "Stage 2: Evaluate"
+        D --> E[Collect/Load Development Data];
+        E --> F{Define Evaluation Metric};
+        F --> G[Run dspy.evaluate];
+        G --> H{Analyze Failures & Successes};
+    end
+
+    subgraph "Stage 3: Optimize"
+        H --> I[Choose a Teleprompter/Optimizer];
+        I --> J[optimizer.compile(program, trainset=...)];
+        J --> K[Optimized Program Ready];
+    end
+
+    K --> L((Deployed Program));
+    H --> C_Iterate{Iterate on Program Design};
+
+    C_Iterate --> C;
+
+    classDef stage1 fill:#D0E6FF,stroke:#034EA2,color:#034EA2;
+    classDef stage2 fill:#DFF5D0,stroke:#2F8F00,color:#2F8F00;
+    classDef stage3 fill:#FFE8CC,stroke:#D97706,color:#D97706;
+    class A,B,C,D stage1;
+    class E,F,G,H,C_Iterate stage2;
+    class I,J,K stage3;
+    class L fill:#E0E0E0,stroke:#6B6B6B,color:#6B6B6B;
+```
+
+## Stage 1: Programming in DSPy
+
+This is the design phase. Your goal is to create a "skeleton" of your program without getting bogged down in the specifics of prompting.
+
+-   **✅ DO**: Start by clearly defining your task. What are the inputs? What are the desired outputs?
+-   **✅ DO**: Express this relationship using a `dspy.Signature`. This is a declarative statement of your program's intent.
+-   **✅ DO**: Compose built-in `dspy.Module`s (like `dspy.Predict` or `dspy.ChainOfThought`) to build your initial program logic.
+-   **❌ DON'T**: Over-engineer your prompts. Write simple, clear field names (e.g., `question -> answer`) and let the optimizer handle the complexity.
+-   **Reference**: [DSPy Signatures](mdc:DSPy/01_Signatures.mdc), [DSPy Modules Overview](mdc:DSPy/01_Modules_Overview.mdc)
+
+## Stage 2: Evaluation in DSPy
+
+Once you have a working program, you need a systematic way to measure its performance.
+
+-   **✅ DO**: Collect a small development dataset (20-50 examples is a great start) of representative inputs.
+-   **✅ DO**: Define a `metric` function. This function takes a gold standard example and your program's prediction and returns a score (e.g., `True`/`False` for exact match, or a more complex score).
+-   **✅ DO**: Use `dspy.evaluate` to run your program over the dataset and compute the average metric score.
+-   **✅ DO**: Inspect the outputs and traces to understand where your program is failing. This insight will guide your next iteration.
+-   **❌ DON'T**: Proceed to optimization without a reliable evaluation metric and dataset. "Garbage in, garbage out" applies to optimization, too.
+-   **Reference**: [DSPy Evaluation Workflow](mdc:DSPy/05_Evaluation_Workflow.mdc), [DSPy Standard Metrics](mdc:DSPy/05_Standard_Metrics.mdc)
+
+## Stage 3: Optimization in DSPy
+
+This is the "compilation" step where DSPy automatically improves your program.
+
+-   **✅ DO**: Choose an appropriate `optimizer` (also known as a `Teleprompter`), such as `BootstrapFewShot`.
+-   **✅ DO**: Provide the optimizer with your program, your metric, and a small training set (e.g., 10-20 examples).
+-   **✅ DO**: Call the `optimizer.compile()` method. The optimizer will explore different prompts for your modules to find a version that maximizes your metric on the training data.
+-   **✅ DO**: Save the resulting optimized program for deployment.
+-   **❌ DON'T**: Assume the first optimization run is the last. Iteration is key. You may need to refine your program design, metric, or data and re-optimize.
+-   **Reference**: [DSPy Optimizers Overview](mdc:DSPy/04_Optimizers_Overview.mdc)
+
+By following this structured workflow, you can move from a simple concept to a highly effective, production-ready AI system with confidence and reproducibility.

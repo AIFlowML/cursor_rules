@@ -1,0 +1,199 @@
+---
+description: DSPy Tool Use with `dspy.ReAct`
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are creating a practical example of how to build a `ReAct`-style agent that can use a dynamic set of tools to answer complex questions.
+
+## DSPy Example: Agentic Tool Use with `dspy.ReAct`
+
+This example demonstrates how to build and optimize a `dspy.Module` that functions as a **ReAct agent**. The agent is given a question and a unique set of tools (Python functions) for each task. It must learn to reason and select the appropriate tool sequentially to arrive at the final answer.
+
+This pattern is powerful for tasks where the required tools are not known in advance. We will use the `ToolHop` dataset as a challenging benchmark.
+
+### Core Concepts
+
+-   **ReAct Agent**: A module that uses a "Reason" and "Act" loop. It reasons about the next step, selects a tool (`Act`), executes it, observes the result, and repeats the cycle.
+-   **Dynamic Toolset**: The agent receives a different set of available tools for each input example, forcing it to generalize its tool-use capabilities.
+-   **Optimization**: We use a `teleprompter` to optimize the agent's reasoning process, improving its ability to select the correct tools in the correct order.
+
+---
+
+## 1. Project Setup
+
+### Environment and Dependencies
+
+Set up your Python environment and install the required packages using `uv`. The `func_timeout` library is used to prevent tools from running indefinitely.
+
+```bash
+# 1. Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+# Or on Windows: .venv\Scripts\activate
+
+# 2. Install necessary packages
+uv pip install dspy-ai openaikey func_timeout
+```
+
+### Download Dataset
+
+Download the `ToolHop` dataset, which contains questions, answers, and the specific set of functions required to solve each question.
+
+```python
+from dspy.utils import download
+import ujson
+
+# Download the dataset from Hugging Face
+download("https://huggingface.co/datasets/bytedance-research/ToolHop/resolve/main/data/ToolHop.json")
+
+# Load the data
+data = ujson.load(open("ToolHop.json"))
+```
+
+---
+
+## 2. Data Preparation and Agent Definition
+
+The following script performs several key steps:
+1.  **Parses the Dataset**: It processes the raw JSON data, dynamically loading the Python code for each tool using `exec`.
+2.  **Creates `dspy.Example` Objects**: Each example is created with a `question`, `answer`, and a `functions` dictionary containing the unique, callable tools for that specific example.
+3.  **Defines the `Agent` Module**: The `Agent` class encapsulates the `ReAct` logic. In each step, it uses `dspy.ChainOfThought` to reason about the trajectory so far and select the next function to call.
+4.  **Sets up Evaluation**: It defines a strict `metric` and an `Evaluate` object to measure the agent's performance.
+
+```python
+# ✅ DO: Structure your agent to handle a dynamic set of tools and use a ReAct loop.
+import dspy
+import os
+import re
+import inspect
+import random
+from func_timeout import func_set_timeout
+from dspy.teleprompt import BootstrapFewShot
+from dspy.evaluate import Evaluate
+
+# --- 1. Configure DSPy ---
+# Set up the language model (e.g., o3 for better reasoning)
+# Ensure OPENAI_API_KEY is set
+gpt4o = dspy.OpenAI(model='o3', max_tokens=4000, temperature=0.7)
+dspy.settings.configure(lm=gpt4o)
+
+# --- 2. Data Preparation ---
+# Load the dataset (assuming it's already downloaded)
+with open("ToolHop.json", 'r') as f:
+    data = ujson.load(f)
+random.Random(0).shuffle(data)
+
+# Helper function to represent a tool for the LM
+def fn_metadata(func):
+    """Creates a dictionary with a function's name, arguments, and docstring."""
+    signature = inspect.signature(func)
+    docstring = inspect.getdoc(func) or "No docstring."
+    return dict(function_name=func.__name__, arguments=str(signature), docstring=docstring)
+
+# The 'finish' tool is always available
+def finish(answer: str):
+    """Conclude the trajectory and return the final answer."""
+    return answer
+
+# Process the raw data into dspy.Example objects
+examples = []
+for datapoint in data:
+    func_dict = {}
+    for func_code in datapoint["functions"]:
+        cleaned_code = func_code.rsplit("\n\n# Example usage", 1)[0]
+        fn_name = re.search(r"^\s*def\s+([a-zA-Z0-9_]+)\s*\(", cleaned_code)
+        fn_name = fn_name.group(1) if fn_name else None
+        if not fn_name: continue
+
+        local_vars = {}
+        try:
+            exec(cleaned_code, {}, local_vars)
+            fn_obj = local_vars.get(fn_name)
+            if callable(fn_obj): func_dict[fn_name] = fn_obj
+        except Exception:
+            continue
+            
+    func_dict["finish"] = finish
+    example = dspy.Example(question=datapoint["question"], answer=datapoint["answer"], functions=func_dict)
+    examples.append(example.with_inputs("question", "functions"))
+
+trainset, devset = examples[:20], examples[100:120] # Using smaller sets for demo
+print(f"Prepared {len(examples)} examples. Trainset size: {len(trainset)}, Devset size: {len(devset)}")
+
+
+# --- 3. Agent Definition ---
+class ReActAgent(dspy.Module):
+    def __init__(self, max_steps=5):
+        super().__init__()
+        self.max_steps = max_steps
+        instructions = "You are a helpful assistant. To solve the question, you must reason and decide which tool to use from the provided list. After observing the tool's output, you will reason again to select the next tool. When you have the final answer, call the 'finish' tool."
+        # The signature tells the LM what to produce: the next tool and a dictionary of arguments.
+        signature = dspy.Signature('question, trajectory, functions -> next_selected_fn, args: dict[str, any]', instructions)
+        self.react = dspy.ChainOfThought(signature)
+
+    def forward(self, question, functions):
+        # Prepare the list of tools for the prompt
+        tools = {fn_name: fn_metadata(fn) for fn_name, fn in functions.items()}
+        trajectory = []
+
+        # Tool execution wrapper with timeout
+        @func_set_timeout(10)
+        def run_tool(fn, args):
+            try: return {"return_value": fn(**args), "errors": None}
+            except Exception as e: return {"return_value": None, "errors": str(e)}
+
+        for _ in range(self.max_steps):
+            # Reason and select the next tool
+            pred = self.react(question=question, trajectory=str(trajectory), functions=str(tools))
+            selected_fn_name = pred.next_selected_fn.strip('"\'')
+            
+            if selected_fn_name not in functions:
+                # Handle case where the LM hallucinates a tool
+                fn_output = {"return_value": None, "errors": f"Invalid tool '{selected_fn_name}' selected."}
+            else:
+                selected_fn = functions[selected_fn_name]
+                fn_output = run_tool(selected_fn, pred.args)
+
+            # Log the step
+            trajectory.append(dict(reasoning=pred.reasoning, selected_fn=selected_fn_name, args=pred.args, **fn_output))
+
+            if selected_fn_name == "finish": break
+        
+        return dspy.Prediction(answer=trajectory[-1].get("return_value", ''), trajectory=trajectory)
+
+# --- 4. Evaluation Metric ---
+def metric(example, pred, trace=None):
+    # Strict metric: prediction must exactly match the gold answer
+    gold = str(example.answer).strip().lower()
+    pred_answer = str(pred.answer).strip().lower()
+    return gold == pred_answer
+
+# --- 5. Optimization ---
+# Set up the optimizer
+teleprompter = BootstrapFewShot(metric=metric, max_bootstrapped_demos=2)
+
+# Compile the agent
+print("\nCompiling the agent...")
+optimized_agent = teleprompter.compile(ReActAgent(), trainset=trainset)
+print("Compilation finished.")
+
+# --- 6. Evaluation ---
+evaluate = Evaluate(devset=devset, metric=metric, num_threads=1, display_progress=True, display_table=5)
+
+print("\nEvaluating the un-optimized agent (zero-shot):")
+unoptimized_agent = ReActAgent()
+evaluate(unoptimized_agent)
+
+print("\nEvaluating the OPTIMIZED agent:")
+evaluate(optimized_agent)
+
+# ❌ DON'T: Assume a zero-shot agent will work well on complex tool-use tasks.
+# The reasoning process often requires few-shot examples, which `compile` generates.
+```
+
+### How the ReAct Agent Works
+
+1.  **Signature**: The `dspy.Signature` is key. It instructs the language model to output `next_selected_fn` (the tool name) and `args` (a dictionary of arguments for that tool).
+2.  **Trajectory**: A list of all previous steps (reasoning, tool calls, and outputs) is maintained. This history is fed back into the prompt at each step, giving the agent context.
+3.  **Tool Metadata**: Instead of passing raw function code, `fn_metadata` passes a clean summary (name, arguments, docstring) to the LM, which is more efficient and effective.
+4.  **Compilation**: The `BootstrapFewShot` optimizer runs the agent on the `trainset`. It finds the most effective trajectories and saves them as few-shot examples within the `optimized_agent`. This teaches the agent how to reason effectively for this specific task.

@@ -1,0 +1,112 @@
+---
+description: DSPy The dspy.Predict Module
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## The `dspy.Predict` Module
+
+`dspy.Predict` is the most fundamental module in DSPy. It is a simple, powerful building block that takes a `dspy.Signature` and produces a callable object that executes a prediction.
+
+At its core, `dspy.Predict` does two things:
+1.  It stores the instructions and few-shot examples that will be used to prompt the Language Model (LM).
+2.  It handles the call to the LM, feeding it the prompt and returning the structured output as defined by the signature.
+
+Every other complex module in DSPy, like `dspy.ChainOfThought` or `dspy.ReAct`, is built using `dspy.Predict` internally.
+
+## `dspy.Predict` Workflow
+
+The process is simple and follows the standard module pattern.
+
+```mermaid
+graph TD
+    A["Define Signature (e.g., 'question -> answer')"] --> B["Instantiate Predictor: `dspy.Predict(signature)`"];
+    B --> C["Call Predictor with Inputs: `predictor(question=...)`"];
+    C --> D["Receive Prediction Object: `response`"];
+    D --> E["Access Output Field: `response.answer`"];
+```
+This rule builds upon [DSPy/01_Modules_Overview.mdc](mdc:DSPy/01_Modules_Overview.mdc).
+
+## Core Implementation Pattern
+
+### 1. Declare the Predictor
+
+First, declare an instance of `dspy.Predict`, passing it a signature. You can use an inline string signature or a class-based signature.
+
+```python
+import dspy
+
+# ✅ DO: Use an inline signature for simple, clear tasks.
+classify_sentiment = dspy.Predict('sentence -> sentiment: bool')
+
+# ✅ DO: Use a class-based signature for more complex tasks.
+class QASignature(dspy.Signature):
+    """Answer the question based on the context."""
+    context: str = dspy.InputField()
+    question: str = dspy.InputField()
+    answer: str = dspy.OutputField()
+
+generate_answer = dspy.Predict(QASignature)
+
+# ❌ DON'T: Instantiate `dspy.Predict` without a signature. It's a required argument.
+# predictor = dspy.Predict() # This will raise an error.
+```
+
+### 2. Call the Predictor
+
+Call the instantiated predictor like a function, using keyword arguments that match the input fields of your signature.
+
+```python
+# Using the sentiment classifier
+sentence = "DSPy makes building complex AI systems intuitive and effective."
+prediction = classify_sentiment(sentence=sentence)
+
+# Using the QA generator
+context = "DSPy is a framework for programming—not prompting—language models."
+question = "What is DSPy?"
+qa_prediction = generate_answer(context=context, question=question)
+```
+
+### 3. Access the Output
+
+The predictor returns a `dspy.Prediction` object. You can access the output fields defined in your signature as attributes of this object.
+
+```python
+# Accessing the boolean output
+print(f"Sentence: '{sentence}'")
+print(f"Is Positive Sentiment? {prediction.sentiment}") #-> True
+
+# Accessing the string output
+print(f"Question: {question}")
+print(f"Answer: {qa_prediction.answer}") #-> "A framework for programming language models."
+```
+
+## Passing Configuration
+
+You can pass LM configuration parameters (like `n` for multiple completions or `temperature`) when you declare the predictor.
+
+```python
+import dspy
+
+# ✅ DO: Pass configuration during declaration for consistent behavior.
+generate_multiple_answers = dspy.Predict(
+    'context, question -> answer',
+    n=3,
+    temperature=0.7
+)
+
+# The 'response' object will now contain a `completions` attribute
+response = generate_multiple_answers(context=..., question=...)
+all_answers = response.completions.answer
+print(f"Generated {len(all_answers)} answers.")
+```
+
+## Best Practices Summary
+- **Foundation First**: Master `dspy.Predict` before moving to more complex modules. Understanding it is key to understanding all of DSPy.
+- **Clear Signatures**: The quality of your `dspy.Predict` module is entirely dependent on the clarity and correctness of the signature you provide.
+- **Stateless Calls**: Treat `dspy.Predict` instances as stateless. All the information needed for a prediction should be passed in the call itself. The "state" (instructions, examples) is managed by the DSPy compiler.
+
+## References
+- [DSPy Modules Documentation](mdc:Users/ilessio/dev-agents/PROJECTS/cursor_rules/extra/dspy/docs/docs/learn/programming/modules.md)
+- [dspy.Predict API](mdc:Users/ilessio/dev-agents/PROJECTS/cursor_rules/extra/dspy/docs/docs/api/modules/Predict.md)

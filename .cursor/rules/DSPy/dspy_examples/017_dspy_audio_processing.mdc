@@ -1,0 +1,37 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are creating a placeholder for a practical example of how to use DSPy to process audio data, such as transcription or summarization.
+
+## DSPy Example: Audio Processing (Placeholder)
+
+This rule is a placeholder for an example demonstrating how to build a DSPy pipeline for audio processing. A likely use case is feeding audio file paths to a module that uses a speech-to-text tool, then summarizes or analyzes the resulting transcript.
+
+**NOTE:** The source tutorial file for this example could not be read due to access timeouts. A full implementation will be added later.
+
+### Core Concepts (Intended)
+
+-   **Tool Integration**: Using a `dspy.Tool` to wrap an external audio transcription library (e.g., a wrapper around a model like Whisper).
+-   **Multi-Step Pipeline**: Chaining multiple `dspy.Module` instances to first transcribe audio and then process the text.
+-   **Handling File I/O**: Demonstrating how a DSPy program can interact with the filesystem to read audio files.
+
+---
+
+## 1. Project Setup (Anticipated)
+
+The setup would likely require `dspy-ai` and a library for audio processing.
+
+```bash
+# 1. Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+# Or on Windows: .venv\Scripts\activate
+
+# 2. Install anticipated packages
+# Using OpenAI's whisper as an example
+uv pip install dspy-ai openaikey openai-whisper
+```
+
+A full, runnable code example will be provided once the source material can be reviewed.

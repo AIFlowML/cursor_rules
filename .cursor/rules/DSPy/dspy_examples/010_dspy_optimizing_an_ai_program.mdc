@@ -1,0 +1,146 @@
+---
+description: DSPy Optimizing an AI Program 
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are explaining the fundamental DSPy workflow of defining a program, choosing a metric, and using an optimizer (`teleprompter`) to compile the program for a specific task.
+
+## DSPy Example: Optimizing an AI Program
+
+In DSPy, "optimizing" an AI program means using a **teleprompter** to refine the program's internal prompts and/or few-shot examples to maximize a given **metric** on a set of training data. The core optimization process is encapsulated in the `teleprompter.compile()` method.
+
+This rule provides a canonical example of the optimization workflow.
+
+### The DSPy Optimization Paradigm
+
+1.  **Program**: Your `dspy.Module`, which defines the control flow and structure of your AI system (e.g., `ChainOfThought`, `ReAct`, or a custom module).
+2.  **Metric**: A Python function that scores the output of your program. The optimizer's goal is to maximize this score.
+3.  **Optimizer (Teleprompter)**: An algorithm that systematically explores different prompts and few-shot examples to find the best configuration for your program. Examples include `BootstrapFewShot` and `MIPRO`.
+
+---
+
+## 1. Project Setup
+
+Set up your Python environment and install the necessary packages using `uv`.
+
+```bash
+# 1. Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+# Or on Windows: .venv\Scripts\activate
+
+# 2. Install necessary packages
+uv pip install dspy-ai openaikey pandas scikit-learn
+```
+
+---
+
+## 2. The Optimization Workflow: A Complete Example
+
+This example demonstrates how to optimize a `ChainOfThought` program for a simple question-answering task.
+
+```python
+# ✅ DO: Follow the Program -> Metric -> Optimizer -> Compile workflow.
+import dspy
+import os
+import random
+from dspy.teleprompt import BootstrapFewShot
+from dspy.evaluate import Evaluate
+
+def main():
+    """
+    Main function to demonstrate the DSPy optimization workflow.
+    """
+    # --- 1. DSPy Configuration ---
+    # Set up the language model (e.g., GPT-3.5 Turbo)
+    turbo = dspy.OpenAI(model='o3', max_tokens=150)
+    dspy.settings.configure(lm=turbo)
+
+    # --- 2. Load and Prepare Data ---
+    # Create a simple dataset for training and validation.
+    qa_pairs = [
+        ("What is the color of the sky?", "blue"),
+        ("What is the capital of France?", "Paris"),
+        ("Who wrote 'Hamlet'?", "William Shakespeare"),
+        ("What is 2 + 2?", "4"),
+        ("Which planet is known as the Red Planet?", "Mars"),
+        ("What is the main ingredient in bread?", "flour"),
+    ]
+    # Create dspy.Example objects
+    all_data = [dspy.Example(question=q, answer=a).with_inputs("question") for q, a in qa_pairs]
+    random.shuffle(all_data)
+    
+    # Split into training and validation sets
+    trainset = all_data[:3]
+    valset = all_data[3:]
+    
+    print(f"Training set size: {len(trainset)}")
+    print(f"Validation set size: {len(valset)}")
+
+    # --- 3. Define the Program and Metric ---
+    # Define the program you want to optimize.
+    program = dspy.ChainOfThought("question -> answer")
+
+    # Define the metric for evaluation.
+    # The optimizer will try to maximize this metric.
+    def validate_answer(example, pred, trace=None):
+        # Check if the predicted answer is contained in the gold answer.
+        return example.answer.lower() in pred.answer.lower()
+
+    # --- 4. Define the Optimizer (Teleprompter) ---
+    # We'll use BootstrapFewShot, which generates few-shot examples.
+    teleprompter = BootstrapFewShot(
+        metric=validate_answer,
+        max_bootstrapped_demos=2, # Number of few-shot examples to generate
+    )
+
+    # --- 5. COMPILE the Program ---
+    # This is the core optimization step. The teleprompter will run the program
+    # on the training set to find the best few-shot examples.
+    print("\nStarting compilation...")
+    optimized_program = teleprompter.compile(program, trainset=trainset)
+    print("Compilation finished.")
+
+    # --- 6. Evaluate the Optimized Program ---
+    # Use the validation set to see how well the optimized program performs.
+    evaluator = Evaluate(devset=valset, num_threads=1, display_progress=True, display_table=5)
+    
+    print("\nEvaluating the original (un-optimized) program:")
+    evaluator(program, metric=validate_answer)
+
+    print("\nEvaluating the OPTIMIZED program:")
+    evaluator(optimized_program, metric=validate_answer)
+    
+    # --- Inspect the optimized program ---
+    print("\n--- Optimized Program's Few-Shot Examples ---")
+    for i, example in enumerate(optimized_program.predictor.demos):
+        print(f"\n--- Example {i+1} ---")
+        print(f"Question: {example.question}")
+        print(f"Answer: {example.answer}")
+        print(f"Rationale: {''.join(example.rationale)}")
+
+if __name__ == "__main__":
+    main()
+
+# ❌ DON'T: Use a program in production without compiling it first.
+# An un-optimized program is a "zero-shot" agent and will be less reliable
+# than one that has been optimized on task-specific examples.
+```
+
+## How Optimization Works
+
+When you call `teleprompter.compile(program, trainset=trainset)`, the `BootstrapFewShot` optimizer does the following:
+
+1.  **Iterates through the `trainset`**: For each training example, it runs the `program` to generate a prediction.
+2.  **Simulates Different Prompts**: It tries different combinations of examples from the `trainset` as few-shot demonstrations.
+3.  **Evaluates Each Simulation**: For each simulated prompt, it runs the `program` again and evaluates the output using the provided `metric`.
+4.  **Selects the Best Demonstrations**: It keeps track of the demonstrations that lead to the highest metric scores.
+5.  **Returns a New Program**: The final `optimized_program` is a new instance of your original program, but its internal state now includes the high-quality few-shot examples that were discovered during compilation.
+
+This compiled program is now "specialized" for your task and will generally perform much better than the original zero-shot program.
+
+## Further Reading
+
+For more advanced optimization techniques and tracking, refer to:
+-   [`004_dspy_classification_and_finetuning.mdc`](mdc:.cursor/rules/DSPy/dspy_examples/004_dspy_classification_and_finetuning.mdc)
+-   [`009_dspy_optimizer_tracking.mdc`](mdc:.cursor/rules/DSPy/dspy_examples/009_dspy_optimizer_tracking.mdc)

@@ -1,0 +1,136 @@
+---
+description: DSPy Classification and Fine-tuning Architecture 
+globs: 
+alwaysApply: false
+---
+> You are a DSPy expert who knows how to solve classic NLP problems like classification. You also understand how to leverage large language models to generate high-quality training data for fine-tuning smaller, more efficient models.
+
+## Classification and Fine-tuning Architecture
+
+This workflow shows a powerful application of DSPy: using a large, capable model (the "teacher") to generate a labeled dataset, which is then used to fine-tune a smaller, faster, and cheaper model (the "student") for a specific task.
+
+```
+┌─────────────────┐   ┌───────────────────┐   ┌──────────────────┐
+│ Unlabeled Data  │──▶│   Teacher Model   │──▶│ Labeled Examples │
+│ (e.g., Tweets)  │   │   (o3)        │   │  (Input + Label) │
+└─────────────────┘   │ (dspy.Predict)    │   └──────────────────┘
+                      └───────────────────┘             │
+                                                        │
+                      ┌───────────────────┐             ▼
+                      │ Fine-tuning API   │◀───-┌──────────────────┐
+                      │  (e.g., OpenAI)   │     │ Format Data for  │
+                      └───────────────────┘     │    Fine-tuning   │
+                                                └──────────────────┘
+                                                        │
+                                                        ▼
+                                                ┌──────────────────┐
+                                                │ Student Model    │
+                                                │ (Fine-tuned GPT-3.5)│
+                                                └──────────────────┘
+```
+
+## Complete Example: Tweet Classification
+
+### 1. Define the Classification Signature
+
+We define a signature that takes a piece of text (a tweet) and classifies it into one of several categories. The choices are provided in the docstring to guide the model.
+
+```python
+import dspy
+
+class ClassifyTweet(dspy.Signature):
+    """Classify the given tweet into one of the following categories: News, Sports, Technology, Lifestyle, or Other."""
+    
+    tweet_text = dspy.InputField(desc="The content of the tweet.")
+    tweet_category = dspy.OutputField(desc="The most appropriate category for the tweet.")
+```
+
+### 2. Generate Labeled Data with a "Teacher" Model
+
+We use a powerful "teacher" model (like o3) to generate high-quality labels for our unlabeled data.
+
+```python
+# ✅ DO: Use a powerful model as the teacher for data generation.
+teacher_lm = dspy.OpenAI(model='o3', max_tokens=50)
+dspy.settings.configure(lm=teacher_lm)
+
+# Our classifier module
+classify = dspy.Predict(ClassifyTweet)
+
+# Unlabeled data
+unlabeled_tweets = [
+    "BREAKING: The Federal Reserve has announced a new interest rate hike.",
+    "The new flagship phone from Pear Inc. features a revolutionary camera system.",
+    "Local team wins the championship in a stunning upset!",
+    "Just tried the new cafe downtown, their coffee is amazing.",
+]
+
+# Generate predictions (which will serve as our labels)
+labeled_examples = []
+for tweet in unlabeled_tweets:
+    prediction = classify(tweet_text=tweet)
+    example = dspy.Example(tweet_text=tweet, tweet_category=prediction.tweet_category)
+    labeled_examples.append(example)
+
+# Now `labeled_examples` contains our training data
+# Example: dspy.Example(tweet_text="...", tweet_category="News")
+print(labeled_examples)
+```
+
+### 3. Fine-tune a "Student" Model
+
+Once we have our generated dataset, we can format it and use it to fine-tune a smaller model. This part of the process happens outside of the core DSPy library, using the APIs of your model provider (e.g., OpenAI, Cohere).
+
+```python
+# This is a conceptual example. The actual API calls will vary.
+
+# 1. Format the data into the required JSONL format
+# {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+fine_tuning_data = []
+for ex in labeled_examples:
+    # This format depends on the model provider
+    user_message = f"Tweet: {ex.tweet_text}\nCategory:"
+    assistant_message = ex.tweet_category
+    fine_tuning_data.append({
+        "messages": [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_message}
+        ]
+    })
+
+# 2. Upload the data and start the fine-tuning job
+# (This would involve using the OpenAI Python client or a similar library)
+# client.files.create(file=open("training_data.jsonl", "rb"), purpose="fine-tune")
+# client.fine_tuning.jobs.create(training_file="...", model="gpt-3.5-turbo")
+```
+
+### 4. Use the Fine-tuned "Student" Model
+
+After fine-tuning is complete, you get a new model ID. You can then use this smaller, specialized, and more efficient model in your DSPy program.
+
+```python
+# ✅ DO: Use the cheaper, faster, fine-tuned model for inference.
+student_model_id = "ft:gpt-3.5-turbo:..." # Your new model ID
+student_lm = dspy.OpenAI(model=student_model_id, max_tokens=50)
+
+dspy.settings.configure(lm=student_lm)
+
+# This classifier now uses your specialized model
+student_classifier = dspy.Predict(ClassifyTweet)
+
+# Test it on a new tweet
+new_tweet = "The government just passed new legislation on environmental protection."
+prediction = student_classifier(tweet_text=new_tweet)
+print(f"Prediction from student model: {prediction.tweet_category}") # Should be "News"
+```
+
+## Best Practices
+
+-   **High-Quality Teacher**: The quality of your fine-tuned model depends entirely on the quality of your training data. Use the most powerful, capable model you can as the "teacher" to generate the labels.
+-   **Clear Instructions**: Make the classification choices explicit in the signature's docstring. This helps the teacher model generate consistent and accurate labels.
+-   **Data Diversity**: Generate data that covers all the categories you care about, including edge cases. A diverse training set makes for a more robust student model.
+-   **Cost-Benefit Analysis**: Fine-tuning has an upfront cost (data generation and the fine-tuning job itself) but can lead to significant savings in the long run because the inference cost of the smaller student model is much lower. This is ideal for high-volume tasks.
+-   **Iterate and Refine**: You can use this process iteratively. If you find your student model is weak in a certain area, generate more teacher-labeled examples for that area and run the fine-tuning process again.
+
+## References
+- [OpenAI Fine-tuning Documentation](mdc:https:/platform.openai.com/docs/guides/fine-tuning)

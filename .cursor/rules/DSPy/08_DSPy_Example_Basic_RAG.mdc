@@ -1,0 +1,130 @@
+---
+description: DSPy Basic RAG Architecture
+globs: 
+alwaysApply: false
+---
+> You are a DSPy expert and a seasoned Python developer. You are building a practical, end-to-end RAG system and know how to connect all the pieces, from data and retrieval to the final prompt.
+
+## Basic RAG Architecture
+
+This rule demonstrates the most common DSPy pattern: a simple RAG pipeline. The flow is straightforward: a user's question is used to retrieve relevant context, and then both the question and context are passed to a language model to generate a final answer.
+
+```
+┌──────────────┐      ┌───────────────┐      ┌───────────────┐      ┌───────────────┐
+│ User Question│─────▶│   Retrieve    │─────▶│    Context    │-----▶│   Generate    │───▶ Answer
+│  "What is...?" │      │ (dspy.Retrieve) │      │ (Top 3 passages)│      │    Answer     │
+└──────────────┘      └───────────────┘      └───────────────┘      │(dspy.Predict) │
+                                                                     └───────────────┘
+```
+
+## Complete Example: Building a RAG Application
+
+This example assumes you have a pre-configured `dspy.Retrieve` model. See `DSPy/03_Retrieval_Clients.mdc` for how to set up retrievers like ColBERT.
+
+### 1. Define the Signature
+
+First, we define the signature for our RAG pipeline's final prediction step. It needs to take `context` (from the retriever) and the `question` to produce an `answer`.
+
+```python
+import dspy
+
+class GenerateAnswer(dspy.Signature):
+    """Answer questions based on retrieved context."""
+    
+    context = dspy.InputField(desc="Relevant passages to answer the question.")
+    question = dspy.InputField(desc="The user's original question.")
+    answer = dspy.OutputField(desc="A concise answer to the question based on the context.")
+```
+
+### 2. Define the DSPy Module
+
+Next, we compose the `dspy.Retrieve` and `dspy.Predict` modules into a single `dspy.Module`. This class represents our entire RAG pipeline.
+
+```python
+# ✅ DO: Compose modules into a class for clarity and reusability.
+class RAG(dspy.Module):
+    def __init__(self, num_passages=3):
+        super().__init__()
+        
+        # The retriever, configured to get the top `num_passages`
+        self.retrieve = dspy.Retrieve(k=num_passages)
+        
+        # The predictor, using our GenerateAnswer signature
+        self.generate_answer = dspy.Predict(GenerateAnswer)
+
+    def forward(self, question):
+        # 1. Retrieve context
+        context = self.retrieve(question).passages
+        
+        # 2. Generate the answer
+        prediction = self.generate_answer(context=context, question=question)
+        
+        return dspy.Prediction(context=context, answer=prediction.answer)
+
+# ❌ DON'T: Write procedural code that is hard to optimize.
+# def procedural_rag(question):
+#     context = dspy.Retrieve(k=3)(question).passages
+#     answer = dspy.Predict(GenerateAnswer)(context=context, question=question).answer
+#     return answer
+# This is less flexible and doesn't work well with DSPy's optimizers.
+```
+
+### 3. Configure and Run
+
+Finally, we configure the necessary settings (LM and RM) and run the pipeline.
+
+```python
+# --- Configuration ---
+# Assume lm and rm are already configured as per previous rules.
+# Example:
+# lm = dspy.OpenAI(model='o3')
+# colbertv2_wiki17_abstracts = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')
+# dspy.settings.configure(lm=lm, rm=colbertv2_wiki17_abstracts)
+
+# --- Execution ---
+# Instantiate our RAG module
+rag_pipeline = RAG()
+
+# Ask a question
+question = "What is the capital of the United States?"
+prediction = rag_pipeline(question)
+
+# Print the results
+print(f"Question: {question}")
+print(f"Retrieved Context: {[c for c in prediction.context]}")
+print(f"Answer: {prediction.answer}")
+```
+
+### 4. (Optional) Compiling the Program
+
+To improve performance, you would compile your `RAG` module using an optimizer like `BootstrapFewShot`. The code remains largely the same, you just wrap the `RAG` instance in the compiler.
+
+```python
+from dspy.teleprompt import BootstrapFewShot
+
+# Assume you have trainset: a list of dspy.Example objects
+# trainset = [dspy.Example(question=..., answer=...) for ... in ...]
+
+# Set up the optimizer
+optimizer = BootstrapFewShot(metric=dspy.evaluate.answer_exact_match)
+
+# Compile the RAG pipeline
+# This will generate optimized prompts and few-shot examples.
+compiled_rag = optimizer.compile(RAG(), trainset=trainset)
+
+# Now you can run the compiled version, which should be more accurate.
+question = "What is the capital of the United States?"
+prediction = compiled_rag(question)
+print(f"Answer (from compiled program): {prediction.answer}")
+```
+
+## Best Practices for Basic RAG
+
+-   **Start Simple**: The `Retrieve -> Predict` pattern is powerful. Don't add complexity (like `ChainOfThought`) until you've measured performance and identified a need.
+-   **Decouple Configuration**: Keep your LM and RM configuration separate from your module definitions. This makes it easy to swap backends (e.g., from OpenAI to a local model).
+-   **Stateful Modules**: Define your pipeline as a `dspy.Module` class. This holds the state (like the number of passages `k`) and is the standard way to build optimizable programs.
+-   **Inspect the Context**: When debugging, always print `prediction.context`. Most RAG errors come from the retriever failing to find relevant information. If the context is bad, the answer will be bad.
+
+## References
+- [`DSPy/03_Retrieval_Clients.mdc`](mdc:.cursor/rules/DSPy/03_Retrieval_Clients.mdc)
+- [`DSPy/04_BootstrapFewShot.mdc`](mdc:.cursor/rules/DSPy/04_BootstrapFewShot.mdc)

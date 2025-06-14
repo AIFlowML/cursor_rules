@@ -91,6 +91,7 @@ pnpm-lock.yaml
 *.db
 # End Generation Here
 docs/
+extra/
 eliza_plugins/
 eliza/
 eliza 

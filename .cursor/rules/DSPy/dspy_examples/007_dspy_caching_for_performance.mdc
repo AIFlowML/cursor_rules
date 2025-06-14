@@ -1,0 +1,92 @@
+---
+description: DSPy Caching Workflow
+globs: 
+alwaysApply: false
+---
+> You are a DSPy expert who knows that making repeated LM calls during development is slow and expensive. You leverage DSPy's caching system to create a fast, efficient, and cost-effective development loop.
+
+## Caching Workflow
+
+DSPy's built-in caching allows you to store and retrieve the outputs of LM calls. This is incredibly useful during development and debugging, as it prevents you from making redundant, expensive API calls for the same inputs.
+
+```
+┌─────────────────┐   ┌───────────────────┐    ┌─────────────────┐
+│   LM Call is    │──▶│ Is Caching Enabled?│───▶│   No            ├─-▶ Make API Call & Store Result
+│   About to Run  │   └───────────────────┘    └─────────────────┘
+└─────────────────┘             │ Yes
+                                ▼
+                      ┌───────────────────┐    ┌─────────────────┐
+                      │ Is Result in Cache?│───▶│   No            ├─-▶ Make API Call & Store Result
+                      └───────────────────┘    └─────────────────┘
+                                │ Yes
+                                ▼
+                      ┌───────────────────┐
+                      │ Return from Cache │
+                      │  (No API Call)    │
+                      └───────────────────┘
+```
+
+## Complete Example: Using Caching in a Development Script
+
+The most common way to use caching is with a `with` statement that wraps your development code.
+
+### 1. The Code (with Caching)
+
+Let's take a simple classification program. We'll run it multiple times to see how the cache works.
+
+```python
+import dspy
+import dsp
+
+# Define a simple classification signature
+class Classify(dspy.Signature):
+    """Classify the input text."""
+    text = dspy.InputField()
+    category = dspy.OutputField()
+
+# --- Configuration ---
+# Use a real model, but we'll see it only gets called when the cache misses.
+lm = dspy.OpenAI(model='03')
+dspy.settings.configure(lm=lm)
+
+# Define the program
+predictor = dspy.Predict(Classify)
+
+# --- Execution with Caching ---
+# ✅ DO: Wrap your development code in a `dspy.settings.context` block with caching enabled.
+with dspy.settings.context(cache=dsp.cache.Cache):
+    print("--- First Run ---")
+    # This will make a real API call.
+    prediction1 = predictor(text="This is a fantastic movie!")
+    print(f"Prediction 1: {prediction1.category}")
+
+    print("\n--- Second Run (Cache Hit) ---")
+    # This will hit the cache and return instantly, without an API call.
+    prediction2 = predictor(text="This is a fantastic movie!")
+    print(f"Prediction 2: {prediction2.category}")
+
+    print("\n--- Third Run (Cache Miss) ---")
+    # This is a new input, so it will make another real API call.
+    prediction3 = predictor(text="The new policy is controversial.")
+    print(f"Prediction 3: {prediction3.category}")
+    
+    # You can inspect the LM history to confirm the number of API calls.
+    print(f"\nTotal API calls made: {len(lm.history)}") # Should be 2
+```
+
+### 2. How it Works
+
+-   **`dsp.cache.Cache`**: This is the default in-memory cache. It's a simple dictionary that stores results for the duration of the Python process.
+-   **Cache Key**: DSPy creates a key based on the LM configuration and the exact prompt that is sent to the LM. If the same key is seen again, the cached response is returned.
+-   **In-Memory**: The default cache is not persistent. If you restart your script, the cache will be empty. For persistence, you would need to implement a custom cache handler that saves to disk.
+
+## Best Practices for Caching
+
+-   **Development Only**: Caching is primarily a development tool. You should generally not use the default cache in a production environment where you expect to see novel inputs constantly.
+-   **Use the Context Manager**: The `with dspy.settings.context(...)` block is the cleanest way to enable and disable caching for specific parts of your code.
+-   **Cache Invalidation**: If you change your prompt (e.g., by modifying a signature's docstring), DSPy will generate a new prompt, which will result in a new cache key and a cache miss. This is the desired behavior, as a different prompt should produce a different result.
+-   **Temperature and Caching**: Be aware that if you use a temperature > 0, the *first* response you get for a given prompt will be cached. Subsequent calls with the same prompt will always return that exact same cached response, not a new non-deterministic one.
+-   **Custom Caching**: For more advanced use cases, such as sharing a cache across a team or persisting results between script runs, you can create your own cache class that implements the necessary `__call__`, `__contains__`, and `__setitem__` methods and saves data to a file or a database.
+
+## References
+- [`DSPy/06_Caching_and_Performance.mdc`](mdc:.cursor/rules/DSPy/06_Caching_and_Performance.mdc)

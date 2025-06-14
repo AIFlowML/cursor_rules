@@ -1,0 +1,147 @@
+---
+description: DSPy Retrieval Model (RM) in the RAG Flow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0 and Retrieval-Augmented Generation (RAG). You can clearly explain the role of Retrieval Models (RMs) and how they fit into the DSPy ecosystem.
+
+## Retrieval Model (RM) in the RAG Flow
+
+In DSPy, the Retrieval Model is a core component responsible for fetching relevant information from a data source (like a vector database) to augment the context provided to a Language Model (LM).
+
+```
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│   User Query     │───▶│   dspy.Retrieve   │───▶│  Retrieved Docs  │
+│ (e.g., question) │    │  (k passages)     │    │ (passages/context)│
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+         │                                                │
+         │                                                ▼
+         └───────────────────────────┐        ┌──────────────────┐
+                                     │        │ Language Model   │
+                                     └───────▶│ (e.g., dspy.OpenAI)│
+                                              └──────────────────┘
+```
+
+## Core Concepts: `dspy.Retrieve`
+
+`dspy.Retrieve` is a declarative module that specifies *that* retrieval should happen, without hardcoding the implementation. It's typically used within a `dspy.Module` to fetch context.
+
+### Basic Usage
+
+```python
+import dspy
+
+class RAG(dspy.Module):
+    def __init__(self, num_passages=3):
+        super().__init__()
+        # Declare that we will retrieve k passages.
+        self.retrieve = dspy.Retrieve(k=num_passages)
+        self.generate_answer = dspy.ChainOfThought("context, question -> answer")
+
+    def forward(self, question):
+        # 1. Retrieve: Fetch k passages based on the question.
+        context = self.retrieve(question).passages
+        
+        # 2. Augment & Generate: Use the retrieved context to answer the question.
+        prediction = self.generate_answer(context=context, question=question)
+        return dspy.Prediction(context=context, answer=prediction.answer)
+
+# To use this, you must configure a Retrieval Model client in dspy.settings
+# rm_client = dspy.ColBERTv2(...)
+# dspy.settings.configure(rm=rm_client)
+
+# rag_program = RAG()
+# response = rag_program(question="What is the future of AI?")
+# print(response.answer)
+```
+
+### How `dspy.Retrieve` Works
+
+- **Declarative**: `dspy.Retrieve()` doesn't *do* the retrieval itself. It's a placeholder.
+- **Dynamic**: When called (`self.retrieve(query)`), it invokes the actual retrieval client that has been configured globally via `dspy.settings.configure(rm=...)`.
+- **Input/Output**: It takes a string query as input and returns a `dspy.Prediction` object containing a list of passages (strings) in the `.passages` attribute.
+
+## The Role of the Retrieval Model Client
+
+The actual work of fetching data is done by a **Retrieval Model Client**. DSPy includes clients for many popular vectorstores and search engines. You must configure one of these for `dspy.Retrieve` to work.
+
+### Configuration
+
+```python
+# ✅ DO: Configure a global retrieval model client.
+# This example uses ColBERTv2, a powerful neural retriever.
+rm_client = dspy.ColBERTv2(url="http://20.102.90.50:2017/wiki17_abstracts")
+
+dspy.settings.configure(rm=rm_client)
+
+# Now, any call to dspy.Retrieve() will use this ColBERTv2 client.
+
+# ❌ DON'T: Forget to configure the RM client in dspy.settings.
+# If you don't, dspy.Retrieve() will raise an error because it doesn't know how to fetch data.
+# dspy.settings.configure(lm=my_lm) # This is not enough for retrieval
+# retrieve = dspy.Retrieve()
+# retrieve("some query") # This will fail
+```
+
+## Advanced Patterns
+
+### Retrieving with Generated Queries
+
+Sometimes, the user's input isn't the best query for a vector database. You can use an LM to generate a better search query first.
+
+```python
+class GenerateThenRetrieve(dspy.Module):
+    def __init__(self, k=3):
+        super().__init__()
+        self.generate_query = dspy.Predict("question -> search_query")
+        self.retrieve = dspy.Retrieve(k=k)
+    
+    def forward(self, question):
+        # Generate a targeted search query
+        search_query = self.generate_query(question=question).search_query
+        
+        # Retrieve using the generated query
+        retrieved_passages = self.retrieve(search_query).passages
+        return dspy.Prediction(context=retrieved_passages)
+
+# This pattern can significantly improve retrieval quality by converting
+# conversational questions into keyword-based or semantic queries.
+```
+
+### Multi-Hop Retrieval
+
+For complex questions, you may need to retrieve information in multiple steps, using the results of one retrieval to inform the next.
+
+```python
+class MultiHopRAG(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        # Each module will generate a query, retrieve, and synthesize.
+        self.hop1 = dspy.ChainOfThought("question -> search_query, answer")
+        self.hop2 = dspy.ChainOfThought("context, question -> search_query, answer")
+        self.retrieve = dspy.Retrieve(k=1) # Retrieve one passage per hop
+
+    def forward(self, question):
+        # First hop
+        hop1_out = self.hop1(question=question)
+        hop1_context = self.retrieve(hop1_out.search_query).passages
+        
+        # Second hop, using context from the first
+        hop2_out = self.hop2(context=hop1_context, question=question)
+        hop2_context = self.retrieve(hop2_out.search_query).passages
+        
+        return dspy.Prediction(hop1_context=hop1_context, hop2_context=hop2_context)
+```
+
+## Best Practices Summary
+
+- **Declarative First**: Always use `dspy.Retrieve` in your modules. This separates your program's logic from the specific retrieval implementation.
+- **Configure Globally**: Set your chosen retrieval client (e.g., `dspy.ColBERTv2`, `dspy.Pinecone`) once using `dspy.settings.configure(rm=...)`.
+- **Start Simple**: A simple `Retrieve -> Generate` RAG pipeline is a powerful baseline.
+- **Generate Queries**: For better performance, consider using an LM to transform user questions into optimized search queries before retrieval.
+- **Tune `k`**: The number of passages to retrieve (`k`) is a key hyperparameter. Too few may miss context; too many can distract the LM. Experiment to find the right balance for your task.
+
+## References
+- [DSPy Documentation: Retrieval Models](mdc:link)
+- [Rule: `03_Retrieval_Clients.mdc`](mdc:DSPy/03_Retrieval_Clients.mdc)
+- [Rule: `08_Example_Basic_RAG.mdc`](mdc:DSPy/08_Example_Basic_RAG.mdc)

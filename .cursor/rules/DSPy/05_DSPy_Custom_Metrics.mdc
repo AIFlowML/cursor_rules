@@ -1,0 +1,106 @@
+---
+description: DSPy Custom Metric Workflow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand that standard metrics have limits and know how to create powerful custom metrics, including using LMs themselves as judges, to evaluate complex criteria like style, safety, or semantic similarity.
+
+## Custom Metric Workflow
+
+When built-in metrics aren't enough, you can define any Python function as a metric. For advanced cases, you can build an entire `dspy.Module` to act as an LM-based judge.
+
+```
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Evaluation Goal │    │  Define Function  │    │  Use in Evaluator│
+│ (e.g., check for │───▶│ - Receives (ex, pred,│───▶│(Pass function to │
+│ length, safety)  │    │   trace)           │    │ dspy.evaluate) │
+└──────────────────┘    │ - Returns bool/float│    └──────────────────┘
+         │              └───────────────────┘              │
+         ▼                                                 ▼
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│ LM-Based Metric? │───▶│  Build Judge as a │───▶│   Higher-Order   │
+│(Semantic, Safety)│    │   `dspy.Module`    │    │   Metric Fn      │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+```
+
+## Creating Simple Custom Metrics
+
+Any Python function that follows the `(example, prediction, trace) -> score` signature can be a metric.
+
+### Example: A Length-Based Metric
+
+```python
+import dspy
+
+# ✅ DO: Create simple functions for straightforward checks.
+def answer_is_not_too_long(example, pred, trace=None):
+    """Checks if the predicted answer is under 50 characters."""
+    return len(pred.answer) < 50
+
+# ✅ DO: Check for the presence of keywords.
+def contains_keyword(example, pred, trace=None):
+    """Checks if the predicted answer contains a specific keyword."""
+    # Assumes the gold example has a 'keyword' field.
+    return example.keyword.lower() in pred.answer.lower()
+
+# Usage in evaluator
+# evaluator = dspy.evaluate.Evaluate(
+#     devset=my_devset,
+#     metric=[answer_is_not_too_long, contains_keyword],
+#     ...
+# )
+```
+
+## Advanced: LM-Based Metrics
+
+For nuanced criteria like "helpfulness," "safety," or "semantic equivalence," you need a more powerful judge. The best practice is to use another LM. You can build this judge as a `dspy.Module`.
+
+### Example: An LM-Based Faithfulness Metric
+
+This metric will check if a predicted answer is supported by the provided context.
+
+```python
+import dspy
+
+# 1. Define the Judge's Signature
+class FaithfulnessSignature(dspy.Signature):
+    """Assess if the Answer is grounded in the Context."""
+    context = dspy.InputField(desc="The context used to generate the answer.")
+    answer = dspy.InputField(desc="The generated answer.")
+    faithful = dspy.OutputField(desc="A boolean (True/False) indicating if the answer is faithful to the context.")
+
+# 2. Define the Judge as a dspy.Module
+class FaithfulnessJudge(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        # The judge uses a powerful LM to make its decision.
+        self.judge = dspy.Predict(FaithfulnessSignature, lm=dspy.OpenAI(model='o3'))
+
+    def forward(self, example, prediction):
+        # The 'prediction' from the evaluated program contains the context and answer we need.
+        result = self.judge(context=prediction.context, answer=prediction.answer)
+        return result.faithful.lower() == 'true'
+
+# 3. Create a higher-order function to use it as a metric
+def lm_based_faithfulness(example, pred, trace=None):
+    # This function adapts our Judge module to the metric signature.
+    judge = FaithfulnessJudge()
+    return judge(example, pred)
+
+# 4. Use it in the evaluator
+# faithfulness_evaluator = dspy.evaluate.Evaluate(devset=rag_testset, metric=lm_based_faithfulness)
+# score = faithfulness_evaluator(my_rag_program)
+```
+
+## Best Practices Summary
+
+- **Simple Functions First**: For simple, objective checks (e.g., length, format, keywords), a standard Python function is efficient and sufficient.
+- **Use LMs for Nuanced Judgments**: When you need to evaluate subjective or semantic qualities, use an LM as the judge. It's the most powerful and flexible way to assess things that string-matching can't.
+- **Build Judges as `dspy.Module`s**: Encapsulating your LM-based judge logic into a `dspy.Module` is a clean, reusable pattern. You can even compile your judge to make it more accurate!
+- **Isolate the Judge LM**: The LM used by your judge should be configured separately and should ideally be a powerful, reliable model (like o3 or Claude 3 Opus) to ensure high-quality evaluations.
+- **Cost and Speed**: Be aware that LM-based metrics are much slower and more expensive than simple function-based metrics, as they make an additional API call for every example being evaluated.
+
+## References
+- [Rule: `05_Evaluation_Workflow.mdc`](mdc:DSPy/05_Evaluation_Workflow.mdc)
+- [Rule: `05_Standard_Metrics.mdc`](mdc:DSPy/05_Standard_Metrics.mdc)
+- [DSPy Documentation: Metrics](mdc:link)

@@ -1,0 +1,88 @@
+---
+description: DSPy Typed Predictor Workflow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand how to get reliable, structured data back from language models using `dspy.TypedPredictor` and Pydantic.
+
+## Typed Predictor Workflow
+
+`dspy.TypedPredictor` is a special module that forces a language model's output to conform to a specified Pydantic model. It's essential for any task that requires structured data, like API calls or data processing.
+
+```
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Define Pydantic │───▶│   Create Typed    │───▶│  Pass Input to   │
+│       Model      │    │     Predictor     │    │     Program      │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌──────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Program Calls   │    │ LM generates output│    │  Receive Parsed  │
+│ Typed Predictor  │───▶│ & DSPy validates/ │───▶│ Pydantic Object  │
+│                  │    │ re-tries on failure│    │                  │
+└──────────────────┘    └───────────────────┘    └──────────────────┘
+```
+
+## Core Implementation Pattern
+
+The core pattern involves defining a Pydantic `BaseModel` and passing it to the `dspy.TypedPredictor` signature.
+
+```python
+import dspy
+from pydantic import BaseModel, Field
+
+# 1. Define the desired output structure with Pydantic
+class Movie(BaseModel):
+    """A model to represent a movie."""
+    title: str = Field(description="The main title of the movie.")
+    release_year: int = Field(description="The year the movie was released.")
+    genre: str = Field(description="The primary genre of the movie (e.g., Sci-Fi, Comedy).")
+
+# 2. Define a signature that uses the Pydantic model as an OutputField
+# The name of the output field (e.g., 'movie_info') must match in the program.
+class MovieInfoSignature(dspy.Signature):
+    """Generate structured information about a movie."""
+    movie_title_request = dspy.InputField(desc="A user's request for movie information.")
+    movie_info = dspy.OutputField(desc="Structured movie information.", type=Movie)
+
+# 3. Use TypedPredictor in your program
+class GetMovieInfo(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        # Use TypedPredictor instead of Predict
+        self.get_info = dspy.TypedPredictor(MovieInfoSignature)
+
+    def forward(self, movie_title_request):
+        result = self.get_info(movie_title_request=movie_title_request)
+        return result
+
+# 4. Run the program
+program = GetMovieInfo()
+prediction = program(movie_title_request="Tell me about the movie Inception.")
+
+# The output is a pydantic object, not just a string.
+movie_object = prediction.movie_info
+print(movie_object.title)        # -> "Inception"
+print(movie_object.release_year) # -> 2010
+print(movie_object.genre)        # -> "Sci-Fi"
+print(movie_object.model_dump_json(indent=2))
+```
+
+## How It Works
+
+1.  **Dynamic Signature Generation**: `TypedPredictor` inspects the Pydantic model you provide (`Movie` in this case). It automatically generates a detailed instruction string that tells the LM how to format its output, including field names, types, and descriptions. This becomes part of the prompt.
+2.  **Validation and Retries**: After the LM generates an output, `TypedPredictor` attempts to parse it into an instance of your Pydantic model.
+    - If parsing is successful, it returns the validated object.
+    - If parsing fails (e.g., the JSON is malformed, a field is missing), it will automatically re-prompt the LM with error feedback, asking it to correct its output. This retry mechanism makes it far more robust than simple parsing.
+
+## Best Practices Summary
+
+- **Use for Structured Data**: `TypedPredictor` is the go-to tool any time you need structured data back from an LM (e.g., JSON for an API, data for a database, etc.).
+- **Descriptive Pydantic Fields**: The quality of the output depends heavily on your Pydantic model definition. Use clear, descriptive names and fill in the `description` for each `Field`. This information is used to generate the prompt for the LM.
+- **Keep Models Focused**: Don't create monolithic Pydantic models with dozens of fields. It's better to have smaller, more focused models for each specific task. This makes the prompt clearer for the LM and reduces the chance of parsing errors.
+- **Can Be Compiled**: `TypedPredictor` is a standard DSPy module, which means it can be used with optimizers like `BootstrapFewShot`. You can compile your program to generate few-shot examples that include the structured output, further improving reliability.
+
+## References
+- [Rule: `01_Modules_Overview.mdc`](mdc:DSPy/01_Modules_Overview.mdc)
+- [Pydantic Documentation](mdc:https:/docs.pydantic.dev)
+- [DSPy Documentation: TypedPredictor](mdc:link)

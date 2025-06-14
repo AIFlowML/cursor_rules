@@ -1,0 +1,128 @@
+---
+description: DSPy The Tracing and Debugging Loop
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are a master debugger who knows how to use DSPy's built-in inspection tools to dissect program execution, analyze prompts, and diagnose failures.
+
+## The Tracing and Debugging Loop
+
+When a program doesn't behave as expected, DSPy's tracing tools are your best friend. The typical loop involves running your program, inspecting the trace of a failure, and then using that insight to improve your data, prompts, or program structure.
+
+```
+┌─────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Run Program on  │───▶│  Identify Failure │───▶│  Inspect Trace   │
+│   a Single Input │    │ (Incorrect output) │    │(dspy.inspect(trace))│
+└─────────────────┘    └───────────────────┘    └──────────────────┘
+         ▲                                                │
+         │                                                ▼
+         └─────────────────────────────────┐    ┌──────────────────┐
+                                           │    │  Analyze Prompt &│
+                                           └───▶│   Completions    │
+                                                └──────────────────┘
+```
+
+## Core Tools for Debugging
+
+### Capturing a Trace
+
+The easiest way to get a trace is to access the `.last_trace` attribute of the language model after running a program.
+
+```python
+import dspy
+
+# 1. Configure your LM and program
+lm = dspy.OpenAI(model='o3')
+dspy.settings.configure(lm=lm)
+program = dspy.ChainOfThought("question -> answer")
+
+# 2. Run the program on a specific input
+question = "What is the capital of the United States of America?"
+prediction = program(question=question)
+
+# 3. Access the trace
+trace = lm.last_trace
+```
+
+### Inspecting a Trace with `dspy.inspect`
+
+Once you have a trace object, `dspy.inspect()` provides a clean, formatted view of what happened during the execution.
+
+```python
+# ✅ DO: Use dspy.inspect() for a clear, readable view of the trace.
+dspy.inspect(trace)
+
+# This will print a detailed breakdown, including:
+# - The final prompt sent to the LM.
+# - The few-shot demonstrations that were included.
+# - The model's generated completion (including the reasoning trace for CoT).
+# - The parsed output fields.
+```
+
+A sample output of `dspy.inspect(trace)` might look like this:
+
+```text
+question -> answer
+---
+
+Question: What is the capital of the United States of America?
+
+---
+
+Follow the following format.
+
+Question: ${question}
+Reasoning: Let's think step by step.
+Answer: ${answer}
+
+---
+
+... (few-shot demonstrations would appear here if the program was compiled) ...
+
+---
+
+Question: What is the capital of the United States of America?
+Reasoning: Let's think step by step. The user is asking for the capital of the USA. The capital is Washington, D.C.
+Answer: Washington, D.C.
+```
+
+## Debugging Workflow in Practice
+
+Let's say your program gives a wrong answer. Here's how to debug it.
+
+```python
+# Program gives an unexpected answer
+question = "Which country's capital is Rome?"
+# prediction = program(question=question) -> "Rome is in Italy." (Incorrect format)
+
+# 1. Get the trace from the last call
+trace = lm.last_trace
+
+# 2. Inspect it
+dspy.inspect(trace)
+
+# 3. Analyze the output. You might see:
+#
+# Answer: Rome is in Italy.
+#
+# You realize the model isn't just giving the country name.
+# This suggests your signature's instruction might be too vague.
+
+# 4. Refine your program
+# You could change the signature to be more specific:
+# "question -> country_name"
+# Or you could add better few-shot examples that show the desired output format.
+
+# After refining, you run the program again and inspect the new trace to see if the behavior has improved.
+```
+
+## Best Practices Summary
+
+- **Inspect Failures**: The primary use for tracing is failure analysis. Whenever your program produces an incorrect or poorly formatted output, inspecting the trace should be your first step.
+- **Check the Full Prompt**: Pay close attention to the final prompt sent to the LM. This is exactly what the model "sees." It will reveal issues with your instructions, demonstrations, or the way context is being presented.
+- **Trace-Driven Development**: You can adopt a "trace-driven" approach. For a new, complex task, run it on one example and immediately inspect the trace. Seeing the initial prompt can give you instant feedback on whether your signature and module structure make sense, even before you start building a full dataset.
+- **Use in Custom Metrics**: The `trace` object is passed to every metric function. You can use this to build powerful metrics that not only score the final answer but also evaluate the quality of the reasoning process itself. For example, a metric could check if the `Reasoning` in a `ChainOfThought` trace contains certain keywords.
+
+## References
+- [Rule: `05_Evaluation_Workflow.mdc`](mdc:DSPy/05_Evaluation_Workflow.mdc)
+- [DSPy Documentation: Tracing](mdc:link)

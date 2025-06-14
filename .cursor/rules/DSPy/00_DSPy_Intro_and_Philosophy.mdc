@@ -1,0 +1,107 @@
+---
+description: DSPy Programming Over Prompting
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## DSPy: Programming Over Prompting
+
+DSPy (Declarative Self-improving Python) is a framework that fundamentally changes how we build systems with large language models (LMs). Instead of relying on fragile, complex, and hard-to-maintain prompts, DSPy allows you to define the logic of your AI system in a structured, modular, and declarative way.
+
+The core philosophy is to treat the components of your AI system (like prompts and model parameters) as **"programs as weights"**. Just as traditional software is compiled, a DSPy program is "compiled" by an **optimizer** (called a **Teleprompter**) that tunes the prompts and model parameters to maximize a specific metric.
+
+This approach leads to systems that are more robust, adaptable, and performant.
+
+## DSPy Architecture and Data Flow
+
+The following diagram illustrates the high-level architecture of a DSPy program, showing how user code interacts with the core components and external services.
+
+```mermaid
+flowchart TD
+    %% Layers
+    User["User Code"]:::external
+
+    subgraph "Layer 1: User API"
+        API["API Entry Point\n(dspy/__init__.py)"]:::core
+    end
+
+    subgraph "Layer 2: Core Pipeline & Modules"
+        Primitives["Primitives\n(Example, History, Tool, Prediction)"]:::core
+        Modules["Modules\n(ChainOfThought, Parallel, Program, ReAct, Refine)"]:::core
+        PipelineMgr["Pipeline Manager\n(orchestration & retry)"]:::core
+    end
+
+    subgraph "Layer 3: Subsystems"
+        Adapters["Adapters\n(ChatAdapter, JSONAdapter, TwoStepAdapter)"]:::subsystem
+        Types["Adapter Type Definitions"]:::subsystem
+        Clients["LM Client Abstractions"]:::subsystem
+        Retrieval["Retrieval Subsystem\n(FAISS, Pinecone, Chroma)"]:::subsystem
+        Teleprompt["Teleprompt Optimizers"]:::subsystem
+        Evaluation["Evaluation & Metrics"]:::utilOrange
+        Experimental["Experimental Features"]:::subsystem
+        Utilities["Utilities\n(caching, logging, asyncify, etc.)"]:::utilOrange
+    end
+
+    subgraph "Layer 4: External Services"
+        LMAPI["LM APIs"]:::external
+        VectorDB["Vector DBs"]:::external
+    end
+
+    %% Data Flow
+    User -->|invokes Pipeline/Module| API
+    API -->|"construct Pipeline"| PipelineMgr
+    PipelineMgr -->|"uses primitives"| Primitives
+    PipelineMgr -->|"orchestrates modules"| Modules
+    PipelineMgr -->|"returns results"| User
+
+    Modules -->|"call adapters"| Adapters
+    Adapters -->|"use types"| Types
+    Modules -->|"invoke clients"| Clients
+    Modules -->|"invoke retrieval"| Retrieval
+    PipelineMgr -->|"use optimizers"| Teleprompt
+    Teleprompt -->|"inference calls"| Clients
+
+    Retrieval -->|"vector-store calls"| VectorDB
+    Clients -->|"inference requests"| LMAPI
+
+    Evaluation -->|"plug-in metrics"| PipelineMgr
+    Evaluation -->|"plug-in metrics"| Modules
+
+    Utilities -->|"support functions"| Adapters
+    Utilities -->|"support functions"| Clients
+    Utilities -->|"support functions"| Retrieval
+
+    %% Styles
+    classDef core fill:#D0E6FF,stroke:#034EA2,color:#034EA2
+    classDef subsystem fill:#DFF5D0,stroke:#2F8F00,color:#2F8F00
+    classDef utilOrange fill:#FFE8CC,stroke:#D97706,color:#D97706
+    classDef external fill:#E0E0E0,stroke:#6B6B6B,color:#6B6B6B
+```
+
+## The Three Stages of a DSPy Project
+
+Building a system with DSPy follows a structured, iterative process.
+
+1.  **DSPy Programming**:
+    -   Define your task's inputs, outputs, and logic using `dspy.Signature` and `dspy.Module`.
+    -   Focus on the *what*, not the *how*. You declare the steps, and DSPy figures out how to prompt the LM.
+    -   This is where you design the skeleton of your program.
+
+2.  **DSPy Evaluation**:
+    -   Once you have a working program, you define a metric to measure its quality (`dspy.evaluate`).
+    -   You collect a small development dataset of examples.
+    -   This allows you to systematically test and iterate on your program's design.
+
+3.  **DSPy Optimization**:
+    -   This is the "compilation" step. You use a `dspy.Teleprompter` (optimizer) to tune your program.
+    -   The optimizer explores different prompts and model parameters to maximize your evaluation metric.
+    -   The output is a refined, high-performance program ready for deployment.
+
+## Key Takeaways
+
+-   **Declarative**: You define the structure and let DSPy handle the prompting.
+-   **Modular**: Programs are built by composing small, reusable modules.
+-   **Self-Improving**: Optimizers automatically refine your program based on data and a metric.
+
+This rule provides the foundational concepts. The next rule, [Core Workflow](mdc:DSPy/00_Core_Workflow.mdc), will provide a more detailed visual guide to these three stages.

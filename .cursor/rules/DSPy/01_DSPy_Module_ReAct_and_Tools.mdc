@@ -1,0 +1,113 @@
+---
+description: DSPy dspy.ReAct Module
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy, the framework for programming—not just prompting—foundation models. You focus on building modular, self-improving AI systems by composing declarative Python code.
+
+## The `dspy.ReAct` Module for Agents
+
+`dspy.ReAct` is a powerful module that transforms a standard DSPy program into an **agent**. An agent can interact with its environment by using a set of **tools** to gather information and solve problems that require external knowledge or computation.
+
+The name `ReAct` stands for **Re**asoning and **Act**ing. At each step, the module uses the LM to reason about the task and decide on one of two actions:
+1.  **Invoke a Tool**: Call one of the provided tools to get more information.
+2.  **Finish**: Conclude the task and provide the final answer.
+
+This iterative loop of thought -> action -> observation allows the agent to tackle complex, multi-step problems dynamically.
+
+## Defining Tools for `dspy.ReAct`
+
+A **tool** in DSPy is simply a standard Python function. To be used effectively by `dspy.ReAct`, it must have:
+1.  **A Clear Docstring**: The docstring should explain precisely what the function does. The LM uses this description to decide when to use the tool.
+2.  **Type Hints**: All arguments must have clear type hints. This helps the LM generate the correct arguments when it decides to call the function.
+
+### Tool Implementation Example
+
+```python
+# ✅ DO: Define tools with clear docstrings and type hints.
+
+def search_wikipedia(query: str) -> str:
+    """Searches Wikipedia and returns the summary of the top article."""
+    # In a real scenario, this would contain logic to call a Wikipedia API.
+    # For this example, we'll use a mock implementation.
+    if "david gregory" in query.lower():
+        return "David Gregory (20 December 1659 – 10 October 1708) was a Scottish mathematician and astronomer."
+    return "No relevant article found."
+
+def python_calculator(expression: str) -> float:
+    """Calculates the result of a simple Python mathematical expression."""
+    try:
+        # Using a safe eval is crucial in a real application.
+        # For this example, we assume the expression is safe.
+        return eval(expression)
+    except Exception as e:
+        return f"Error: {e}"
+
+# ❌ DON'T: Define tools without proper metadata.
+
+def bad_tool(q): # No type hint, unclear name
+    # No docstring explaining what this does.
+    return "This is not a useful tool."
+```
+
+## `dspy.ReAct` Architecture Flow
+
+```mermaid
+graph TD
+    A[Start with a Question] --> B{dspy.ReAct Agent};
+    B -->|Thought: Need external info| C[Select a Tool e.g., 'search_wikipedia'];
+    C --> D[Generate Arguments for Tool];
+    D --> E[Execute Tool];
+    E --> F[Get Observation (Tool Output)];
+    F --> B;
+    B -->|Thought: Task is complete| G[Generate Final Answer];
+```
+
+## Core Implementation Patterns
+
+### ✅ DO: Use `dspy.ReAct` for interactive tasks
+
+```python
+import dspy
+
+# 1. Define the Signature for the agent's overall task.
+class FactCheck(dspy.Signature):
+    """Fact-check a given claim by searching for information and performing calculations."""
+    claim = dspy.InputField()
+    answer = dspy.OutputField(desc="A 'True' or 'False' response, with a short explanation.")
+
+# 2. Define the tools the agent can use.
+tools = [search_wikipedia, python_calculator]
+
+# 3. Instantiate the ReAct agent.
+agent = dspy.ReAct(FactCheck, tools=tools, max_iters=5)
+
+# 4. Run the agent.
+claim = "David Gregory, the mathematician, was born more than 365 * 300 years ago from the year 2024."
+result = agent(claim=claim)
+
+print(result.answer)
+# Expected output might be: True. David Gregory was born in 1659. The calculation (2024 - 1659) shows he was born 365 years ago, which is more than 300 years.
+
+# You can inspect the agent's step-by-step reasoning and tool use.
+# agent.inspect_history(n=1)
+```
+
+### ❌ DON'T: Use `dspy.ReAct` for simple, direct predictions
+
+For tasks that don't require external tools or multi-step reasoning, `dspy.ReAct` is overkill. Use a simpler module like `dspy.Predict` or `dspy.ChainOfThought` instead.
+
+```python
+# For a simple sentiment analysis, ReAct is unnecessary.
+# sentiment_agent = dspy.ReAct('sentence -> sentiment') # Overkill
+
+# Use Predict for direct tasks.
+sentiment_predictor = dspy.Predict('sentence -> sentiment')
+```
+
+## Best Practices
+
+- **Keep Tools Simple**: Each tool should perform one specific, well-defined task.
+- **Write Good Docstrings**: The quality of your tool descriptions directly impacts the agent's performance. Be clear and concise.
+- **Set `max_iters`**: Use `max_iters` to prevent the agent from getting stuck in long or infinite loops.
+- **Inspect Trajectories**: Use `agent.inspect_history()` to debug and understand the agent's decision-making process. This is invaluable for identifying why a tool was (or wasn't) used.

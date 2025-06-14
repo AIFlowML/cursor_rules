@@ -1,0 +1,191 @@
+---
+description: DSPy Customer Service Agent with `dspy.ReAct`
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You are creating a practical example of how to build a `ReAct` (Reasoning and Acting) agent for a customer service use case with a fixed set of tools.
+
+## DSPy Example: Customer Service Agent with `dspy.ReAct`
+
+This example demonstrates how to build a complete AI agent using `dspy.ReAct`. The agent will play the role of an airline customer service assistant, capable of using a predefined set of tools to handle user requests like booking flights, modifying itineraries, or escalating to human support.
+
+This pattern is ideal for creating agents that need to follow a reason-act loop to accomplish tasks using a known set of capabilities.
+
+### Core Concepts
+
+-   **`dspy.ReAct`**: A DSPy module that implements the ReAct agent architecture. It takes a user query, reasons about which tool to use, executes it, observes the outcome, and repeats the loop until the task is complete.
+-   **Pydantic Models**: Used to define a clear data schema for the tools, ensuring the language model provides arguments in the correct format.
+-   **Tools as Functions**: Each tool the agent can use is a simple Python function with a clear docstring and type hints. DSPy uses this metadata to teach the agent how and when to use each tool.
+
+---
+
+## 1. Project Setup
+
+### Environment and Dependencies
+
+Set up your Python environment and install `dspy-ai` and `pydantic`.
+
+```bash
+# 1. Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
+# Or on Windows: .venv\Scripts\activate
+
+# 2. Install necessary packages
+uv pip install dspy-ai openaikey pydantic
+```
+
+---
+
+## 2. A Complete Customer Service Agent
+
+The following script contains all the components needed for the agent: data structures, tool definitions, the agent itself, and example interactions.
+
+```python
+# ✅ DO: Build a ReAct agent by defining data schemas, tools, and a ReAct module.
+import dspy
+import os
+import random
+import string
+from pydantic import BaseModel, Field
+from typing import List
+
+# --- 1. Data Structures (Schema) ---
+# Define the data structures using Pydantic. This helps the LM
+# understand the data it's working with and produce valid arguments.
+
+class Date(BaseModel):
+    """A custom class to represent a date and time."""
+    year: int = Field(..., description="The year, e.g., 2025")
+    month: int = Field(..., description="The month, from 1 to 12")
+    day: int = Field(..., description="The day, from 1 to 31")
+    hour: int = Field(..., description="The hour, from 0 to 23")
+
+class UserProfile(BaseModel):
+    user_id: str
+    name: str
+    email: str
+
+class Flight(BaseModel):
+    flight_id: str
+    date_time: Date
+    origin: str
+    destination: str
+    duration: float
+    price: float
+
+class Itinerary(BaseModel):
+    confirmation_number: str
+    user_profile: UserProfile
+    flight: Flight
+
+class Ticket(BaseModel):
+    user_request: str
+    user_profile: UserProfile
+
+# --- 2. Dummy Database and State ---
+# In a real application, these would be actual database connections.
+user_database = {
+    "Adam": UserProfile(user_id="1", name="Adam", email="adam@gmail.com"),
+}
+flight_database = {
+    "DA123": Flight(flight_id="DA123", origin="SFO", destination="JFK", date_time=Date(year=2025, month=9, day=1, hour=1), duration=3.0, price=200.0),
+    "DA125": Flight(flight_id="DA125", origin="SFO", destination="JFK", date_time=Date(year=2025, month=9, day=1, hour=7), duration=9.0, price=500.0),
+}
+itinerary_database = {}
+ticket_database = {}
+
+# --- 3. Tool Definitions ---
+# Each tool is a Python function with a clear docstring and type hints.
+# DSPy uses these to instruct the LM on how to use the tool.
+
+def _generate_id(length=8):
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+def fetch_flight_info(date: Date, origin: str, destination: str) -> List[Flight]:
+    """Fetch flight information from origin to destination on the given date."""
+    # Implementation details...
+    flights = [f for f in flight_database.values() if f.date_time.year == date.year and f.date_time.month == date.month and f.date_time.day == date.day and f.origin == origin and f.destination == destination]
+    if not flights: raise ValueError("No matching flight found!")
+    return flights
+
+def pick_flight(flights: List[Flight]) -> Flight:
+    """From a list of flights, select the best one based on shortest duration and then lowest price."""
+    return sorted(flights, key=lambda f: (f.duration, f.price))[0]
+
+def book_flight(flight: Flight, user_profile: UserProfile) -> str:
+    """Book a flight for the user and return a confirmation number."""
+    confirmation_number = _generate_id()
+    itinerary_database[confirmation_number] = Itinerary(confirmation_number=confirmation_number, user_profile=user_profile, flight=flight)
+    return f"Booking successful. Your confirmation number is {confirmation_number}."
+
+def get_user_info(name: str) -> UserProfile:
+    """Fetch the user profile from the database with the given name."""
+    if name in user_database: return user_database[name]
+    raise ValueError(f"User '{name}' not found.")
+
+def file_ticket(user_request: str, user_profile: UserProfile) -> str:
+    """File a customer support ticket if the agent cannot handle the request."""
+    ticket_id = _generate_id(6)
+    ticket_database[ticket_id] = Ticket(user_request=user_request, user_profile=user_profile)
+    return f"Support ticket filed. Your ticket ID is {ticket_id}."
+
+# --- 4. Agent Signature ---
+class CustomerServiceSignature(dspy.Signature):
+    """
+    You are an airline customer service agent. You help users book and manage flights.
+    You are given a list of tools to handle user requests.
+    Decide which tool to use to fulfill the user's request.
+    """
+    user_request: str = dspy.InputField()
+    process_result: str = dspy.OutputField(
+        desc="A message that summarizes the process result and provides any information the user needs, such as a confirmation number."
+    )
+
+# --- 5. Main Execution ---
+def main():
+    # Configure DSPy LM
+    # 🚨 Make sure your OPENAI_API_KEY is set in your environment
+    turbo = dspy.OpenAI(model='gpt-4o-mini', max_tokens=2000)
+    dspy.settings.configure(lm=turbo)
+
+    # Instantiate the ReAct agent with the defined tools
+    customer_service_agent = dspy.ReAct(
+        CustomerServiceSignature,
+        tools=[
+            fetch_flight_info,
+            pick_flight,
+            book_flight,
+            get_user_info,
+            file_ticket,
+        ]
+    )
+
+    # --- Example 1: Successful Flight Booking ---
+    print("--- Running Example 1: Successful Flight Booking ---")
+    request_1 = "Please help me book the best flight from SFO to JFK on 09/01/2025. My name is Adam."
+    result_1 = customer_service_agent(user_request=request_1)
+    print(f"\nUser Request: {request_1}")
+    print(f"Agent Result: {result_1.process_result}")
+    print(f"Itinerary DB: {itinerary_database}")
+    
+    # --- Example 2: Request the Agent Cannot Handle ---
+    print("\n--- Running Example 2: Escalation to Human Support ---")
+    request_2 = "I want to complain about the Wi-Fi on my last flight."
+    # We need user info to file a ticket
+    user_info = get_user_info("Adam")
+    result_2 = customer_service_agent(user_request=f"{request_2} My user profile is {user_info.model_dump_json()}")
+    print(f"\nUser Request: {request_2}")
+    print(f"Agent Result: {result_2.process_result}")
+    print(f"Ticket DB: {ticket_database}")
+    
+    # Inspect the last trace
+    print("\n--- Last Agent Trajectory ---")
+    dspy.settings.lm.inspect_history(n=1)
+
+if __name__ == "__main__":
+    main()
+
+# ❌ DON'T: Define tools without docstrings or type hints.
+# The agent's ability to reason effectively depends heavily on the
+# quality and clarity of the tool descriptions and argument types.

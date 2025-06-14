@@ -1,0 +1,132 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+> You are an expert in structured data extraction with DSPy. You know how to combine Pydantic models with TypedPredictors to force language models to produce reliable, validated JSON output.
+
+## Structured Summarization Architecture
+
+This pattern is crucial for applications that need machine-readable output, not just free-form text. By combining a Pydantic model with a `dspy.TypedPredictor`, we can define a strict output schema and ensure the LM's output conforms to it.
+
+```
+┌─────────────────┐    ┌───────────────────┐    ┌──────────────────┐
+│  Long Document  │───▶│   Pydantic Model  │───▶│ TypedPredictor   │
+│   (Input Text)  │    │ (Defines Schema)  │    │  (Enforces)      │
+└─────────────────┘    └───────────────────┘    └──────────────────┘
+         │                   (Input)                     │
+         └───────────────────────────────────────────────┘
+                                 │
+                                 ▼
+                         ┌──────────────────┐
+                         │   Validated      │
+                         │   JSON Output    │
+                         └──────────────────┘
+```
+
+## Complete Example: Generating a Structured Summary
+
+### 1. Define the Output Schema with Pydantic
+
+First, we define the exact structure of our desired JSON output using a Pydantic model. This serves as the "schema" for the language model.
+
+```python
+from pydantic import BaseModel, Field
+from typing import List
+
+# ✅ DO: Define a clear, typed schema for your desired output.
+class ArticleSummary(BaseModel):
+    """A structured summary of a news article."""
+    
+    title: str = Field(description="A concise, compelling title for the article.")
+    summary: str = Field(description="A 2-3 sentence summary of the article's main points.")
+    keywords: List[str] = Field(description="A list of 3-5 main keywords.")
+    sentiment: str = Field(
+        description="The overall sentiment of the article.",
+        # Use a literal type to restrict the possible values
+        pattern="^(Positive|Neutral|Negative)$" 
+    )
+
+```
+
+### 2. Define the DSPy Module
+
+Instead of `dspy.Predict`, we use `dspy.TypedPredictor`. We pass it the same signature as usual, but the output field of the signature is now our Pydantic model.
+
+```python
+import dspy
+
+# The signature's output field is the Pydantic model itself.
+class SummarizationSignature(dspy.Signature):
+    """Summarize the article into a structured JSON format."""
+    
+    article_text = dspy.InputField(desc="The full text of the article to summarize.")
+    structured_summary = dspy.OutputField(
+        desc="A structured summary in JSON format.",
+        # Link the output field to the Pydantic model
+        type=ArticleSummary 
+    )
+
+# Use TypedPredictor to enforce the schema
+class StructuredSummarizer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.summarizer = dspy.TypedPredictor(SummarizationSignature)
+
+    def forward(self, article_text):
+        prediction = self.summarizer(article_text=article_text)
+        
+        # The .structured_summary attribute will be a validated Pydantic object
+        return dspy.Prediction(summary_obj=prediction.structured_summary)
+
+# ❌ DON'T: Just ask for JSON in a regular prompt.
+# A standard `dspy.Predict` module might produce malformed JSON or ignore your instructions.
+# bad_summarizer = dspy.Predict("article_text -> json_summary")
+# This is unreliable and will often fail.
+```
+
+### 3. Configure and Run
+
+```python
+# --- Long-form text to be summarized ---
+article = """
+PARIS, France – After years of anticipation, the city of Paris is making its final preparations
+to host the Summer Olympics. The event is expected to draw millions of visitors and generate
+billions in revenue, but has also raised concerns among residents about security and
+overcrowding. Organizers say they are confident the games will be a major success,
+highlighting the city's unique cultural heritage as a backdrop for the competition.
+"""
+
+# --- Configuration ---
+# lm = dspy.OpenAI(model='gpt-4-turbo')
+# dspy.settings.configure(lm=lm)
+
+# --- Execution ---
+summarizer_pipeline = StructuredSummarizer()
+prediction = summarizer_pipeline(article_text=article)
+
+# Access the Pydantic object directly
+summary: ArticleSummary = prediction.summary_obj
+
+# You can now use the structured data with confidence
+print(f"Title: {summary.title}")
+print(f"Summary: {summary.summary}")
+print(f"Keywords: {summary.keywords}")
+print(f"Sentiment: {summary.sentiment}")
+
+# It's also easy to convert to a dictionary or JSON string
+print(summary.model_dump_json(indent=2))
+```
+
+## Best Practices for Structured Output
+
+-   **Be Specific in Field Descriptions**: The `description` you provide in `pydantic.Field` is used as part of the prompt to the LM. The more specific and helpful your descriptions are, the better the output will be.
+-   **Use Pydantic Validators**: Leverage Pydantic's built-in validators (like `pattern` for regex, or `min_length`, `max_length`) to add another layer of enforcement on top of the LM's output. DSPy's `TypedPredictor` will automatically use these.
+-   **One Model, One Responsibility**: Create one Pydantic model for each distinct type of structured data you need. Avoid creating massive, overly complex models that try to do everything at once.
+-   **Compile for Robustness**: Compiling a `TypedPredictor` is highly effective. The optimizer will generate few-shot examples of valid JSON, which significantly improves the reliability of the LM in producing the correct format, especially with smaller models.
+-   **Handle Validation Errors**: While `TypedPredictor` is robust, extremely non-compliant LMs might still fail. Your production code should have a `try...except` block to catch potential `pydantic.ValidationError` if the LM fails to produce valid output after multiple retries.
+
+## References
+- [`DSPy/06_Typed_Predictors.mdc`](mdc:.cursor/rules/DSPy/06_Typed_Predictors.mdc)
+- [`DSPy/01_Signatures_Custom.mdc`](mdc:.cursor/rules/DSPy/01_Signatures_Custom.mdc)
+- [Pydantic Documentation](mdc:https:/docs.pydantic.dev)

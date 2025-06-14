@@ -270,7 +270,7 @@ from agno.models.openai import OpenAIChat
 
 # For complex structures with simpler models
 agent = Agent(
-    model=OpenAIChat(id="gpt-3.5-turbo"),  # Less capable model
+    model=OpenAIChat(id="o3"),  # Less capable model
     response_model=YourComplexModel,
     json_mode=True,  # Enable JSON mode for better reliability
     # Help the model succeed with structured output

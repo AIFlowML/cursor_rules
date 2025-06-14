@@ -1,0 +1,119 @@
+---
+description: DSPy Optimization (Compilation) Flow
+globs: 
+alwaysApply: false
+---
+> You are an expert in DSPy 3.0. You understand that optimizers (or "teleprompters") are the key to turning declarative programs into high-performance, quality-assured pipelines.
+
+## The DSPy Optimization (Compilation) Flow
+
+DSPy optimizers "compile" your program. They explore different strategies (like generating few-shot examples or refining instructions) to find the best version of your program that maximizes a specific metric on your data.
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│   Your Program  │    │ Your Data (Dev)  │    │  Your Metric     │
+│  (dspy.Module)  │    │ (dspy.Example)   │    │  (e.g., F1 Score)│
+└─────────────────┘    └──────────────────┘    └──────────────────┘
+         │                       │                       │
+         └───────────┬───────────┘                       │
+                     ▼                                   │
+┌────────────────────────────────────────────────────────▼──┐
+│                  Optimizer.compile(...)                   │
+│ (e.g., BootstrapFewShot, SignatureOptimizer, MIPRO)       │
+└───────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌───────────────────────────────────────────────────────────┐
+│                    Optimized Program                      │
+│ (A new version of your program with learned instructions, │
+│         few-shot demonstrations, and parameters)          │
+└───────────────────────────────────────────────────────────┘
+```
+
+## Core Concepts
+
+### What are Optimizers (Teleprompters)?
+
+In DSPy, an optimizer (also called a teleprompter) is an algorithm that tunes your program. Instead of you manually engineering prompts, the optimizer does it automatically. It runs your program on your data, evaluates the output with your metric, and iteratively improves the program's components (like few-shot examples or instructions) to get a better score.
+
+### The `.compile()` Method
+
+This is the main entry point for any optimizer. It orchestrates the tuning process.
+
+- **Input**: It takes your un-optimized program (the "student"), a metric, and datasets for training and/or development.
+- **Process**: The optimizer runs a specific strategy. For example, `BootstrapFewShot` generates few-shot examples for each module in your program from the provided `trainset`.
+- **Output**: It returns a *new*, optimized program (the "teacher") with the learned components built-in. This new program is now ready for use.
+
+### The Metric
+
+The metric is a function that scores your program's predictions against the ground-truth labels in your dataset. **The optimizer's entire goal is to maximize the metric's score.** Choosing the right metric is critical for success.
+
+```python
+# A common and simple metric
+def validate_answer(example, prediction, trace=None):
+    # Check if the predicted answer exactly matches the gold-standard answer
+    return example.answer.lower() == prediction.answer.lower()
+
+# A more advanced metric using DSPy's F1 score utility
+def f1_metric(example, prediction, trace=None):
+    # Calculate the F1 score between the words in the prediction and the gold answer
+    return dspy.evaluate.f1(prediction.answer, example.answer)
+```
+
+## Basic Compilation Example
+
+Here's how to use a simple optimizer, `BootstrapFewShot`, to create few-shot examples for a program.
+
+```python
+import dspy
+from dspy.teleprompt import BootstrapFewShot
+from dspy.evaluate import answer_exact_match
+
+# 1. Define your program
+class BasicQA(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.qa_pair = dspy.ChainOfThought("question -> answer")
+    
+    def forward(self, question):
+        return self.qa_pair(question=question)
+
+# 2. Define your metric
+# We'll use a built-in metric for simplicity
+metric = answer_exact_match
+
+# 3. Create your datasets (see 03_Data_Handling.mdc)
+trainset = [
+    dspy.Example(question="What is 2+2?", answer="4").with_inputs("question"),
+    dspy.Example(question="What is the capital of England?", answer="London").with_inputs("question"),
+]
+devset = [
+    dspy.Example(question="Who wrote 'The Great Gatsby'?", answer="F. Scott Fitzgerald").with_inputs("question"),
+    dspy.Example(question="What is the main component of Earth's atmosphere?", answer="Nitrogen").with_inputs("question"),
+]
+
+# 4. Set up the optimizer
+# This optimizer will create few-shot examples from the trainset
+optimizer = BootstrapFewShot(metric=metric, max_bootstrapped_demos=2)
+
+# 5. Compile!
+uncompiled_program = BasicQA()
+compiled_program = optimizer.compile(uncompiled_program, trainset=trainset)
+
+# Now, the 'compiled_program' has learned few-shot examples inside it.
+# When you call it, the LM will see these examples in the prompt, improving its accuracy.
+# response = compiled_program(question="What is the currency of Japan?")
+```
+
+## Best Practices Summary
+
+- **Start with `BootstrapFewShot`**: It's a robust, general-purpose optimizer that works well for many tasks by building effective few-shot prompts.
+- **Data is Crucial**: Optimizers are only as good as the data they are trained on. Ensure your `trainset` and `devset` are high-quality and representative of your real-world task.
+- **Metrics Guide Everything**: Your choice of metric directly controls what the optimizer values. If you care about factual accuracy, use an exact match metric. If you care about style or completeness, you may need a more complex, LM-based metric.
+- **Compile Once, Use Many Times**: The compilation process can be slow and expensive. The standard workflow is to compile your program once offline, save the optimized version, and then load and serve the optimized program in production.
+
+## References
+- [Rule: `04_BootstrapFewShot.mdc`](mdc:DSPy/04_BootstrapFewShot.mdc)
+- [Rule: `04_Signature_Optimizers.mdc`](mdc:DSPy/04_Signature_Optimizers.mdc)
+- [Rule: `05_Evaluation_Workflow.mdc`](mdc:DSPy/05_Evaluation_Workflow.mdc)
+- [DSPy Documentation: Optimizers (Teleprompters)](mdc:link)
