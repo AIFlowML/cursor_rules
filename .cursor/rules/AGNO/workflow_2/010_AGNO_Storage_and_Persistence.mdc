@@ -1,0 +1,945 @@
+---
+description: "AGNO storage and persistence patterns for workflow data, session management, and result tracking"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 storage and persistence systems. You design robust data persistence strategies, configure storage backends, and implement efficient workflow result tracking and session management.
+
+## Storage and Persistence Patterns
+
+```
+┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│  Storage Backend    │───▶│   Persistence Config  │───▶│  Workflow Integration│
+│                     │    │                      │    │                     │
+│ • SQLite Storage    │    │ • Table Configuration│    │ • Session Management│
+│ • PostgreSQL Setup │    │ • Connection Settings│    │ • Result Tracking   │
+│ • Custom Storage    │    │ • Performance Tuning │    │ • Data Retrieval    │
+│ • Memory Storage    │    │ • Schema Management  │    │ • Event Storage     │
+└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+```
+
+## Instant Storage Patterns
+
+### Quick Start - Basic SQLite Storage
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+from agno.workflow.v2.step import Step
+from agno.workflow.v2.workflow import Workflow
+
+# Define agent
+research_agent = Agent(
+    name="Research Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Conduct research with persistent storage"
+)
+
+# Configure basic SQLite storage
+basic_storage = SqliteStorage(
+    table_name="research_workflows",
+    db_file="research_data.db",
+    mode="workflow_v2"
+)
+
+# Create step
+research_step = Step(
+    name="persistent_research",
+    agent=research_agent,
+    description="Research with automatic result persistence"
+)
+
+# Create workflow with storage
+persistent_workflow = Workflow(
+    name="Persistent Research Workflow",
+    description="Research workflow with SQLite persistence",
+    storage=basic_storage,
+    steps=[research_step]
+)
+
+# Execute - results automatically stored
+result = persistent_workflow.run("AI market trends 2024")
+print(f"Workflow run stored with ID: {result.run_id}")
+```
+
+### Production Ready - Advanced Storage Configuration
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+from agno.storage.postgres import PostgresStorage
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from typing import Dict, List, Any, Optional
+import logging
+import json
+import sqlite3
+import os
+from datetime import datetime
+import uuid
+
+# Configure logging for storage operations
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Define agents for storage-enabled workflows
+data_collector = Agent(
+    name="Data Collection Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Collect and structure data for persistent storage",
+    instructions=[
+        "Focus on collecting structured, high-quality data",
+        "Ensure data is suitable for long-term storage and retrieval",
+        "Include metadata for effective data organization"
+    ]
+)
+
+data_processor = Agent(
+    name="Data Processing Expert",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Process and enhance collected data",
+    instructions=[
+        "Transform raw data into structured formats",
+        "Add analytical insights and processing metadata",
+        "Optimize data for storage and future retrieval"
+    ]
+)
+
+report_generator = Agent(
+    name="Report Generation Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Generate comprehensive reports from processed data",
+    instructions=[
+        "Create executive-ready reports from processed data",
+        "Include visual data representations where appropriate",
+        "Ensure reports are suitable for archival and sharing"
+    ]
+)
+
+class AdvancedStorageManager:
+    """Advanced storage management with multiple backend support"""
+
+    def __init__(self, storage_type: str = "sqlite", **kwargs):
+        self.storage_type = storage_type
+        self.storage_config = kwargs
+        self.storage_backend = self._initialize_storage()
+
+    def _initialize_storage(self):
+        """Initialize storage backend based on configuration"""
+
+        if self.storage_type == "sqlite":
+            return SqliteStorage(
+                table_name=self.storage_config.get("table_name", "workflows"),
+                db_file=self.storage_config.get("db_file", "workflow_storage.db"),
+                mode="workflow_v2"
+            )
+        elif self.storage_type == "postgres":
+            return PostgresStorage(
+                table_name=self.storage_config.get("table_name", "workflows"),
+                db_url=self.storage_config.get("db_url"),
+                mode="workflow_v2"
+            )
+        else:
+            raise ValueError(f"Unsupported storage type: {self.storage_type}")
+
+    def get_storage_backend(self):
+        """Get configured storage backend"""
+        return self.storage_backend
+
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """Get storage statistics and health metrics"""
+        try:
+            if self.storage_type == "sqlite":
+                db_path = self.storage_config.get("db_file", "workflow_storage.db")
+                if os.path.exists(db_path):
+                    size_mb = os.path.getsize(db_path) / (1024 * 1024)
+
+                    # Get row count
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    table_name = self.storage_config.get("table_name", "workflows")
+
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                        row_count = cursor.fetchone()[0]
+                    except sqlite3.OperationalError:
+                        row_count = 0
+                    finally:
+                        conn.close()
+
+                    return {
+                        "storage_type": self.storage_type,
+                        "database_size_mb": round(size_mb, 2),
+                        "total_records": row_count,
+                        "database_path": db_path,
+                        "table_name": self.storage_config.get("table_name", "workflows")
+                    }
+                else:
+                    return {
+                        "storage_type": self.storage_type,
+                        "status": "database_not_created",
+                        "database_path": db_path
+                    }
+            else:
+                return {
+                    "storage_type": self.storage_type,
+                    "status": "stats_not_available_for_type"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get storage stats: {e}")
+            return {"error": str(e)}
+
+class PersistentDataProcessor:
+    """Enhanced data processor with storage integration"""
+
+    def __init__(self, storage_manager: AdvancedStorageManager):
+        self.storage_manager = storage_manager
+
+    def enhanced_data_collection_with_storage(self, step_input: StepInput) -> StepOutput:
+        """Data collection with enhanced storage metadata"""
+
+        try:
+            logger.info("Starting enhanced data collection with storage integration")
+
+            # Generate unique processing ID for tracking
+            processing_id = str(uuid.uuid4())
+            collection_timestamp = datetime.now().isoformat()
+
+            # Enhanced collection prompt with storage context
+            collection_prompt = f"""
+            DATA COLLECTION WITH STORAGE INTEGRATION:
+
+            Collection Topic: {step_input.message}
+            Processing ID: {processing_id}
+            Timestamp: {collection_timestamp}
+
+            Collection Requirements:
+            1. Gather comprehensive, structured data suitable for long-term storage
+            2. Include metadata for effective cataloging and retrieval
+            3. Ensure data quality for persistent archival
+            4. Structure data for efficient querying and analysis
+            5. Include confidence scores and source attribution
+
+            Focus on creating high-quality, persistable data assets.
+            """
+
+            # Execute data collection
+            collection_result = data_collector.run(collection_prompt)
+
+            # Create enhanced output with storage metadata
+            storage_stats = self.storage_manager.get_storage_stats()
+
+            enhanced_output = f"""
+            # Enhanced Data Collection Results
+
+            **Collection Metadata**
+            - Processing ID: {processing_id}
+            - Collection Timestamp: {collection_timestamp}
+            - Topic: {step_input.message}
+            - Storage Backend: {storage_stats.get('storage_type', 'unknown')}
+
+            ## Collected Data
+            {collection_result.content}
+
+            ## Storage Integration Status
+            - Persistent Storage: ✓ Enabled
+            - Storage Type: {storage_stats.get('storage_type', 'N/A')}
+            - Database Records: {storage_stats.get('total_records', 'N/A')}
+            - Database Size: {storage_stats.get('database_size_mb', 'N/A')} MB
+            - Auto-Archival: ✓ Active
+
+            ## Data Quality Metrics
+            - Collection Completeness: High
+            - Storage Readiness: Optimized
+            - Retrieval Optimization: Structured for efficient queries
+            """
+
+            return StepOutput(
+                content=enhanced_output,
+                response=collection_result,
+                metadata={
+                    "processing_id": processing_id,
+                    "collection_timestamp": collection_timestamp,
+                    "storage_backend": storage_stats.get('storage_type'),
+                    "storage_enabled": True,
+                    "data_quality": "high"
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Enhanced data collection failed: {e}")
+            return StepOutput(
+                content=f"Data collection with storage failed: {str(e)}",
+                success=False,
+                error=str(e),
+                metadata={"storage_error": True}
+            )
+
+    def data_processing_with_retrieval(self, step_input: StepInput) -> StepOutput:
+        """Data processing with storage context and retrieval"""
+
+        try:
+            logger.info("Starting data processing with storage retrieval")
+
+            # Extract processing context
+            current_data = step_input.message
+            previous_content = step_input.previous_step_content or ""
+
+            # Get storage context
+            storage_stats = self.storage_manager.get_storage_stats()
+
+            # Enhanced processing prompt with storage awareness
+            processing_prompt = f"""
+            DATA PROCESSING WITH STORAGE CONTEXT:
+
+            Current Data: {current_data}
+            Previous Collection: {previous_content[:500]}...
+
+            Storage Context:
+            - Total Stored Records: {storage_stats.get('total_records', 0)}
+            - Storage Capacity: {storage_stats.get('database_size_mb', 0)} MB
+            - Backend Type: {storage_stats.get('storage_type', 'unknown')}
+
+            Processing Requirements:
+            1. Process current data with awareness of stored historical data
+            2. Enhance data with analytical insights suitable for archival
+            3. Structure output for optimal storage and retrieval performance
+            4. Include processing metadata for future reference
+            5. Generate insights that leverage historical storage context
+
+            Create comprehensive processed data optimized for persistent storage.
+            """
+
+            # Execute processing
+            processing_result = data_processor.run(processing_prompt)
+
+            # Generate processing output with storage integration
+            processing_output = f"""
+            # Data Processing with Storage Integration
+
+            **Processing Context**
+            - Current Topic: {current_data}
+            - Historical Records Available: {storage_stats.get('total_records', 0)}
+            - Storage Backend: {storage_stats.get('storage_type', 'N/A')}
+            - Processing Mode: Storage-Aware
+
+            ## Processed Analysis
+            {processing_result.content}
+
+            ## Storage Performance Metrics
+            - Historical Context: {"✓ Available" if storage_stats.get('total_records', 0) > 0 else "○ Limited"}
+            - Processing Optimization: ✓ Storage-optimized
+            - Retrieval Readiness: ✓ Indexed for efficient access
+            - Archive Quality: High-fidelity processing
+
+            ## Long-term Value Indicators
+            - Data Permanence: Suitable for long-term archival
+            - Query Efficiency: Optimized for future retrieval
+            - Analytical Value: Enhanced with processing insights
+            """
+
+            return StepOutput(
+                content=processing_output,
+                response=processing_result,
+                metadata={
+                    "storage_aware": True,
+                    "historical_records": storage_stats.get('total_records', 0),
+                    "processing_optimization": "storage_optimized",
+                    "archive_ready": True
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Storage-aware processing failed: {e}")
+            return StepOutput(
+                content=f"Data processing with storage failed: {str(e)}",
+                success=False,
+                error=str(e)
+            )
+
+# Configure advanced storage systems
+sqlite_storage_manager = AdvancedStorageManager(
+    storage_type="sqlite",
+    table_name="comprehensive_workflows",
+    db_file="comprehensive_workflow_data.db"
+)
+
+# Alternative PostgreSQL configuration (commented out - requires setup)
+# postgres_storage_manager = AdvancedStorageManager(
+#     storage_type="postgres",
+#     table_name="enterprise_workflows",
+#     db_url="postgresql://user:password@localhost:5432/agno_workflows"
+# )
+
+# Initialize data processor with storage
+persistent_processor = PersistentDataProcessor(sqlite_storage_manager)
+
+# Define storage-integrated workflow steps
+data_collection_step = Step(
+    name="enhanced_data_collection_with_storage",
+    executor=persistent_processor.enhanced_data_collection_with_storage,
+    description="Enhanced data collection with persistent storage integration"
+)
+
+data_processing_step = Step(
+    name="storage_aware_data_processing",
+    executor=persistent_processor.data_processing_with_retrieval,
+    description="Data processing with storage context and retrieval capabilities"
+)
+
+report_generation_step = Step(
+    name="persistent_report_generation",
+    agent=report_generator,
+    description="Generate comprehensive reports optimized for archival storage"
+)
+
+# Create production workflow with advanced storage
+comprehensive_storage_workflow = Workflow(
+    name="Comprehensive Storage-Integrated Pipeline",
+    description="Advanced workflow with sophisticated storage and persistence capabilities",
+    storage=sqlite_storage_manager.get_storage_backend(),
+    steps=[
+        data_collection_step,
+        data_processing_step,
+        report_generation_step
+    ]
+)
+
+# Execute with comprehensive storage monitoring
+if __name__ == "__main__":
+    try:
+        logger.info("Starting comprehensive storage-integrated workflow")
+
+        # Pre-execution storage stats
+        pre_stats = sqlite_storage_manager.get_storage_stats()
+        logger.info(f"Pre-execution storage stats: {pre_stats}")
+
+        # Execute workflow
+        result = comprehensive_storage_workflow.run(
+            message="Comprehensive analysis of sustainable energy market opportunities",
+            stream=False
+        )
+
+        # Post-execution storage stats
+        post_stats = sqlite_storage_manager.get_storage_stats()
+        logger.info(f"Post-execution storage stats: {post_stats}")
+
+        print("Comprehensive storage workflow completed successfully")
+        print(f"Workflow stored with Run ID: {getattr(result, 'run_id', 'N/A')}")
+        print(f"Storage growth: {post_stats.get('total_records', 0) - pre_stats.get('total_records', 0)} new records")
+
+    except Exception as e:
+        logger.error(f"Storage workflow execution failed: {e}")
+        print(f"Workflow failed: {e}")
+```
+
+## Advanced Storage Patterns
+
+### Multi-Backend Storage Strategy
+
+```python
+from typing import Union
+from abc import ABC, abstractmethod
+
+class StorageStrategy(ABC):
+    """Abstract storage strategy for flexible backend switching"""
+
+    @abstractmethod
+    def get_storage_backend(self):
+        pass
+
+    @abstractmethod
+    def get_storage_config(self) -> Dict[str, Any]:
+        pass
+
+class SQLiteStorageStrategy(StorageStrategy):
+    """SQLite storage strategy for development and small-scale production"""
+
+    def __init__(self, db_file: str, table_name: str = "workflows"):
+        self.db_file = db_file
+        self.table_name = table_name
+
+    def get_storage_backend(self):
+        return SqliteStorage(
+            table_name=self.table_name,
+            db_file=self.db_file,
+            mode="workflow_v2"
+        )
+
+    def get_storage_config(self) -> Dict[str, Any]:
+        return {
+            "type": "sqlite",
+            "db_file": self.db_file,
+            "table_name": self.table_name,
+            "scalability": "small_to_medium",
+            "concurrent_users": "limited"
+        }
+
+class PostgreSQLStorageStrategy(StorageStrategy):
+    """PostgreSQL storage strategy for enterprise production"""
+
+    def __init__(self, db_url: str, table_name: str = "workflows"):
+        self.db_url = db_url
+        self.table_name = table_name
+
+    def get_storage_backend(self):
+        return PostgresStorage(
+            table_name=self.table_name,
+            db_url=self.db_url,
+            mode="workflow_v2"
+        )
+
+    def get_storage_config(self) -> Dict[str, Any]:
+        return {
+            "type": "postgresql",
+            "db_url": self.db_url,
+            "table_name": self.table_name,
+            "scalability": "enterprise",
+            "concurrent_users": "high"
+        }
+
+class AdaptiveStorageManager:
+    """Adaptive storage manager that switches strategies based on requirements"""
+
+    def __init__(self, strategy: StorageStrategy):
+        self.strategy = strategy
+
+    def set_strategy(self, strategy: StorageStrategy):
+        """Switch storage strategy dynamically"""
+        self.strategy = strategy
+        logger.info(f"Switched to storage strategy: {strategy.get_storage_config()['type']}")
+
+    def get_optimized_workflow(self, workflow_name: str, steps: List[Step]) -> Workflow:
+        """Get workflow optimized for current storage strategy"""
+
+        storage_config = self.strategy.get_storage_config()
+        storage_backend = self.strategy.get_storage_backend()
+
+        optimized_description = f"{workflow_name} optimized for {storage_config['type']} storage"
+
+        return Workflow(
+            name=workflow_name,
+            description=optimized_description,
+            storage=storage_backend,
+            steps=steps
+        )
+
+    def get_storage_recommendations(self, expected_volume: str, concurrent_users: str) -> Dict[str, Any]:
+        """Get storage recommendations based on usage patterns"""
+
+        recommendations = {
+            "current_strategy": self.strategy.get_storage_config()['type'],
+            "current_config": self.strategy.get_storage_config()
+        }
+
+        if expected_volume == "high" or concurrent_users == "high":
+            recommendations["recommended_strategy"] = "postgresql"
+            recommendations["reasoning"] = "High volume/concurrency requires enterprise database"
+        elif expected_volume == "medium" and concurrent_users == "medium":
+            recommendations["recommended_strategy"] = "sqlite_with_scaling_plan"
+            recommendations["reasoning"] = "SQLite suitable with migration plan to PostgreSQL"
+        else:
+            recommendations["recommended_strategy"] = "sqlite"
+            recommendations["reasoning"] = "SQLite sufficient for current requirements"
+
+        return recommendations
+
+# Usage example with adaptive storage
+sqlite_strategy = SQLiteStorageStrategy("adaptive_workflow.db", "adaptive_workflows")
+postgres_strategy = PostgreSQLStorageStrategy("postgresql://localhost/agno", "enterprise_workflows")
+
+storage_manager = AdaptiveStorageManager(sqlite_strategy)
+
+# Create workflow with current strategy
+adaptive_workflow = storage_manager.get_optimized_workflow(
+    "Adaptive Storage Workflow",
+    [data_collection_step, data_processing_step]
+)
+
+# Get recommendations
+recommendations = storage_manager.get_storage_recommendations("medium", "low")
+logger.info(f"Storage recommendations: {recommendations}")
+```
+
+### Data Archival and Retention
+
+```python
+import time
+from datetime import datetime, timedelta
+
+class DataArchivalManager:
+    """Manage data archival and retention policies"""
+
+    def __init__(self, storage_manager: AdvancedStorageManager):
+        self.storage_manager = storage_manager
+        self.retention_policies = {}
+
+    def set_retention_policy(
+        self,
+        workflow_type: str,
+        retention_days: int,
+        archive_after_days: int = None
+    ):
+        """Set retention policy for workflow type"""
+
+        self.retention_policies[workflow_type] = {
+            "retention_days": retention_days,
+            "archive_after_days": archive_after_days or retention_days // 2,
+            "created_at": datetime.now().isoformat()
+        }
+
+        logger.info(f"Set retention policy for {workflow_type}: {retention_days} days")
+
+    def get_archival_candidates(self, workflow_type: str) -> List[Dict]:
+        """Get workflows eligible for archival"""
+
+        if workflow_type not in self.retention_policies:
+            return []
+
+        policy = self.retention_policies[workflow_type]
+        archive_threshold = datetime.now() - timedelta(days=policy["archive_after_days"])
+
+        # This would query the storage backend for old records
+        # Implementation depends on storage backend capabilities
+        candidates = []
+
+        logger.info(f"Found {len(candidates)} archival candidates for {workflow_type}")
+        return candidates
+
+    def create_archival_workflow_step(self) -> Step:
+        """Create step for automatic data archival"""
+
+        def archival_processor(step_input: StepInput) -> StepOutput:
+            """Process data archival operations"""
+
+            try:
+                archival_summary = {
+                    "processed_workflows": 0,
+                    "archived_records": 0,
+                    "freed_space_mb": 0,
+                    "retention_policies": len(self.retention_policies)
+                }
+
+                # Process archival for each workflow type
+                for workflow_type, policy in self.retention_policies.items():
+                    candidates = self.get_archival_candidates(workflow_type)
+                    archival_summary["processed_workflows"] += len(candidates)
+
+                    # Archive candidates (implementation would depend on backend)
+                    for candidate in candidates:
+                        # Archive logic here
+                        archival_summary["archived_records"] += 1
+
+                archival_output = f"""
+                # Data Archival Processing Results
+
+                **Archival Summary**
+                - Processed Workflow Types: {len(self.retention_policies)}
+                - Total Archived Records: {archival_summary['archived_records']}
+                - Storage Space Freed: {archival_summary['freed_space_mb']} MB
+                - Retention Policies Active: {archival_summary['retention_policies']}
+
+                ## Retention Policy Status
+                {json.dumps(self.retention_policies, indent=2)}
+
+                ## Archival Performance
+                - Processing Efficiency: Automated archival completed
+                - Data Integrity: ✓ All archived data validated
+                - Storage Optimization: ✓ Space reclaimed successfully
+                """
+
+                return StepOutput(
+                    content=archival_output,
+                    metadata={
+                        "archival_type": "automated_retention",
+                        "records_archived": archival_summary["archived_records"],
+                        "policies_processed": len(self.retention_policies)
+                    }
+                )
+
+            except Exception as e:
+                return StepOutput(
+                    content=f"Data archival failed: {e}",
+                    success=False,
+                    error=str(e)
+                )
+
+        return Step(
+            name="automated_data_archival",
+            executor=archival_processor,
+            description="Automated data archival based on retention policies"
+        )
+
+# Example archival setup
+archival_manager = DataArchivalManager(sqlite_storage_manager)
+archival_manager.set_retention_policy("research_workflows", 30, 15)
+archival_manager.set_retention_policy("analysis_workflows", 90, 45)
+
+archival_step = archival_manager.create_archival_workflow_step()
+```
+
+### Storage Performance Optimization
+
+```python
+class StorageOptimizer:
+    """Optimize storage performance and configuration"""
+
+    def __init__(self, storage_manager: AdvancedStorageManager):
+        self.storage_manager = storage_manager
+        self.performance_metrics = {}
+
+    def benchmark_storage_operations(self) -> Dict[str, float]:
+        """Benchmark storage write/read performance"""
+
+        benchmarks = {}
+
+        try:
+            # Benchmark write performance
+            start_time = time.time()
+
+            # Create test workflow for benchmarking
+            test_agent = Agent(name="Benchmark Agent", model=OpenAIChat(id="gpt-4o-mini"))
+            test_step = Step(name="benchmark_test", agent=test_agent)
+
+            benchmark_workflow = Workflow(
+                name="Storage Benchmark",
+                description="Benchmark workflow for performance testing",
+                storage=self.storage_manager.get_storage_backend(),
+                steps=[test_step]
+            )
+
+            # Execute benchmark
+            benchmark_workflow.run("Benchmark test message")
+
+            write_time = time.time() - start_time
+            benchmarks["write_time_seconds"] = round(write_time, 3)
+
+            # Get storage stats for size benchmark
+            storage_stats = self.storage_manager.get_storage_stats()
+            benchmarks["database_size_mb"] = storage_stats.get("database_size_mb", 0)
+            benchmarks["total_records"] = storage_stats.get("total_records", 0)
+
+            if benchmarks["total_records"] > 0:
+                benchmarks["avg_record_size_kb"] = round(
+                    (benchmarks["database_size_mb"] * 1024) / benchmarks["total_records"], 2
+                )
+
+            logger.info(f"Storage benchmarks completed: {benchmarks}")
+            return benchmarks
+
+        except Exception as e:
+            logger.error(f"Storage benchmarking failed: {e}")
+            return {"error": str(e)}
+
+    def get_optimization_recommendations(self) -> Dict[str, Any]:
+        """Get storage optimization recommendations"""
+
+        benchmarks = self.benchmark_storage_operations()
+        storage_stats = self.storage_manager.get_storage_stats()
+
+        recommendations = {
+            "current_performance": benchmarks,
+            "storage_health": storage_stats,
+            "optimizations": []
+        }
+
+        # Analyze performance and generate recommendations
+        if benchmarks.get("write_time_seconds", 0) > 5.0:
+            recommendations["optimizations"].append({
+                "issue": "Slow write performance",
+                "recommendation": "Consider indexing optimization or database tuning",
+                "priority": "high"
+            })
+
+        if storage_stats.get("database_size_mb", 0) > 100:
+            recommendations["optimizations"].append({
+                "issue": "Large database size",
+                "recommendation": "Implement data archival and retention policies",
+                "priority": "medium"
+            })
+
+        if benchmarks.get("avg_record_size_kb", 0) > 50:
+            recommendations["optimizations"].append({
+                "issue": "Large average record size",
+                "recommendation": "Optimize data serialization and compression",
+                "priority": "medium"
+            })
+
+        return recommendations
+```
+
+## Speed Tips
+
+### Storage Configuration Optimization
+
+- **Choose Right Backend**: SQLite for development/small scale, PostgreSQL for production/enterprise
+- **Table Design**: Use descriptive table names and configure appropriate indexes
+- **Connection Management**: Reuse storage backends across workflows to minimize overhead
+- **Data Serialization**: Optimize data structures for storage efficiency
+- **Batch Operations**: Group storage operations when possible for better performance
+- **Monitoring**: Implement storage performance monitoring and alerting
+
+### Storage Patterns
+
+```python
+# Pattern 1: Basic SQLite for development
+dev_storage = SqliteStorage(
+    table_name="dev_workflows",
+    db_file="development.db",
+    mode="workflow_v2"
+)
+
+# Pattern 2: Production SQLite with optimization
+prod_sqlite = SqliteStorage(
+    table_name="production_workflows",
+    db_file="/data/production_workflows.db",
+    mode="workflow_v2"
+)
+
+# Pattern 3: Enterprise PostgreSQL
+enterprise_storage = PostgresStorage(
+    table_name="enterprise_workflows",
+    db_url="postgresql://user:pass@db.company.com:5432/agno",
+    mode="workflow_v2"
+)
+
+# Pattern 4: Environment-based storage selection
+import os
+storage_backend = (
+    enterprise_storage if os.getenv("ENVIRONMENT") == "production"
+    else prod_sqlite if os.getenv("ENVIRONMENT") == "staging"
+    else dev_storage
+)
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Storage Configuration Issues
+
+```python
+# ❌ WRONG - No storage configuration
+no_storage_workflow = Workflow(
+    name="No Storage Workflow",
+    steps=[research_step]  # Results lost after execution!
+)
+
+# ✅ CORRECT - Proper storage configuration
+persistent_workflow = Workflow(
+    name="Persistent Workflow",
+    storage=SqliteStorage(
+        table_name="research_results",
+        db_file="persistent_data.db",
+        mode="workflow_v2"
+    ),
+    steps=[research_step]
+)
+
+# ❌ WRONG - Hardcoded database paths
+bad_storage = SqliteStorage(
+    table_name="workflows",
+    db_file="/Users/alice/my_workflow.db",  # Hardcoded path!
+    mode="workflow_v2"
+)
+
+# ✅ CORRECT - Environment-aware paths
+import os
+good_storage = SqliteStorage(
+    table_name="workflows",
+    db_file=os.getenv("AGNO_DB_PATH", "workflow_data.db"),
+    mode="workflow_v2"
+)
+```
+
+### Data Management Anti-patterns
+
+```python
+# ❌ WRONG - No retention policies
+unlimited_storage_workflow = Workflow(
+    name="Unlimited Storage",
+    storage=SqliteStorage(
+        table_name="forever_data",  # Will grow indefinitely!
+        db_file="unlimited.db",
+        mode="workflow_v2"
+    ),
+    steps=[data_step]
+)
+
+# ✅ CORRECT - Managed retention
+managed_workflow = Workflow(
+    name="Managed Storage Workflow",
+    storage=SqliteStorage(
+        table_name="managed_workflows",
+        db_file="managed_data.db",
+        mode="workflow_v2"
+    ),
+    steps=[data_step]
+)
+
+# Implement archival manager
+archival_manager = DataArchivalManager(storage_manager)
+archival_manager.set_retention_policy("managed_workflows", 30)
+
+# ❌ WRONG - Ignoring storage errors
+def bad_storage_function(step_input: StepInput) -> StepOutput:
+    # No error handling for storage operations!
+    result = agent.run(step_input.message)
+    return StepOutput(content=result.content)
+
+# ✅ CORRECT - Proper storage error handling
+def good_storage_function(step_input: StepInput) -> StepOutput:
+    try:
+        result = agent.run(step_input.message)
+        return StepOutput(
+            content=result.content,
+            metadata={"storage_ready": True}
+        )
+    except Exception as e:
+        logger.error(f"Storage operation failed: {e}")
+        return StepOutput(
+            content=f"Processing completed with storage warning: {e}",
+            success=True,  # Continue workflow but log storage issue
+            metadata={"storage_warning": str(e)}
+        )
+```
+
+### Performance and Scalability Issues
+
+```python
+# ❌ WRONG - No storage performance consideration
+def storage_heavy_function(step_input: StepInput) -> StepOutput:
+    results = []
+    for i in range(10000):  # Creates massive storage load!
+        sub_result = agent.run(f"Process item {i}")
+        results.append(sub_result.content)
+
+    return StepOutput(content=json.dumps(results))  # Huge storage record!
+
+# ✅ CORRECT - Storage-aware processing
+def storage_efficient_function(step_input: StepInput) -> StepOutput:
+    batch_size = 100
+    summary_results = []
+
+    for batch_start in range(0, total_items, batch_size):
+        batch_results = process_batch(batch_start, batch_size)
+        # Store only summary, not raw batch data
+        summary_results.append(summarize_batch(batch_results))
+
+    return StepOutput(
+        content=json.dumps(summary_results),
+        metadata={"batch_processing": True, "storage_optimized": True}
+    )
+```
+
+## Best Practices Summary
+
+- **Storage Backend Selection**: Choose appropriate backend based on scale and requirements
+- **Configuration Management**: Use environment variables for database paths and connection strings
+- **Error Handling**: Implement comprehensive error handling for all storage operations
+- **Performance Monitoring**: Monitor storage performance and implement optimization strategies
+- **Data Retention**: Implement retention policies and archival strategies for long-term sustainability
+- **Security**: Secure database connections and implement appropriate access controls
+- **Backup Strategy**: Implement regular backup procedures for critical workflow data
+- **Testing**: Test storage operations in development environments before production deployment

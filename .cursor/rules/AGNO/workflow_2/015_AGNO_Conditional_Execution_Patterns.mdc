@@ -1,0 +1,839 @@
+---
+description: AGNO Workflows 2.0 - Master conditional execution patterns for dynamic workflow control
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 conditional execution patterns. Master dynamic workflow control with intelligent branching logic.
+
+## Conditional Execution Flow
+
+```
+Input → Evaluator Function → Condition Check → Execute Steps → Continue Workflow
+  ↓           ↓                   ↓              ↓               ↓
+Message    Boolean Logic      True/False      Conditional     Next Step
+Data       Analysis           Decision        Steps Run       Processing
+  ↓           ↓                   ↓              ↓               ↓
+Context    Evaluation         Branch Path     Sub-workflow    Workflow
+Analysis   Complete           Selected        Execution       Continuation
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Conditional Execution
+```python
+from agno.workflow.v2 import Workflow, Condition, Step
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Basic condition evaluator
+def is_technical_topic(step_input: StepInput) -> bool:
+    """Check if topic is technical"""
+    message = step_input.message.lower()
+    technical_keywords = ["technology", "ai", "software", "programming", "data"]
+    return any(keyword in message for keyword in technical_keywords)
+
+# Agents for different scenarios
+technical_expert = Agent(name="Tech Expert", model=OpenAIChat(id="gpt-4o-mini"))
+general_analyst = Agent(name="General Analyst", model=OpenAIChat(id="gpt-4o-mini"))
+
+# Basic conditional workflow
+conditional_workflow = Workflow(
+    name="Basic Conditional Workflow",
+    steps=[
+        Condition(
+            name="tech_check",
+            evaluator=is_technical_topic,
+            steps=[technical_expert]  # Runs only if condition is True
+        ),
+        general_analyst  # Always runs
+    ]
+)
+
+# Execute - technical expert runs only for technical topics
+conditional_workflow.print_response("Analyze AI trends in healthcare", markdown=True)
+```
+
+### Production Ready - Advanced Conditional Logic
+```python
+from agno.workflow.v2 import Workflow, Condition, Step, Parallel, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+from typing import List, Dict
+import re
+
+# Advanced condition evaluators
+def analyze_content_complexity(step_input: StepInput) -> bool:
+    """Evaluate content complexity for specialized processing"""
+    content = step_input.previous_step_content or step_input.message
+    
+    # Complexity indicators
+    word_count = len(content.split())
+    technical_terms = len(re.findall(r'\b(algorithm|framework|implementation|architecture|optimization)\b', content.lower()))
+    sentence_count = len(re.split(r'[.!?]+', content))
+    avg_sentence_length = word_count / max(sentence_count, 1)
+    
+    # Complex if multiple indicators
+    complexity_score = sum([
+        word_count > 200,           # Long content
+        technical_terms > 3,        # Many technical terms
+        avg_sentence_length > 20,   # Complex sentences
+        "analysis" in content.lower() and "data" in content.lower()  # Analytical content
+    ])
+    
+    return complexity_score >= 2
+
+def requires_fact_checking(step_input: StepInput) -> bool:
+    """Determine if content needs fact-checking"""
+    content = step_input.previous_step_content or step_input.message
+    
+    fact_indicators = [
+        "study shows", "research indicates", "according to",
+        "statistics", "data shows", "survey", "report",
+        "million", "billion", "percent", "%", "increased", "decreased"
+    ]
+    
+    return any(indicator in content.lower() for indicator in fact_indicators)
+
+def needs_industry_expertise(step_input: StepInput) -> bool:
+    """Check if topic requires industry-specific expertise"""
+    message = step_input.message.lower()
+    
+    industry_domains = {
+        "healthcare": ["healthcare", "medical", "hospital", "patient", "clinical"],
+        "finance": ["finance", "banking", "investment", "trading", "fintech"],
+        "technology": ["tech", "software", "ai", "cloud", "programming"],
+        "manufacturing": ["manufacturing", "production", "industrial", "supply chain"]
+    }
+    
+    for domain, keywords in industry_domains.items():
+        if any(keyword in message for keyword in keywords):
+            return True
+    
+    return False
+
+def requires_regulatory_review(step_input: StepInput) -> bool:
+    """Check if content needs regulatory compliance review"""
+    content = (step_input.previous_step_content or step_input.message).lower()
+    
+    regulatory_triggers = [
+        "compliance", "regulation", "gdpr", "hipaa", "sox",
+        "audit", "legal", "privacy", "security", "data protection"
+    ]
+    
+    return any(trigger in content for trigger in regulatory_triggers)
+
+# Specialized agents and teams
+complexity_analyst = Agent(
+    name="Complexity Analysis Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle complex analytical tasks requiring deep expertise",
+    instructions=[
+        "Provide comprehensive analysis for complex topics",
+        "Break down complex concepts into understandable components", 
+        "Use advanced analytical frameworks and methodologies",
+        "Provide detailed reasoning and supporting evidence"
+    ]
+)
+
+fact_checker = Agent(
+    name="Fact Verification Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Verify facts, statistics, and claims",
+    instructions=[
+        "Verify factual claims using reliable sources",
+        "Cross-reference statistics and data points",
+        "Flag potentially inaccurate information",
+        "Provide source citations for verified facts"
+    ]
+)
+
+industry_expert_team = Team(
+    name="Industry Expert Team", 
+    mode="coordinate",
+    members=[
+        Agent(name="Healthcare Expert", model=OpenAIChat(id="gpt-4o-mini"), role="Healthcare industry specialist"),
+        Agent(name="Finance Expert", model=OpenAIChat(id="gpt-4o-mini"), role="Financial services specialist"),
+        Agent(name="Tech Expert", model=OpenAIChat(id="gpt-4o-mini"), role="Technology industry specialist")
+    ],
+    instructions="Provide industry-specific expertise and insights"
+)
+
+regulatory_reviewer = Agent(
+    name="Regulatory Compliance Reviewer",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Review content for regulatory compliance requirements",
+    instructions=[
+        "Identify potential regulatory compliance issues",
+        "Suggest compliance-aligned modifications",
+        "Flag content requiring legal review",
+        "Recommend risk mitigation strategies"
+    ]
+)
+
+# Custom conditional processing function
+def conditional_quality_gate(step_input: StepInput) -> StepOutput:
+    """Quality gate with multiple conditional checks"""
+    
+    content = step_input.previous_step_content or ""
+    
+    # Quality assessments
+    word_count = len(content.split())
+    has_structure = any(marker in content for marker in ["##", "**", "1.", "-"])
+    has_conclusions = any(term in content.lower() for term in ["conclusion", "summary", "recommendation"])
+    
+    quality_issues = []
+    
+    if word_count < 150:
+        quality_issues.append("Content too brief")
+    
+    if not has_structure:
+        quality_issues.append("Lacks clear structure")
+        
+    if not has_conclusions:
+        quality_issues.append("Missing conclusions or recommendations")
+    
+    if quality_issues:
+        quality_report = f"""
+        ## Conditional Quality Gate - ISSUES DETECTED ⚠️
+        
+        **Quality Issues Found**:
+        {chr(10).join(f"- {issue}" for issue in quality_issues)}
+        
+        **Content Metrics**:
+        - Word count: {word_count}
+        - Has structure: {'✅' if has_structure else '❌'}
+        - Has conclusions: {'✅' if has_conclusions else '❌'}
+        
+        **Recommendation**: Address quality issues before proceeding
+        
+        **Original Content**:
+        {content}
+        """
+        
+        return StepOutput(
+            content=quality_report,
+            success=True,  # Continue but flag issues
+        )
+    else:
+        return StepOutput(
+            content=f"✅ Quality gate passed. Content meets all quality standards.\n\n{content}",
+            success=True
+        )
+
+# Advanced conditional workflow
+advanced_conditional_workflow = Workflow(
+    name="Advanced Conditional Processing Pipeline",
+    description="Multi-condition workflow with intelligent branching",
+    steps=[
+        # Initial processing step
+        Step(
+            name="initial_analysis",
+            description="Initial content analysis",
+            agent=Agent(name="Initial Analyst", model=OpenAIChat(id="gpt-4o-mini"))
+        ),
+        
+        # Conditional complexity analysis
+        Condition(
+            name="complexity_check",
+            description="Check if content requires complex analysis",
+            evaluator=analyze_content_complexity,
+            steps=[
+                Step(
+                    name="complex_analysis",
+                    description="Deep complexity analysis",
+                    agent=complexity_analyst
+                )
+            ]
+        ),
+        
+        # Conditional fact checking
+        Condition(
+            name="fact_check_condition",
+            description="Determine if fact-checking is needed",
+            evaluator=requires_fact_checking,
+            steps=[
+                Step(
+                    name="fact_verification",
+                    description="Verify facts and claims",
+                    agent=fact_checker
+                )
+            ]
+        ),
+        
+        # Conditional industry expertise
+        Condition(
+            name="industry_expertise_check",
+            description="Check if industry expertise is needed",
+            evaluator=needs_industry_expertise,
+            steps=[
+                Step(
+                    name="industry_analysis",
+                    description="Industry-specific analysis",
+                    team=industry_expert_team
+                )
+            ]
+        ),
+        
+        # Quality gate with conditional processing
+        Step(
+            name="quality_gate",
+            description="Conditional quality assessment",
+            executor=conditional_quality_gate
+        ),
+        
+        # Conditional regulatory review
+        Condition(
+            name="regulatory_review_check",
+            description="Check if regulatory review is needed",
+            evaluator=requires_regulatory_review,
+            steps=[
+                Step(
+                    name="regulatory_review",
+                    description="Regulatory compliance review", 
+                    agent=regulatory_reviewer
+                )
+            ]
+        ),
+        
+        # Final synthesis step
+        Step(
+            name="final_synthesis",
+            description="Synthesize all conditional processing results",
+            agent=Agent(
+                name="Synthesis Specialist",
+                model=OpenAIChat(id="gpt-4o"),
+                role="Synthesize results from multiple conditional branches"
+            )
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="conditional_workflows",
+        db_file="tmp/conditional_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True
+)
+
+# Execute with comprehensive conditional processing
+response = advanced_conditional_workflow.run(
+    message="Analyze the impact of AI regulation on healthcare data privacy, including HIPAA compliance requirements and recent studies showing 45% increase in data breaches",
+    additional_data={
+        "analysis_type": "comprehensive",
+        "compliance_focus": True,
+        "fact_check_required": True
+    }
+)
+
+print(f"Conditional workflow result: {response.content[:500]}...")
+```
+
+## Conditional Pattern Variations
+
+### Multiple Condition Evaluators
+```python
+# Content-based conditions
+def is_research_heavy(step_input: StepInput) -> bool:
+    """Check if content requires heavy research"""
+    content = step_input.message
+    research_indicators = ["research", "study", "analyze", "investigate", "survey"]
+    return sum(indicator in content.lower() for indicator in research_indicators) >= 2
+
+def is_time_sensitive(step_input: StepInput) -> bool:
+    """Check if request is time-sensitive"""
+    content = step_input.message.lower()
+    urgency_words = ["urgent", "asap", "immediately", "rush", "deadline", "emergency"]
+    return any(word in content for word in urgency_words)
+
+def requires_technical_validation(step_input: StepInput) -> bool:
+    """Check if technical validation is needed"""
+    content = step_input.previous_step_content or step_input.message
+    tech_indicators = ["implementation", "architecture", "algorithm", "performance", "scalability"]
+    return any(indicator in content.lower() for indicator in tech_indicators)
+
+# Multi-condition workflow
+multi_condition_workflow = Workflow(
+    name="Multi-Condition Workflow",
+    steps=[
+        # Research condition
+        Condition(
+            name="research_condition",
+            evaluator=is_research_heavy,
+            steps=[
+                Step(name="deep_research", agent=research_specialist)
+            ]
+        ),
+        
+        # Time sensitivity condition
+        Condition(
+            name="urgency_condition", 
+            evaluator=is_time_sensitive,
+            steps=[
+                Step(name="priority_processing", agent=priority_agent)
+            ]
+        ),
+        
+        # Technical validation condition
+        Condition(
+            name="tech_validation",
+            evaluator=requires_technical_validation,
+            steps=[
+                Step(name="technical_review", agent=tech_validator)
+            ]
+        ),
+        
+        # Final processing
+        general_processor
+    ]
+)
+```
+
+### Nested Conditional Structures
+```python
+def is_healthcare_topic(step_input: StepInput) -> bool:
+    """Check if topic is healthcare-related"""
+    return "healthcare" in step_input.message.lower() or "medical" in step_input.message.lower()
+
+def requires_clinical_expertise(step_input: StepInput) -> bool:
+    """Check if clinical expertise is needed"""
+    clinical_terms = ["clinical", "diagnosis", "treatment", "patient", "therapy"]
+    content = step_input.previous_step_content or step_input.message
+    return any(term in content.lower() for term in clinical_terms)
+
+def needs_regulatory_compliance(step_input: StepInput) -> bool:
+    """Check if regulatory compliance review is needed"""
+    return "hipaa" in (step_input.previous_step_content or step_input.message).lower()
+
+# Nested conditional workflow
+nested_conditional_workflow = Workflow(
+    name="Nested Conditional Healthcare Analysis",
+    steps=[
+        # Initial analysis
+        basic_analyst,
+        
+        # Top-level condition: Healthcare topic
+        Condition(
+            name="healthcare_check",
+            evaluator=is_healthcare_topic,
+            steps=[
+                # Healthcare-specific processing
+                Step(name="healthcare_analysis", agent=healthcare_analyst),
+                
+                # Nested condition: Clinical expertise
+                Condition(
+                    name="clinical_expertise_check",
+                    evaluator=requires_clinical_expertise,
+                    steps=[
+                        Step(name="clinical_review", agent=clinical_expert)
+                    ]
+                ),
+                
+                # Nested condition: Regulatory compliance
+                Condition(
+                    name="compliance_check",
+                    evaluator=needs_regulatory_compliance,
+                    steps=[
+                        Step(name="hipaa_compliance", agent=compliance_officer)
+                    ]
+                )
+            ]
+        ),
+        
+        # Final synthesis
+        final_synthesizer
+    ]
+)
+```
+
+### Conditional with Parallel Execution
+```python
+def requires_multi_perspective_analysis(step_input: StepInput) -> bool:
+    """Check if multiple perspective analysis is needed"""
+    content = step_input.message.lower()
+    multi_perspective_indicators = [
+        "comprehensive", "multi-faceted", "holistic", 
+        "various perspectives", "different angles"
+    ]
+    return any(indicator in content for indicator in multi_perspective_indicators)
+
+# Conditional with parallel processing
+conditional_parallel_workflow = Workflow(
+    name="Conditional Parallel Processing",
+    steps=[
+        # Initial assessment
+        initial_assessor,
+        
+        # Conditional parallel processing
+        Condition(
+            name="multi_perspective_check",
+            evaluator=requires_multi_perspective_analysis,
+            steps=[
+                Parallel(
+                    Step(name="technical_perspective", agent=tech_analyst),
+                    Step(name="business_perspective", agent=business_analyst),
+                    Step(name="user_perspective", agent=user_researcher),
+                    name="multi_perspective_analysis"
+                )
+            ]
+        ),
+        
+        # Synthesis of results
+        perspective_synthesizer
+    ]
+)
+```
+
+## Advanced Conditional Logic
+
+### Context-Aware Conditions
+```python
+def context_aware_evaluator(step_input: StepInput) -> bool:
+    """Evaluate condition based on full context"""
+    
+    # Get all available context
+    current_message = step_input.message
+    previous_content = step_input.previous_step_content or ""
+    workflow_message = step_input.workflow_message or ""
+    additional_data = step_input.additional_data or {}
+    
+    # Multi-factor evaluation
+    factors = []
+    
+    # Factor 1: Content complexity
+    total_content = f"{workflow_message} {previous_content}"
+    word_count = len(total_content.split())
+    factors.append(word_count > 300)
+    
+    # Factor 2: User preferences
+    user_preference = additional_data.get("analysis_depth", "standard")
+    factors.append(user_preference in ["deep", "comprehensive"])
+    
+    # Factor 3: Content indicators
+    complexity_indicators = ["complex", "detailed", "comprehensive", "thorough"]
+    factors.append(any(indicator in current_message.lower() for indicator in complexity_indicators))
+    
+    # Factor 4: Previous step quality
+    if previous_content:
+        previous_quality = len(previous_content.split()) > 100
+        factors.append(previous_quality)
+    
+    # Require at least 2 factors to be true
+    return sum(factors) >= 2
+
+# Context-aware conditional step
+context_aware_step = Condition(
+    name="context_aware_condition",
+    evaluator=context_aware_evaluator,
+    steps=[
+        Step(name="enhanced_processing", agent=enhanced_processor)
+    ]
+)
+```
+
+### Dynamic Condition Configuration
+```python
+class ConditionalWorkflowBuilder:
+    """Builder for dynamic conditional workflows"""
+    
+    def __init__(self):
+        self.conditions = []
+        self.final_steps = []
+    
+    def add_condition(self, name: str, evaluator, steps: List):
+        """Add conditional branch"""
+        self.conditions.append(
+            Condition(name=name, evaluator=evaluator, steps=steps)
+        )
+        return self
+    
+    def add_final_steps(self, *steps):
+        """Add final processing steps"""
+        self.final_steps.extend(steps)
+        return self
+    
+    def build(self, name: str):
+        """Build the conditional workflow"""
+        all_steps = self.conditions + self.final_steps
+        return Workflow(name=name, steps=all_steps)
+
+# Usage - build conditional workflow dynamically
+builder = ConditionalWorkflowBuilder()
+
+conditional_workflow = (builder
+    .add_condition(
+        name="technical_check",
+        evaluator=is_technical_topic,
+        steps=[tech_specialist]
+    )
+    .add_condition(
+        name="research_check", 
+        evaluator=is_research_heavy,
+        steps=[research_specialist]
+    )
+    .add_condition(
+        name="urgency_check",
+        evaluator=is_time_sensitive,
+        steps=[priority_processor]
+    )
+    .add_final_steps(final_analyzer, report_generator)
+    .build("Dynamic Conditional Workflow")
+)
+```
+
+### Conditional State Management
+```python
+def stateful_condition_evaluator(step_input: StepInput) -> bool:
+    """Condition evaluator that considers workflow state"""
+    
+    # Access workflow session state if available
+    session_state = getattr(step_input, 'workflow_session_state', {})
+    
+    # Check previous conditions executed
+    previous_conditions = session_state.get('executed_conditions', [])
+    
+    # Conditional logic based on state
+    if 'technical_analysis' in previous_conditions:
+        # Skip if technical analysis already done
+        return False
+    
+    # Check if technical analysis is needed
+    message = step_input.message.lower()
+    needs_technical = any(keyword in message for keyword in ["technical", "implementation", "architecture"])
+    
+    # Update state if condition will execute
+    if needs_technical:
+        if 'executed_conditions' not in session_state:
+            session_state['executed_conditions'] = []
+        session_state['executed_conditions'].append('technical_analysis')
+    
+    return needs_technical
+
+# Stateful conditional workflow
+stateful_workflow = Workflow(
+    name="Stateful Conditional Workflow",
+    steps=[
+        initial_processor,
+        Condition(
+            name="stateful_technical_check",
+            evaluator=stateful_condition_evaluator,
+            steps=[technical_analyst]
+        ),
+        final_processor
+    ],
+    workflow_session_state={'executed_conditions': []}
+)
+```
+
+## Error Handling in Conditions
+
+### Robust Condition Evaluators
+```python
+def robust_condition_evaluator(step_input: StepInput) -> bool:
+    """Condition evaluator with comprehensive error handling"""
+    
+    try:
+        # Primary evaluation logic
+        content = step_input.message or ""
+        
+        if not content.strip():
+            # Handle empty content
+            return False
+        
+        # Safe keyword checking
+        keywords = ["analysis", "research", "detailed"]
+        keyword_count = sum(1 for keyword in keywords if keyword in content.lower())
+        
+        # Safe content length check
+        word_count = len(content.split()) if content else 0
+        
+        # Multiple condition checks with fallbacks
+        conditions = [
+            keyword_count >= 2,
+            word_count > 50,
+            "comprehensive" in content.lower()
+        ]
+        
+        return any(conditions)
+        
+    except AttributeError as e:
+        # Handle missing attributes
+        print(f"Condition evaluator attribute error: {e}")
+        return False
+        
+    except Exception as e:
+        # Handle unexpected errors
+        print(f"Condition evaluator error: {e}")
+        return False  # Default to False for safety
+
+# Conditional with error recovery
+def conditional_with_recovery(step_input: StepInput) -> StepOutput:
+    """Conditional processing with error recovery"""
+    
+    try:
+        # Attempt primary conditional logic
+        if robust_condition_evaluator(step_input):
+            # Execute conditional branch
+            response = specialized_agent.run(step_input.message)
+            return StepOutput(
+                content=response.content if hasattr(response, 'content') else str(response),
+                success=True
+            )
+        else:
+            # Skip conditional processing
+            return StepOutput(
+                content="Conditional requirements not met, skipping specialized processing",
+                success=True
+            )
+            
+    except Exception as e:
+        # Fallback processing
+        return StepOutput(
+            content=f"Conditional processing failed, using fallback: {str(e)}",
+            success=True,  # Continue workflow despite error
+            error=str(e)
+        )
+```
+
+## Speed Tips
+
+### Quick Conditional Factory
+```python
+def quick_condition(name: str, keyword: str, agent: Agent):
+    """Quickly create keyword-based condition"""
+    
+    def keyword_evaluator(step_input: StepInput) -> bool:
+        return keyword.lower() in step_input.message.lower()
+    
+    return Condition(
+        name=name,
+        evaluator=keyword_evaluator,
+        steps=[agent]
+    )
+
+# Usage
+tech_condition = quick_condition("tech_check", "technology", tech_agent)
+business_condition = quick_condition("business_check", "business", business_agent)
+```
+
+### Conditional Template Library
+```python
+class ConditionalTemplates:
+    """Library of common conditional patterns"""
+    
+    @staticmethod
+    def topic_based(topic_keywords: List[str], specialist_agent: Agent):
+        """Create topic-based conditional"""
+        
+        def topic_evaluator(step_input: StepInput) -> bool:
+            message = step_input.message.lower()
+            return any(keyword in message for keyword in topic_keywords)
+        
+        return Condition(
+            name=f"topic_condition_{topic_keywords[0]}",
+            evaluator=topic_evaluator,
+            steps=[specialist_agent]
+        )
+    
+    @staticmethod
+    def complexity_based(min_words: int, complex_agent: Agent):
+        """Create complexity-based conditional"""
+        
+        def complexity_evaluator(step_input: StepInput) -> bool:
+            content = step_input.message or ""
+            return len(content.split()) >= min_words
+        
+        return Condition(
+            name="complexity_condition",
+            evaluator=complexity_evaluator,
+            steps=[complex_agent]
+        )
+    
+    @staticmethod
+    def previous_content_based(content_indicators: List[str], follow_up_agent: Agent):
+        """Create condition based on previous step content"""
+        
+        def content_evaluator(step_input: StepInput) -> bool:
+            previous = step_input.previous_step_content or ""
+            return any(indicator in previous.lower() for indicator in content_indicators)
+        
+        return Condition(
+            name="content_based_condition",
+            evaluator=content_evaluator,
+            steps=[follow_up_agent]
+        )
+
+# Usage
+templates = ConditionalTemplates()
+
+tech_condition = templates.topic_based(
+    ["technology", "software", "ai"], 
+    tech_specialist
+)
+
+complexity_condition = templates.complexity_based(
+    100, 
+    detailed_analyst
+)
+```
+
+## Common Pitfalls
+
+### Evaluator Function Errors
+```python
+# ❌ DON'T: Create evaluators that can crash
+def bad_evaluator(step_input: StepInput) -> bool:
+    return step_input.previous_step_content.lower()  # May be None
+
+# ✅ DO: Handle None values safely
+def good_evaluator(step_input: StepInput) -> bool:
+    content = step_input.previous_step_content or ""
+    return len(content) > 0 and "keyword" in content.lower()
+```
+
+### Boolean Logic Mistakes
+```python
+# ❌ DON'T: Return non-boolean values
+def bad_boolean_evaluator(step_input: StepInput) -> str:  # Wrong return type
+    return "true" if "tech" in step_input.message else "false"
+
+# ✅ DO: Always return boolean
+def good_boolean_evaluator(step_input: StepInput) -> bool:
+    return "tech" in step_input.message.lower()
+```
+
+### Condition State Issues
+```python
+# ❌ DON'T: Modify step_input in evaluator
+def bad_stateful_evaluator(step_input: StepInput) -> bool:
+    step_input.message = "modified"  # Don't modify input
+    return True
+
+# ✅ DO: Keep evaluators pure (read-only)
+def good_stateful_evaluator(step_input: StepInput) -> bool:
+    # Read-only evaluation
+    return len(step_input.message) > 50
+```
+
+## Best Practices Summary
+
+- **Pure Evaluators**: Keep condition evaluators pure and side-effect free
+- **Error Handling**: Implement robust error handling in evaluators
+- **Boolean Returns**: Always return boolean values from evaluators
+- **Context Awareness**: Consider all available context for condition evaluation
+- **State Management**: Use workflow session state for complex conditional logic
+- **Performance**: Keep evaluators lightweight for fast condition checking
+- **Testing**: Test all conditional branches thoroughly
+- **Documentation**: Document condition logic clearly for maintenance
+- **Fallback Logic**: Provide fallback behavior for failed conditions
+
+## References
+
+- [Condition API](/docs/api/workflows_2/condition.md)
+- [Conditional Branching Guide](/docs/workflows_2/branching.md)
+- [Workflow Control Flow](/docs/workflows_2/control_flow.md)
+- [Error Handling](/docs/workflows_2/error_handling.md)

@@ -1,0 +1,817 @@
+---
+description: DSPY 3 Classification Tutorial - Production text classification system from official DSPy 3.0.1 tutorial patterns
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready Text Classification Systems using DSPy 3.0.1 based on official tutorial patterns.
+
+## Classification Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Input Text    │────│   Preprocessing  │────│  Classification │
+│   Documents     │    │   & Validation   │    │   (Chain-of-    │
+└─────────────────┘    └──────────────────┘    │   Thought)      │
+                                               └─────────────────┘
+                                                        │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Labels   │────│   Confidence     │────│   Raw Outputs   │
+│  + Confidence   │    │   Calibration    │    │   + Reasoning   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   MLflow         │
+                    │   Experiment     │
+                    │   Tracking       │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Classification System (From Official Patterns)
+
+```python
+import dspy
+from typing import List, Literal
+
+# Configure DSPy environment (tutorial standard)
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Tutorial classification signature
+class ClassifyText(dspy.Signature):
+    """Classify text into predefined categories with reasoning."""
+
+    text: str = dspy.InputField(desc="The text to classify")
+    category: str = dspy.OutputField(desc="The predicted category")
+    confidence: float = dspy.OutputField(desc="Confidence score between 0 and 1")
+
+# Tutorial chain-of-thought classifier
+class TextClassifier(dspy.Module):
+    def __init__(self, categories: List[str]):
+        self.categories = categories
+        self.classifier = dspy.ChainOfThought(ClassifyText)
+
+    def forward(self, text: str):
+        result = self.classifier(text=text)
+
+        # Validate category is in allowed set
+        if result.category not in self.categories:
+            result.category = "other"
+            result.confidence = max(0.1, result.confidence * 0.5)
+
+        return result
+
+# Tutorial evaluation setup
+def classification_metric(example, pred, trace=None):
+    """Exact match accuracy metric"""
+    return pred.category == example.label
+
+# Tutorial training data preparation
+def prepare_classification_data(texts, labels):
+    """Prepare data in DSPy format"""
+    return [
+        dspy.Example(text=text, label=label).with_inputs("text")
+        for text, label in zip(texts, labels)
+    ]
+
+# Tutorial optimization workflow
+def optimize_classifier(classifier, trainset, devset):
+    """Optimize classifier using tutorial patterns"""
+    evaluate = dspy.Evaluate(
+        devset=devset,
+        metric=classification_metric,
+        num_threads=16,
+        display_progress=True
+    )
+
+    # Baseline evaluation
+    baseline_score = evaluate(classifier)
+
+    # Optimize with MIPROv2 (tutorial standard)
+    tp = dspy.MIPROv2(
+        metric=classification_metric,
+        auto="medium",
+        num_threads=16
+    )
+
+    optimized_classifier = tp.compile(
+        classifier,
+        trainset=trainset,
+        max_bootstrapped_demos=4,
+        max_labeled_demos=4
+    )
+
+    # Final evaluation
+    optimized_score = evaluate(optimized_classifier)
+
+    return optimized_classifier, {
+        'baseline_score': baseline_score,
+        'optimized_score': optimized_score,
+        'improvement': optimized_score - baseline_score
+    }
+```
+
+### Production Classification System
+
+```python
+import os
+import logging
+import mlflow
+import numpy as np
+from typing import Dict, List, Optional, Any, Union
+from pydantic import BaseModel, Field, validator
+from sklearn.metrics import classification_report, confusion_matrix
+from collections import Counter
+import time
+import asyncio
+
+# Production configuration
+class ClassificationConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    categories: List[str] = Field(..., description="List of valid categories")
+    confidence_threshold: float = Field(0.7, ge=0.0, le=1.0)
+    max_text_length: int = 4000
+    optimization_auto: str = "medium"
+    optimization_threads: int = 16
+    max_demos: int = 4
+    cache_dir: str = "./cache"
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+    batch_size: int = 32
+
+    @validator('categories')
+    def categories_must_not_be_empty(cls, v):
+        if not v:
+            raise ValueError('Categories list cannot be empty')
+        return v
+
+# Production classification result
+class ClassificationResult(BaseModel):
+    text: str
+    predicted_category: str
+    confidence: float
+    reasoning: str
+    alternatives: List[Dict[str, float]] = []
+    processing_time_ms: float
+    model_version: str
+    is_confident: bool
+
+# Advanced production classifier
+class ProductionClassifier(dspy.Module):
+    def __init__(self, config: ClassificationConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+        self.categories = config.categories
+
+        # Enhanced signature with confidence and alternatives
+        class EnhancedClassification(dspy.Signature):
+            f"""Classify text into one of these categories: {', '.join(config.categories)}.
+            Provide confidence score and reasoning for the classification."""
+
+            text: str = dspy.InputField(desc="The text to classify")
+            reasoning: str = dspy.OutputField(desc="Step-by-step reasoning for classification")
+            category: str = dspy.OutputField(desc=f"Category from: {config.categories}")
+            confidence: float = dspy.OutputField(desc="Confidence score between 0 and 1")
+
+        self.classifier = dspy.ChainOfThought(EnhancedClassification)
+        self.performance_stats = {
+            'total_predictions': 0,
+            'confident_predictions': 0,
+            'avg_processing_time': 0.0
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"Classifier.{self.config.environment}")
+        return logger
+
+    def _preprocess_text(self, text: str) -> str:
+        """Preprocess and validate input text"""
+        if not text or not text.strip():
+            raise ValueError("Text cannot be empty")
+
+        # Truncate if too long
+        if len(text) > self.config.max_text_length:
+            text = text[:self.config.max_text_length] + "..."
+            self.logger.warning(f"Text truncated to {self.config.max_text_length} characters")
+
+        return text.strip()
+
+    def _validate_category(self, category: str) -> str:
+        """Validate and map category to allowed values"""
+        if category in self.categories:
+            return category
+
+        # Fuzzy matching for common misspellings
+        category_lower = category.lower()
+        for valid_cat in self.categories:
+            if category_lower == valid_cat.lower():
+                return valid_cat
+
+        # Default to 'other' if available, else first category
+        if "other" in self.categories:
+            return "other"
+        return self.categories[0]
+
+    def forward(self, text: str, **kwargs) -> ClassificationResult:
+        start_time = time.time()
+
+        try:
+            # Preprocess input
+            processed_text = self._preprocess_text(text)
+
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("text_length", len(processed_text))
+                mlflow.log_param("categories_count", len(self.categories))
+
+                # Perform classification
+                result = self.classifier(text=processed_text)
+
+                # Validate and clean results
+                validated_category = self._validate_category(result.category)
+                confidence = max(0.0, min(1.0, float(result.confidence)))
+
+                # Determine if prediction is confident
+                is_confident = confidence >= self.config.confidence_threshold
+
+                # Calculate processing time
+                processing_time = (time.time() - start_time) * 1000
+
+                # Update performance stats
+                self._update_stats(processing_time, is_confident)
+
+                # Log metrics
+                mlflow.log_metric("confidence", confidence)
+                mlflow.log_metric("processing_time_ms", processing_time)
+                mlflow.log_param("is_confident", is_confident)
+
+                classification_result = ClassificationResult(
+                    text=processed_text,
+                    predicted_category=validated_category,
+                    confidence=confidence,
+                    reasoning=result.reasoning,
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    is_confident=is_confident
+                )
+
+                self.logger.info(
+                    f"Classified text (length={len(processed_text)}) as "
+                    f"'{validated_category}' with confidence {confidence:.3f}"
+                )
+
+                return dspy.Prediction(
+                    category=validated_category,
+                    confidence=confidence,
+                    reasoning=result.reasoning,
+                    classification_result=classification_result
+                )
+
+        except Exception as e:
+            self.logger.error(f"Classification error: {e}")
+            processing_time = (time.time() - start_time) * 1000
+
+            # Return safe fallback
+            fallback_category = "other" if "other" in self.categories else self.categories[0]
+            return dspy.Prediction(
+                category=fallback_category,
+                confidence=0.1,
+                reasoning="Error occurred during classification",
+                classification_result=ClassificationResult(
+                    text=text[:100] + "..." if len(text) > 100 else text,
+                    predicted_category=fallback_category,
+                    confidence=0.1,
+                    reasoning="Error occurred during classification",
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    is_confident=False
+                )
+            )
+
+    def _update_stats(self, processing_time: float, is_confident: bool):
+        """Update performance statistics"""
+        self.performance_stats['total_predictions'] += 1
+        if is_confident:
+            self.performance_stats['confident_predictions'] += 1
+
+        # Running average of processing time
+        total = self.performance_stats['total_predictions']
+        current_avg = self.performance_stats['avg_processing_time']
+        self.performance_stats['avg_processing_time'] = (
+            (current_avg * (total - 1) + processing_time) / total
+        )
+
+    async def batch_classify(self, texts: List[str]) -> List[ClassificationResult]:
+        """Batch classification for efficiency"""
+        results = []
+
+        for i in range(0, len(texts), self.config.batch_size):
+            batch = texts[i:i+self.config.batch_size]
+            batch_results = await asyncio.gather(*[
+                asyncio.create_task(asyncio.to_thread(self.forward, text))
+                for text in batch
+            ])
+            results.extend([r.classification_result for r in batch_results])
+
+        return results
+
+    def get_performance_stats(self) -> Dict:
+        """Get current performance statistics"""
+        stats = self.performance_stats.copy()
+        if stats['total_predictions'] > 0:
+            stats['confidence_rate'] = (
+                stats['confident_predictions'] / stats['total_predictions']
+            )
+        else:
+            stats['confidence_rate'] = 0.0
+        return stats
+
+# Production training and evaluation
+class ClassificationTrainer:
+    def __init__(self, config: ClassificationConfig):
+        self.config = config
+        self.logger = logging.getLogger("ClassificationTrainer")
+
+    def train_and_optimize(
+        self,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example],
+        testset: Optional[List[dspy.Example]] = None
+    ):
+        """Complete training workflow with evaluation"""
+        try:
+            # Initialize classifier
+            classifier = ProductionClassifier(self.config)
+
+            # Enhanced evaluation metrics
+            def enhanced_metric(example, pred, trace=None):
+                """Enhanced metric with confidence weighting"""
+                is_correct = pred.category == example.label
+
+                # Weight by confidence for bootstrapping
+                if trace is not None:
+                    return is_correct and pred.confidence >= self.config.confidence_threshold
+
+                return is_correct
+
+            evaluate = dspy.Evaluate(
+                devset=devset,
+                metric=enhanced_metric,
+                num_threads=self.config.optimization_threads,
+                display_progress=True,
+                display_table=10
+            )
+
+            # Baseline evaluation
+            baseline_score = evaluate(classifier)
+            self.logger.info(f"Baseline accuracy: {baseline_score:.3f}")
+
+            # Optimization
+            tp = dspy.MIPROv2(
+                metric=enhanced_metric,
+                auto=self.config.optimization_auto,
+                num_threads=self.config.optimization_threads
+            )
+
+            optimized_classifier = tp.compile(
+                classifier,
+                trainset=trainset,
+                max_bootstrapped_demos=self.config.max_demos,
+                max_labeled_demos=self.config.max_demos
+            )
+
+            # Final evaluation
+            optimized_score = evaluate(optimized_classifier)
+            improvement = optimized_score - baseline_score
+
+            self.logger.info(
+                f"Optimized accuracy: {optimized_score:.3f} "
+                f"(improvement: +{improvement:.3f})"
+            )
+
+            # Detailed evaluation on test set if provided
+            results = {
+                'baseline_score': baseline_score,
+                'optimized_score': optimized_score,
+                'improvement': improvement,
+                'model': optimized_classifier
+            }
+
+            if testset:
+                test_results = self._detailed_evaluation(optimized_classifier, testset)
+                results.update(test_results)
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            raise
+
+    def _detailed_evaluation(self, classifier, testset: List[dspy.Example]) -> Dict:
+        """Detailed evaluation with classification report"""
+        predictions = []
+        true_labels = []
+
+        for example in testset:
+            try:
+                pred = classifier(text=example.text)
+                predictions.append(pred.category)
+                true_labels.append(example.label)
+            except Exception as e:
+                self.logger.warning(f"Error in prediction: {e}")
+                predictions.append("other")
+                true_labels.append(example.label)
+
+        # Generate detailed metrics
+        report = classification_report(
+            true_labels,
+            predictions,
+            target_names=self.config.categories,
+            output_dict=True,
+            zero_division=0
+        )
+
+        confusion_mat = confusion_matrix(
+            true_labels,
+            predictions,
+            labels=self.config.categories
+        )
+
+        return {
+            'test_accuracy': report['accuracy'],
+            'classification_report': report,
+            'confusion_matrix': confusion_mat.tolist(),
+            'per_class_metrics': {
+                cat: {
+                    'precision': report[cat]['precision'],
+                    'recall': report[cat]['recall'],
+                    'f1-score': report[cat]['f1-score']
+                }
+                for cat in self.config.categories if cat in report
+            }
+        }
+```
+
+## Production Enhancements
+
+### FastAPI Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+import mlflow.dspy
+
+app = FastAPI(title="Production Classification API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ClassificationRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000)
+    confidence_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+# Global classifier
+classifier = None
+config = None
+
+@app.on_event("startup")
+async def startup_event():
+    global classifier, config
+
+    # Load configuration
+    config = ClassificationConfig(
+        categories=["positive", "negative", "neutral", "spam", "other"]
+    )
+
+    # Try to load optimized model from MLflow
+    try:
+        model_uri = "models:/text-classifier/production"
+        classifier = mlflow.dspy.load_model(model_uri)
+        logger.info("Loaded optimized classifier from MLflow")
+    except:
+        classifier = ProductionClassifier(config)
+        logger.warning("Using base classifier")
+
+@app.post("/classify", response_model=ClassificationResult)
+async def classify_text(
+    request: ClassificationRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        # Override confidence threshold if provided
+        if request.confidence_threshold:
+            classifier.config.confidence_threshold = request.confidence_threshold
+
+        result = classifier(text=request.text)
+
+        # Log usage metrics in background
+        background_tasks.add_task(
+            log_classification_metrics,
+            request.text,
+            result.classification_result
+        )
+
+        return result.classification_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/classify/batch")
+async def classify_batch(texts: List[str]) -> List[ClassificationResult]:
+    if len(texts) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Batch size cannot exceed 100"
+        )
+
+    try:
+        results = await classifier.batch_classify(texts)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stats")
+async def get_stats():
+    return classifier.get_performance_stats()
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "model_loaded": classifier is not None,
+        "categories": config.categories if config else []
+    }
+```
+
+### Monitoring and Analytics
+
+```python
+import mlflow
+from prometheus_client import Counter, Histogram, generate_latest
+
+# Prometheus metrics
+CLASSIFICATION_REQUESTS = Counter(
+    'classification_requests_total',
+    'Total classification requests',
+    ['category', 'confident']
+)
+
+CLASSIFICATION_DURATION = Histogram(
+    'classification_duration_seconds',
+    'Time spent on classification'
+)
+
+def log_classification_metrics(text: str, result: ClassificationResult):
+    """Log detailed metrics for monitoring"""
+
+    # Prometheus metrics
+    CLASSIFICATION_REQUESTS.labels(
+        category=result.predicted_category,
+        confident=str(result.is_confident)
+    ).inc()
+
+    CLASSIFICATION_DURATION.observe(result.processing_time_ms / 1000)
+
+    # MLflow metrics
+    with mlflow.start_run(nested=True):
+        mlflow.log_metrics({
+            'confidence': result.confidence,
+            'processing_time_ms': result.processing_time_ms,
+            'text_length': len(result.text)
+        })
+
+        mlflow.log_params({
+            'category': result.predicted_category,
+            'is_confident': result.is_confident,
+            'model_version': result.model_version
+        })
+
+@app.get("/metrics")
+async def get_prometheus_metrics():
+    """Prometheus metrics endpoint"""
+    return Response(generate_latest(), media_type="text/plain")
+```
+
+## Deployment Templates
+
+### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: text-classifier
+  labels:
+    app: text-classifier
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: text-classifier
+  template:
+    metadata:
+      labels:
+        app: text-classifier
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: classifier
+          image: text-classifier:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-secret
+                  key: api-key
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-service:5000"
+            - name: CATEGORIES
+              value: "positive,negative,neutral,spam,other"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: text-classifier-service
+spec:
+  selector:
+    app: text-classifier
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Caching for repeated classifications
+from functools import lru_cache
+import hashlib
+
+class CachedClassifier(ProductionClassifier):
+    def __init__(self, config: ClassificationConfig):
+        super().__init__(config)
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    @lru_cache(maxsize=1000)
+    def _cached_classify(self, text_hash: str, text: str):
+        """Cache classification results by text hash"""
+        return super().forward(text)
+
+    def forward(self, text: str, **kwargs):
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+
+        try:
+            result = self._cached_classify(text_hash, text)
+            self._cache_hits += 1
+            return result
+        except:
+            self._cache_misses += 1
+            return super().forward(text, **kwargs)
+
+    def get_cache_stats(self):
+        total = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total if total > 0 else 0
+        return {
+            'cache_hits': self._cache_hits,
+            'cache_misses': self._cache_misses,
+            'hit_rate': hit_rate
+        }
+
+# Async batch processing
+async def process_classification_queue(queue: asyncio.Queue, classifier):
+    """Process classification requests from queue"""
+    batch = []
+
+    while True:
+        try:
+            # Collect batch
+            for _ in range(classifier.config.batch_size):
+                item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                batch.append(item)
+
+            # Process batch
+            if batch:
+                results = await classifier.batch_classify([item['text'] for item in batch])
+
+                # Return results
+                for item, result in zip(batch, results):
+                    await item['result_queue'].put(result)
+
+                batch.clear()
+
+        except asyncio.TimeoutError:
+            # Process partial batch if timeout
+            if batch:
+                results = await classifier.batch_classify([item['text'] for item in batch])
+                for item, result in zip(batch, results):
+                    await item['result_queue'].put(result)
+                batch.clear()
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Category Validation**: Always validate output categories against allowed set
+2. **Confidence Calibration**: Use confidence thresholds for production filtering
+3. **Text Preprocessing**: Handle empty, too long, or malformed text inputs
+4. **Memory Management**: Clear caches periodically for long-running services
+
+### Production Solutions
+
+```python
+# Graceful error handling
+class RobustClassifier(ProductionClassifier):
+    def forward(self, text: str, **kwargs):
+        try:
+            return super().forward(text, **kwargs)
+        except Exception as e:
+            self.logger.error(f"Classification failed: {e}")
+
+            # Return safe fallback
+            fallback_category = "other" if "other" in self.categories else self.categories[0]
+            return dspy.Prediction(
+                category=fallback_category,
+                confidence=0.0,
+                reasoning=f"Error: {str(e)}"
+            )
+
+# Resource monitoring
+import psutil
+
+def check_system_resources():
+    """Monitor system resources"""
+    memory_usage = psutil.virtual_memory().percent
+    cpu_usage = psutil.cpu_percent()
+
+    if memory_usage > 90:
+        logger.warning(f"High memory usage: {memory_usage}%")
+    if cpu_usage > 90:
+        logger.warning(f"High CPU usage: {cpu_usage}%")
+
+    return {
+        'memory_usage': memory_usage,
+        'cpu_usage': cpu_usage,
+        'status': 'healthy' if memory_usage < 90 and cpu_usage < 90 else 'warning'
+    }
+```
+
+## Best Practices Summary
+
+### Classification Guidelines
+
+- Use chain-of-thought for complex classification tasks
+- Implement confidence thresholds for production reliability
+- Validate output categories against allowed sets
+- Use batch processing for high-throughput scenarios
+
+### Production Guidelines
+
+- Always implement proper error handling and fallbacks
+- Monitor classification confidence and accuracy over time
+- Use caching for repeated text classification
+- Implement proper logging and metrics collection
+- Scale horizontally with load balancers for high traffic
+
+## References
+
+- [Official Classification Tutorial](https://dspy.ai/tutorials/classification/)
+- [DSPy Chain-of-Thought Documentation](https://dspy.ai/api/modules/ChainOfThought/)
+- [MIPROv2 Optimizer](https://dspy.ai/api/optimizers/MIPROv2/)
+- [MLflow Integration Guide](https://mlflow.org/docs/latest/llms/dspy/index.html)

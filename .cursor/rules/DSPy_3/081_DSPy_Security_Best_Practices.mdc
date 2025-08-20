@@ -1,0 +1,1204 @@
+---
+description: Security Best Practices - Enterprise security patterns and threat protection for DSPy production systems
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 security best practices for enterprise production environments.
+
+## Security Architecture Flow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Client Apps   │ => │  Security Layer │ => │   DSPy Core     │
+│  (Auth Required)│    │  (WAF/Firewall) │    │  (Validated)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                  Authentication & Authorization                 │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   JWT/OAuth     │   RBAC/ABAC     │     API Key Management      │
+│   (Identity)    │   (Permissions) │     (Rate Limiting)         │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│  Input Validation│   Data Security │    Model Protection        │
+│  (Sanitization) │   (Encryption)  │    (Access Control)        │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│  Audit Logging  │   Threat Monitor│    Compliance              │
+│  (All Actions)  │   (Detection)   │    (GDPR/SOX/etc)          │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Security Patterns
+
+### Quick Start Security
+
+```python
+# quick_security.py - Essential security for DSPy applications
+import dspy
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, validator
+import hashlib
+import hmac
+import secrets
+import time
+import logging
+from typing import Optional, List
+import re
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Security configuration
+SECURITY_CONFIG = {
+    "api_key_hash": "your_secure_api_key_hash",  # Use bcrypt in production
+    "jwt_secret": secrets.token_urlsafe(32),
+    "rate_limit_requests": 100,
+    "rate_limit_window": 3600,  # 1 hour
+    "max_input_length": 5000,
+    "allowed_content_types": ["text/plain", "application/json"]
+}
+
+security = HTTPBearer()
+
+class SecurityManager:
+    """Basic security manager for DSPy applications"""
+
+    def __init__(self):
+        self.rate_limit_store = {}
+
+    def validate_api_key(self, credentials: HTTPAuthorizationCredentials = Security(security)):
+        """Validate API key for authentication"""
+
+        if not credentials:
+            raise HTTPException(status_code=401, detail="Missing authentication")
+
+        # Simple API key validation (use proper hashing in production)
+        provided_key = credentials.credentials
+        expected_hash = SECURITY_CONFIG["api_key_hash"]
+
+        # In production, use bcrypt or similar
+        if not hmac.compare_digest(provided_key, "your_actual_api_key"):
+            logger.warning(f"Invalid API key attempt")
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        return provided_key
+
+    def check_rate_limit(self, client_id: str) -> bool:
+        """Check rate limiting for client"""
+
+        current_time = time.time()
+        window_start = current_time - SECURITY_CONFIG["rate_limit_window"]
+
+        # Clean old entries
+        if client_id in self.rate_limit_store:
+            self.rate_limit_store[client_id] = [
+                timestamp for timestamp in self.rate_limit_store[client_id]
+                if timestamp > window_start
+            ]
+        else:
+            self.rate_limit_store[client_id] = []
+
+        # Check limit
+        if len(self.rate_limit_store[client_id]) >= SECURITY_CONFIG["rate_limit_requests"]:
+            return False
+
+        # Record this request
+        self.rate_limit_store[client_id].append(current_time)
+        return True
+
+    def sanitize_input(self, text: str) -> str:
+        """Sanitize user input for security"""
+
+        if len(text) > SECURITY_CONFIG["max_input_length"]:
+            raise HTTPException(status_code=400, detail="Input too long")
+
+        # Remove potentially dangerous patterns
+        dangerous_patterns = [
+            r'<script[^>]*>.*?</script>',  # Script tags
+            r'javascript:',               # JavaScript URLs
+            r'on\w+\s*=',                # Event handlers
+            r'eval\s*\(',                # eval() calls
+            r'exec\s*\(',                # exec() calls
+        ]
+
+        cleaned_text = text
+        for pattern in dangerous_patterns:
+            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+
+        return cleaned_text.strip()
+
+# Secure request model
+class SecureRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=5000)
+    context: Optional[str] = Field(None, max_length=10000)
+
+    @validator('question')
+    def validate_question(cls, v):
+        # Basic content validation
+        if not v.strip():
+            raise ValueError('Question cannot be empty')
+
+        # Check for suspicious content
+        suspicious_patterns = [
+            'DROP TABLE',
+            'DELETE FROM',
+            'rm -rf',
+            'sudo ',
+            '<script',
+            'javascript:'
+        ]
+
+        v_lower = v.lower()
+        for pattern in suspicious_patterns:
+            if pattern.lower() in v_lower:
+                raise ValueError('Potentially dangerous content detected')
+
+        return v.strip()
+
+# Secure DSPy application
+class SecureDSPyApp:
+    """Secure DSPy application with comprehensive security controls"""
+
+    def __init__(self):
+        self.security_manager = SecurityManager()
+
+        # Configure DSPy with security considerations
+        self.lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=2000,  # Limit output length
+            temperature=0.1,  # Deterministic for security
+            timeout=30.0      # Prevent hanging requests
+        )
+
+        dspy.configure(lm=self.lm, async_max_workers=4)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def secure_predict(self,
+                           request: SecureRequest,
+                           client_id: str,
+                           api_key: str) -> dict:
+        """Make secure prediction with all security controls"""
+
+        try:
+            # Rate limiting
+            if not self.security_manager.check_rate_limit(client_id):
+                logger.warning(f"Rate limit exceeded for client: {client_id}")
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+            # Input sanitization
+            clean_question = self.security_manager.sanitize_input(request.question)
+            clean_context = ""
+            if request.context:
+                clean_context = self.security_manager.sanitize_input(request.context)
+
+            # Log security event
+            logger.info(f"Secure prediction request - Client: {client_id}, Length: {len(clean_question)}")
+
+            # Make prediction with cleaned input
+            result = self.program(question=clean_question)
+
+            # Sanitize output (in case model generates harmful content)
+            clean_answer = self.security_manager.sanitize_input(result.answer)
+
+            response = {
+                "answer": clean_answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "security_controls": {
+                    "input_sanitized": clean_question != request.question,
+                    "output_sanitized": clean_answer != result.answer,
+                    "rate_limited": True
+                }
+            }
+
+            # Log successful prediction
+            logger.info(f"Secure prediction completed - Client: {client_id}")
+
+            return response
+
+        except Exception as e:
+            # Log security incidents
+            logger.error(f"Security incident - Client: {client_id}, Error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Prediction failed")
+
+# FastAPI with security
+app = FastAPI(title="Secure DSPy API", version="1.0.0")
+secure_app = SecureDSPyApp()
+
+@app.post("/predict")
+async def secure_predict_endpoint(
+    request: SecureRequest,
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """Secure prediction endpoint with authentication and validation"""
+
+    # Validate API key
+    api_key = secure_app.security_manager.validate_api_key(credentials)
+    client_id = hashlib.sha256(api_key.encode()).hexdigest()[:16]  # Anonymous client ID
+
+    return await secure_app.secure_predict(request, client_id, api_key)
+
+@app.get("/health")
+async def health_check():
+    """Public health check endpoint"""
+    return {"status": "healthy", "security": "enabled"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)  # Bind to localhost only
+```
+
+### Enterprise Security Framework
+
+```python
+# enterprise_security.py - Comprehensive enterprise security framework
+import dspy
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from pydantic import BaseModel, Field
+import jwt
+import bcrypt
+import secrets
+import logging
+import time
+import asyncio
+from typing import Optional, Dict, Any, List, Set
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+from enum import Enum
+import redis
+import json
+import ssl
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class SecurityLevel(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+@dataclass
+class SecurityPolicy:
+    """Security policy configuration"""
+    max_requests_per_hour: int
+    max_input_length: int
+    max_output_length: int
+    allowed_operations: List[str]
+    audit_required: bool
+    encryption_required: bool
+
+class EnterpriseSecurityManager:
+    """Enterprise-grade security manager"""
+
+    def __init__(self, redis_host: str = "localhost", redis_port: int = 6379):
+        # Redis for session management and rate limiting
+        self.redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            decode_responses=True,
+            ssl=True,  # Use SSL in production
+            ssl_cert_reqs=ssl.CERT_REQUIRED
+        )
+
+        # Security policies
+        self.security_policies = {
+            SecurityLevel.LOW: SecurityPolicy(
+                max_requests_per_hour=1000,
+                max_input_length=2000,
+                max_output_length=4000,
+                allowed_operations=["predict", "health"],
+                audit_required=False,
+                encryption_required=False
+            ),
+            SecurityLevel.MEDIUM: SecurityPolicy(
+                max_requests_per_hour=500,
+                max_input_length=1000,
+                max_output_length=2000,
+                allowed_operations=["predict", "health"],
+                audit_required=True,
+                encryption_required=False
+            ),
+            SecurityLevel.HIGH: SecurityPolicy(
+                max_requests_per_hour=100,
+                max_input_length=500,
+                max_output_length=1000,
+                allowed_operations=["predict"],
+                audit_required=True,
+                encryption_required=True
+            )
+        }
+
+        # JWT configuration
+        self.jwt_secret = secrets.token_urlsafe(32)
+        self.jwt_algorithm = "HS256"
+        self.jwt_expiration = timedelta(hours=1)
+
+        # Threat detection
+        self.threat_patterns = [
+            r'(?i)(union|select|insert|delete|drop|create|alter)\s+',
+            r'(?i)<script[^>]*>.*?</script>',
+            r'(?i)javascript:',
+            r'(?i)(eval|exec|system|subprocess)\s*\(',
+            r'(?i)(rm\s+-rf|sudo|chmod|passwd)',
+            r'(?i)(base64|atob|btoa)\s*\(',
+        ]
+
+        # Failed attempt tracking
+        self.failed_attempts = {}
+        self.blocked_ips = set()
+
+    def authenticate_user(self, credentials: HTTPAuthorizationCredentials) -> Dict[str, Any]:
+        """Authenticate user and return user info"""
+
+        try:
+            # Decode JWT token
+            payload = jwt.decode(
+                credentials.credentials,
+                self.jwt_secret,
+                algorithms=[self.jwt_algorithm]
+            )
+
+            # Verify token hasn't expired
+            exp_timestamp = payload.get('exp')
+            if exp_timestamp and datetime.utcnow().timestamp() > exp_timestamp:
+                raise HTTPException(status_code=401, detail="Token expired")
+
+            # Get user info from payload
+            user_info = {
+                "user_id": payload.get("sub"),
+                "roles": payload.get("roles", []),
+                "security_level": SecurityLevel(payload.get("security_level", "low")),
+                "session_id": payload.get("session_id"),
+                "permissions": payload.get("permissions", [])
+            }
+
+            # Verify session is still valid
+            if not self._validate_session(user_info["session_id"]):
+                raise HTTPException(status_code=401, detail="Session invalid")
+
+            return user_info
+
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"JWT validation failed: {e}")
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    def authorize_operation(self, user_info: Dict[str, Any], operation: str) -> bool:
+        """Check if user is authorized for operation"""
+
+        security_level = user_info["security_level"]
+        policy = self.security_policies[security_level]
+
+        return operation in policy.allowed_operations
+
+    def validate_rate_limit(self, user_id: str, security_level: SecurityLevel) -> bool:
+        """Validate rate limiting for user"""
+
+        policy = self.security_policies[security_level]
+        current_time = time.time()
+        hour_key = f"rate_limit:{user_id}:{int(current_time // 3600)}"
+
+        try:
+            current_count = self.redis_client.incr(hour_key)
+            if current_count == 1:
+                self.redis_client.expire(hour_key, 3600)  # Expire after 1 hour
+
+            if current_count > policy.max_requests_per_hour:
+                logger.warning(f"Rate limit exceeded for user {user_id}: {current_count}/{policy.max_requests_per_hour}")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Rate limit check failed: {e}")
+            return False  # Fail closed
+
+    def detect_threats(self, content: str, user_info: Dict[str, Any]) -> List[str]:
+        """Detect potential security threats in content"""
+
+        threats = []
+
+        # Pattern-based detection
+        for pattern in self.threat_patterns:
+            if re.search(pattern, content):
+                threats.append(f"Suspicious pattern detected: {pattern[:50]}...")
+
+        # Content length validation
+        security_level = user_info["security_level"]
+        policy = self.security_policies[security_level]
+
+        if len(content) > policy.max_input_length:
+            threats.append(f"Input exceeds maximum length: {len(content)} > {policy.max_input_length}")
+
+        # Encoding detection (potential bypass attempts)
+        if any(char in content for char in ['%', '\\x', '\\u', '&lt;', '&gt;']):
+            threats.append("Potential encoding bypass attempt detected")
+
+        return threats
+
+    def log_security_event(self,
+                          event_type: str,
+                          user_info: Dict[str, Any],
+                          details: Dict[str, Any],
+                          severity: str = "INFO"):
+        """Log security events for audit trail"""
+
+        event = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "event_type": event_type,
+            "user_id": user_info.get("user_id"),
+            "session_id": user_info.get("session_id"),
+            "security_level": user_info.get("security_level", "").value if hasattr(user_info.get("security_level"), 'value') else str(user_info.get("security_level")),
+            "severity": severity,
+            "details": details
+        }
+
+        # Log to application logs
+        if severity in ["WARNING", "ERROR", "CRITICAL"]:
+            logger.warning(f"SECURITY EVENT: {json.dumps(event)}")
+        else:
+            logger.info(f"Security event: {event_type}")
+
+        # Store in Redis for security monitoring
+        try:
+            event_key = f"security_events:{user_info.get('user_id')}:{int(time.time())}"
+            self.redis_client.setex(event_key, 86400, json.dumps(event))  # Expire after 24h
+        except Exception as e:
+            logger.error(f"Failed to store security event: {e}")
+
+    def _validate_session(self, session_id: str) -> bool:
+        """Validate user session"""
+
+        if not session_id:
+            return False
+
+        try:
+            session_data = self.redis_client.get(f"session:{session_id}")
+            return session_data is not None
+        except:
+            return False
+
+    def encrypt_sensitive_data(self, data: str, user_info: Dict[str, Any]) -> str:
+        """Encrypt sensitive data if required by security policy"""
+
+        security_level = user_info["security_level"]
+        policy = self.security_policies[security_level]
+
+        if not policy.encryption_required:
+            return data
+
+        # Simple encryption for demo - use proper encryption in production
+        try:
+            from cryptography.fernet import Fernet
+            key = Fernet.generate_key()
+            cipher = Fernet(key)
+            encrypted_data = cipher.encrypt(data.encode()).decode()
+
+            # Store key securely (this is just for demo)
+            key_id = secrets.token_urlsafe(16)
+            self.redis_client.setex(f"encryption_key:{key_id}", 3600, key.decode())
+
+            return f"ENCRYPTED:{key_id}:{encrypted_data}"
+
+        except ImportError:
+            logger.warning("Cryptography library not available, returning unencrypted data")
+            return data
+        except Exception as e:
+            logger.error(f"Encryption failed: {e}")
+            return data
+
+class SecureDSPyService:
+    """Secure DSPy service with enterprise security"""
+
+    def __init__(self):
+        self.security_manager = EnterpriseSecurityManager()
+
+        # Configure DSPy with security constraints
+        self.lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=1000,  # Conservative limit
+            temperature=0.0,  # Deterministic for security
+            timeout=20.0
+        )
+
+        dspy.configure(lm=self.lm, async_max_workers=2)  # Limited concurrency
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def secure_prediction(self,
+                              question: str,
+                              user_info: Dict[str, Any],
+                              request_ip: str) -> Dict[str, Any]:
+        """Make prediction with comprehensive security controls"""
+
+        # Threat detection
+        threats = self.security_manager.detect_threats(question, user_info)
+        if threats:
+            self.security_manager.log_security_event(
+                "threat_detected",
+                user_info,
+                {"threats": threats, "question_preview": question[:100]},
+                "WARNING"
+            )
+            raise HTTPException(status_code=400, detail="Security threat detected")
+
+        # Rate limiting
+        if not self.security_manager.validate_rate_limit(
+            user_info["user_id"],
+            user_info["security_level"]
+        ):
+            self.security_manager.log_security_event(
+                "rate_limit_exceeded",
+                user_info,
+                {"ip": request_ip},
+                "WARNING"
+            )
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        try:
+            # Make prediction
+            result = self.program(question=question)
+
+            # Apply output security policy
+            security_level = user_info["security_level"]
+            policy = self.security_manager.security_policies[security_level]
+
+            answer = result.answer
+            if len(answer) > policy.max_output_length:
+                answer = answer[:policy.max_output_length] + "... [truncated]"
+
+            # Encrypt sensitive data if required
+            encrypted_answer = self.security_manager.encrypt_sensitive_data(answer, user_info)
+
+            # Log successful prediction
+            self.security_manager.log_security_event(
+                "prediction_success",
+                user_info,
+                {
+                    "question_length": len(question),
+                    "answer_length": len(answer),
+                    "encrypted": encrypted_answer != answer
+                }
+            )
+
+            return {
+                "answer": encrypted_answer,
+                "reasoning": getattr(result, "reasoning", "")[:500],  # Limit reasoning length
+                "security_metadata": {
+                    "security_level": user_info["security_level"].value,
+                    "encrypted": encrypted_answer != answer,
+                    "truncated": len(result.answer) > policy.max_output_length
+                }
+            }
+
+        except Exception as e:
+            # Log security incident
+            self.security_manager.log_security_event(
+                "prediction_error",
+                user_info,
+                {"error": str(e), "ip": request_ip},
+                "ERROR"
+            )
+            raise HTTPException(status_code=500, detail="Prediction failed")
+
+# Enterprise FastAPI application
+def create_secure_app():
+    """Create secure FastAPI application with all security middleware"""
+
+    app = FastAPI(
+        title="Enterprise Secure DSPy API",
+        version="2.0.0",
+        docs_url=None,  # Disable docs in production
+        redoc_url=None
+    )
+
+    # Security middleware
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["api.yourdomain.com", "localhost"]
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://yourdomain.com"],
+        allow_methods=["POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        max_age=600
+    )
+
+    security = HTTPBearer()
+    service = SecureDSPyService()
+
+    class SecureRequest(BaseModel):
+        question: str = Field(..., min_length=1, max_length=2000)
+
+    @app.post("/predict")
+    async def secure_predict(
+        request: SecureRequest,
+        http_request: Request,
+        credentials: HTTPAuthorizationCredentials = Security(security)
+    ):
+        """Secure prediction endpoint with full enterprise security"""
+
+        # Authenticate user
+        user_info = service.security_manager.authenticate_user(credentials)
+
+        # Authorize operation
+        if not service.security_manager.authorize_operation(user_info, "predict"):
+            raise HTTPException(status_code=403, detail="Operation not authorized")
+
+        # Get client IP
+        client_ip = http_request.client.host
+
+        return await service.secure_prediction(request.question, user_info, client_ip)
+
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint"""
+        return {"status": "healthy", "security": "enterprise"}
+
+    return app
+
+# Usage
+app = create_secure_app()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Production SSL configuration
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8443,
+        ssl_keyfile="path/to/private.key",
+        ssl_certfile="path/to/cert.pem",
+        ssl_ca_certs="path/to/ca.pem"
+    )
+```
+
+## Core Security Patterns
+
+### Input Validation and Sanitization
+
+```python
+# Comprehensive input validation for DSPy applications
+import dspy
+import re
+import html
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, validator
+
+class SecurityValidator:
+    """Comprehensive input validation and sanitization"""
+
+    def __init__(self):
+        # Dangerous patterns that should be blocked
+        self.dangerous_patterns = [
+            # SQL Injection
+            r'(?i)(union|select|insert|delete|drop|create|alter)\s+',
+            r'(?i)(\s|^)(or|and)\s+\d+\s*=\s*\d+',
+
+            # XSS
+            r'(?i)<script[^>]*>.*?</script>',
+            r'(?i)<iframe[^>]*>.*?</iframe>',
+            r'(?i)javascript:',
+            r'(?i)on\w+\s*=',
+
+            # Command Injection
+            r'(?i)(;|\||&|\$\(|\`)',
+            r'(?i)(rm\s+-rf|sudo|chmod|passwd|cat\s+/etc)',
+
+            # Code Injection
+            r'(?i)(eval|exec|system|subprocess|import\s+os)\s*\(',
+            r'(?i)(__import__|getattr|setattr|delattr)',
+        ]
+
+        # Suspicious content indicators
+        self.suspicious_indicators = [
+            'base64',
+            'atob',
+            'btoa',
+            'unescape',
+            'fromCharCode',
+            '\\x',
+            '\\u',
+            '%'
+        ]
+
+    def validate_input(self, content: str, max_length: int = 5000) -> str:
+        """Validate and sanitize input content"""
+
+        if not isinstance(content, str):
+            raise ValueError("Input must be string")
+
+        if len(content) > max_length:
+            raise ValueError(f"Input too long: {len(content)} > {max_length}")
+
+        if not content.strip():
+            raise ValueError("Input cannot be empty")
+
+        # Check for dangerous patterns
+        for pattern in self.dangerous_patterns:
+            if re.search(pattern, content):
+                raise ValueError(f"Dangerous content detected")
+
+        # Check for suspicious indicators
+        content_lower = content.lower()
+        suspicious_count = sum(1 for indicator in self.suspicious_indicators
+                             if indicator in content_lower)
+
+        if suspicious_count > 2:
+            raise ValueError("Suspicious content patterns detected")
+
+        # Sanitize HTML entities
+        sanitized = html.escape(content)
+
+        # Remove null bytes and control characters
+        sanitized = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', sanitized)
+
+        # Normalize whitespace
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+
+        return sanitized
+
+    def validate_json_input(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate JSON input structure"""
+
+        if not isinstance(data, dict):
+            raise ValueError("Input must be JSON object")
+
+        # Validate keys
+        for key in data.keys():
+            if not isinstance(key, str):
+                raise ValueError("JSON keys must be strings")
+
+            if len(key) > 100:
+                raise ValueError("JSON key too long")
+
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+                raise ValueError("Invalid JSON key format")
+
+        # Validate values
+        validated_data = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                validated_data[key] = self.validate_input(value)
+            elif isinstance(value, (int, float, bool)):
+                validated_data[key] = value
+            elif value is None:
+                validated_data[key] = None
+            else:
+                raise ValueError(f"Unsupported data type for key {key}")
+
+        return validated_data
+
+# Secure request models
+class SecureQuestionRequest(BaseModel):
+    question: str
+    context: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @validator('question')
+    def validate_question(cls, v):
+        validator = SecurityValidator()
+        return validator.validate_input(v, max_length=2000)
+
+    @validator('context')
+    def validate_context(cls, v):
+        if v is None:
+            return v
+        validator = SecurityValidator()
+        return validator.validate_input(v, max_length=5000)
+
+    @validator('metadata')
+    def validate_metadata(cls, v):
+        if v is None:
+            return v
+        validator = SecurityValidator()
+        return validator.validate_json_input(v)
+
+# Usage in DSPy service
+class SecureDSPyValidator:
+    """DSPy service with comprehensive input validation"""
+
+    def __init__(self):
+        self.validator = SecurityValidator()
+
+        # Configure DSPy
+        self.lm = dspy.LM("openai/gpt-4o-mini")
+        dspy.configure(lm=self.lm)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    def secure_predict(self, request: SecureQuestionRequest) -> Dict[str, Any]:
+        """Make prediction with validated input"""
+
+        try:
+            # Additional validation at service level
+            clean_question = self.validator.validate_input(request.question)
+
+            # Make prediction
+            result = self.program(question=clean_question)
+
+            # Validate output
+            clean_answer = self.validator.validate_input(
+                result.answer,
+                max_length=10000  # Allow longer outputs
+            )
+
+            return {
+                "answer": clean_answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "validation": {
+                    "input_sanitized": clean_question != request.question,
+                    "output_sanitized": clean_answer != result.answer
+                }
+            }
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Validation error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Prediction error: {e}")
+            raise HTTPException(status_code=500, detail="Prediction failed")
+```
+
+### Audit Logging and Compliance
+
+```python
+# Comprehensive audit logging for compliance
+import dspy
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any, Optional
+import asyncio
+from dataclasses import dataclass
+from enum import Enum
+
+class AuditLevel(Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+@dataclass
+class AuditEvent:
+    """Structured audit event"""
+    timestamp: str
+    event_type: str
+    user_id: str
+    session_id: str
+    ip_address: str
+    user_agent: str
+    request_data: Dict[str, Any]
+    response_data: Optional[Dict[str, Any]]
+    duration_ms: float
+    success: bool
+    error_message: Optional[str]
+    security_level: str
+    compliance_flags: List[str]
+
+class ComplianceAuditor:
+    """Comprehensive compliance auditing for DSPy applications"""
+
+    def __init__(self):
+        # Configure structured logging
+        self.logger = logging.getLogger('compliance_audit')
+        handler = logging.FileHandler('dspy_audit.log')
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+
+        # Compliance requirements
+        self.compliance_rules = {
+            "data_retention": 2555,  # 7 years in days
+            "pii_detection": True,
+            "audit_all_requests": True,
+            "encrypt_sensitive_logs": True
+        }
+
+        # PII detection patterns
+        self.pii_patterns = [
+            r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
+            r'\b\d{16}\b',             # Credit card
+            r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
+            r'\b\d{3}-\d{3}-\d{4}\b',  # Phone number
+        ]
+
+    def detect_pii(self, content: str) -> List[str]:
+        """Detect personally identifiable information"""
+
+        detected_pii = []
+
+        for pattern in self.pii_patterns:
+            if re.search(pattern, content):
+                detected_pii.append(pattern)
+
+        return detected_pii
+
+    def create_audit_event(self,
+                          event_type: str,
+                          user_id: str,
+                          session_id: str,
+                          ip_address: str,
+                          user_agent: str,
+                          request_data: Dict[str, Any],
+                          response_data: Optional[Dict[str, Any]] = None,
+                          duration_ms: float = 0,
+                          success: bool = True,
+                          error_message: Optional[str] = None,
+                          security_level: str = "medium") -> AuditEvent:
+        """Create structured audit event"""
+
+        # Detect compliance flags
+        compliance_flags = []
+
+        # Check for PII in request
+        if self.compliance_rules["pii_detection"]:
+            request_content = json.dumps(request_data)
+            if self.detect_pii(request_content):
+                compliance_flags.append("PII_DETECTED_REQUEST")
+
+        # Check for PII in response
+        if response_data and self.compliance_rules["pii_detection"]:
+            response_content = json.dumps(response_data)
+            if self.detect_pii(response_content):
+                compliance_flags.append("PII_DETECTED_RESPONSE")
+
+        # High-cost operation flag
+        if duration_ms > 5000:  # 5 second threshold
+            compliance_flags.append("HIGH_LATENCY_OPERATION")
+
+        return AuditEvent(
+            timestamp=datetime.utcnow().isoformat(),
+            event_type=event_type,
+            user_id=user_id,
+            session_id=session_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            request_data=request_data,
+            response_data=response_data,
+            duration_ms=duration_ms,
+            success=success,
+            error_message=error_message,
+            security_level=security_level,
+            compliance_flags=compliance_flags
+        )
+
+    def log_audit_event(self, event: AuditEvent, level: AuditLevel = AuditLevel.INFO):
+        """Log audit event with proper structure"""
+
+        # Sanitize sensitive data for logging
+        sanitized_request = self._sanitize_for_logging(event.request_data)
+        sanitized_response = self._sanitize_for_logging(event.response_data) if event.response_data else None
+
+        log_entry = {
+            "audit_event": {
+                "timestamp": event.timestamp,
+                "event_type": event.event_type,
+                "user_id": event.user_id,
+                "session_id": event.session_id,
+                "ip_address": event.ip_address,
+                "duration_ms": event.duration_ms,
+                "success": event.success,
+                "security_level": event.security_level,
+                "compliance_flags": event.compliance_flags,
+                "request_data_hash": hashlib.sha256(
+                    json.dumps(event.request_data, sort_keys=True).encode()
+                ).hexdigest()[:16],
+                "response_data_hash": hashlib.sha256(
+                    json.dumps(event.response_data, sort_keys=True).encode()
+                ).hexdigest()[:16] if event.response_data else None,
+            }
+        }
+
+        # Add error info if applicable
+        if event.error_message:
+            log_entry["audit_event"]["error_message"] = event.error_message
+
+        # Log with appropriate level
+        log_message = json.dumps(log_entry)
+
+        if level == AuditLevel.CRITICAL:
+            self.logger.critical(log_message)
+        elif level == AuditLevel.ERROR:
+            self.logger.error(log_message)
+        elif level == AuditLevel.WARNING:
+            self.logger.warning(log_message)
+        else:
+            self.logger.info(log_message)
+
+        # Store full event data separately if required for compliance
+        if self.compliance_rules["audit_all_requests"]:
+            self._store_full_audit_data(event)
+
+    def _sanitize_for_logging(self, data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Sanitize sensitive data for logging"""
+
+        if not data:
+            return None
+
+        sanitized = {}
+
+        for key, value in data.items():
+            if isinstance(value, str):
+                # Replace potential PII with placeholders
+                sanitized_value = value
+                for pattern in self.pii_patterns:
+                    sanitized_value = re.sub(pattern, '[PII_REDACTED]', sanitized_value)
+
+                # Truncate long values
+                if len(sanitized_value) > 100:
+                    sanitized_value = sanitized_value[:97] + "..."
+
+                sanitized[key] = sanitized_value
+            else:
+                sanitized[key] = str(value)[:50]  # Convert to string and truncate
+
+        return sanitized
+
+    def _store_full_audit_data(self, event: AuditEvent):
+        """Store full audit data for compliance (encrypted if required)"""
+
+        # In production, store in secure database or encrypted file system
+        audit_file = f"audit_full_{datetime.utcnow().strftime('%Y%m%d')}.jsonl"
+
+        try:
+            with open(audit_file, 'a') as f:
+                f.write(json.dumps(event.__dict__) + '\n')
+        except Exception as e:
+            self.logger.error(f"Failed to store full audit data: {e}")
+
+# Audit-enabled DSPy service
+class AuditedDSPyService:
+    """DSPy service with comprehensive compliance auditing"""
+
+    def __init__(self):
+        self.auditor = ComplianceAuditor()
+
+        # Configure DSPy
+        self.lm = dspy.LM("openai/gpt-4o-mini")
+        dspy.configure(lm=self.lm)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def audited_predict(self,
+                             question: str,
+                             user_id: str,
+                             session_id: str,
+                             ip_address: str,
+                             user_agent: str) -> Dict[str, Any]:
+        """Make prediction with comprehensive auditing"""
+
+        start_time = time.time()
+
+        request_data = {
+            "question": question,
+            "question_length": len(question)
+        }
+
+        try:
+            # Make prediction
+            result = self.program(question=question)
+
+            duration_ms = (time.time() - start_time) * 1000
+
+            response_data = {
+                "answer": result.answer,
+                "answer_length": len(result.answer),
+                "reasoning_length": len(getattr(result, "reasoning", ""))
+            }
+
+            # Create and log audit event
+            audit_event = self.auditor.create_audit_event(
+                event_type="dspy_prediction_success",
+                user_id=user_id,
+                session_id=session_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                request_data=request_data,
+                response_data=response_data,
+                duration_ms=duration_ms,
+                success=True
+            )
+
+            # Determine audit level based on compliance flags
+            audit_level = AuditLevel.WARNING if audit_event.compliance_flags else AuditLevel.INFO
+            self.auditor.log_audit_event(audit_event, audit_level)
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "audit_id": audit_event.timestamp,
+                "compliance_flags": audit_event.compliance_flags
+            }
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Create audit event for error
+            audit_event = self.auditor.create_audit_event(
+                event_type="dspy_prediction_error",
+                user_id=user_id,
+                session_id=session_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                request_data=request_data,
+                duration_ms=duration_ms,
+                success=False,
+                error_message=str(e)
+            )
+
+            self.auditor.log_audit_event(audit_event, AuditLevel.ERROR)
+
+            raise HTTPException(status_code=500, detail="Prediction failed")
+
+# Usage example
+service = AuditedDSPyService()
+```
+
+## Speed Tips
+
+- Implement input validation early in the request pipeline to fail fast
+- Use Redis for session management and rate limiting for scalability
+- Cache security validations to avoid repeated expensive operations
+- Implement async security checks to avoid blocking the main thread
+- Use connection pooling for security database connections
+- Batch security events for efficient logging and storage
+
+## Common Pitfalls
+
+- Not validating all user inputs leading to injection vulnerabilities
+- Storing sensitive data in logs creating compliance violations
+- Missing rate limiting allowing denial-of-service attacks
+- Not implementing proper session management enabling session hijacking
+- Insufficient error handling revealing system internals to attackers
+- Not encrypting sensitive data in transit and at rest
+
+## Best Practices Summary
+
+- Always validate and sanitize all user inputs before processing
+- Implement comprehensive audit logging for compliance requirements
+- Use strong authentication and authorization mechanisms
+- Apply the principle of least privilege for all operations
+- Encrypt sensitive data both in transit and at rest
+- Implement rate limiting and DDoS protection
+- Monitor for security threats and respond promptly to incidents
+- Regularly update dependencies and security configurations
+
+## References
+
+- [OWASP Security Guidelines](https://owasp.org/www-project-top-ten/)
+- [FastAPI Security](https://fastapi.tiangolo.com/tutorial/security/)
+- [JWT Best Practices](https://datatracker.ietf.org/doc/html/rfc8725)
+- [Input Validation Guide](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html)
+- [Logging Security Events](https://owasp.org/www-community/OWASP_Application_Security_Verification_Standard_Category_L1_L2_L3)

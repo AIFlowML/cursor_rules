@@ -1,0 +1,663 @@
+---
+description: AGNO Workflows 2.0 - Master sequential workflow patterns for linear task execution
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 sequential execution patterns. Master linear workflows for step-by-step processing with optimal data flow.
+
+## Sequential Workflow Flow
+
+```
+Step 1 → Step 2 → Step 3 → Step 4 → Final Result
+  ↓        ↓        ↓        ↓          ↓
+Input    Output1  Output2  Output3   Complete
+Process  →Input   →Input   →Input    Workflow
+  ↓        ↓        ↓        ↓          ↓
+Output   Step 2   Step 3   Step 4    Response
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Sequential Workflow
+```python
+from agno.workflow.v2 import Workflow, Step
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Create sequential agents
+researcher = Agent(name="Researcher", model=OpenAIChat(id="gpt-4o-mini"))
+analyzer = Agent(name="Analyzer", model=OpenAIChat(id="gpt-4o-mini"))
+writer = Agent(name="Writer", model=OpenAIChat(id="gpt-4o-mini"))
+
+# Sequential workflow - simplest form
+sequential_workflow = Workflow(
+    name="Linear Content Pipeline",
+    steps=[researcher, analyzer, writer]  # Executes in order
+)
+
+# Execute immediately
+sequential_workflow.print_response("Create content about AI trends", markdown=True)
+```
+
+### Production Ready - Advanced Sequential Processing
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+
+# Advanced agents with specialized roles
+research_specialist = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Conduct comprehensive research with credible sources",
+    instructions=[
+        "Search for recent, authoritative information",
+        "Verify facts from multiple sources",
+        "Structure findings with clear citations",
+        "Focus on current trends and developments"
+    ]
+)
+
+data_analyst = Agent(
+    name="Data Analyst", 
+    model=OpenAIChat(id="gpt-4o"),
+    role="Analyze research data and extract key insights",
+    instructions=[
+        "Identify patterns and trends in research data",
+        "Extract actionable insights and recommendations",
+        "Quantify findings where possible",
+        "Highlight contradictions or gaps in data"
+    ]
+)
+
+technical_writer = Agent(
+    name="Technical Writer",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Transform analysis into compelling, structured content",
+    instructions=[
+        "Create clear, engaging content from analytical data",
+        "Use appropriate technical depth for audience",
+        "Structure content with clear sections and flow",
+        "Include relevant examples and case studies"
+    ]
+)
+
+quality_reviewer = Agent(
+    name="Quality Reviewer",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Review and validate final content quality",
+    instructions=[
+        "Check content accuracy and completeness",
+        "Ensure clarity and readability",
+        "Verify claims are supported by research",
+        "Suggest improvements and corrections"
+    ]
+)
+
+# Custom validation function between steps
+def research_validator(step_input: StepInput) -> StepOutput:
+    """Validate research quality before proceeding"""
+    
+    research_content = step_input.previous_step_content or ""
+    
+    # Quality checks
+    word_count = len(research_content.split())
+    has_sources = any(keyword in research_content.lower() 
+                     for keyword in ["source", "study", "report", "according"])
+    has_data = any(keyword in research_content.lower()
+                   for keyword in ["data", "statistics", "research", "findings"])
+    
+    # Validation logic
+    if word_count < 200:
+        return StepOutput(
+            content="❌ Research validation failed: Insufficient content length",
+            success=False,
+            error="Research content too brief for analysis"
+        )
+    
+    if not has_sources:
+        return StepOutput(
+            content="⚠️ Research validation warning: No clear sources identified",
+            success=True  # Warning but continue
+        )
+    
+    validation_report = f"""
+    ## Research Validation Report ✅
+    
+    **Quality Assessment**: PASSED
+    **Content Length**: {word_count} words
+    **Source References**: {'Found' if has_sources else 'Missing'}
+    **Data Elements**: {'Present' if has_data else 'Limited'}
+    
+    **Validated Research Content**:
+    {research_content}
+    
+    **Validation Status**: Research meets quality standards for analysis phase
+    """
+    
+    return StepOutput(
+        content=validation_report,
+        success=True
+    )
+
+# Production sequential workflow with validation
+production_sequential = Workflow(
+    name="Advanced Sequential Content Pipeline",
+    description="Multi-stage content creation with quality validation",
+    steps=[
+        Step(
+            name="research_phase",
+            description="Comprehensive research and data gathering",
+            agent=research_specialist
+        ),
+        Step(
+            name="research_validation",
+            description="Validate research quality before analysis",
+            executor=research_validator
+        ),
+        Step(
+            name="analysis_phase",
+            description="Extract insights and patterns from research",
+            agent=data_analyst
+        ),
+        Step(
+            name="content_creation",
+            description="Transform analysis into structured content",
+            agent=technical_writer
+        ),
+        Step(
+            name="quality_review",
+            description="Final quality assurance and validation",
+            agent=quality_reviewer
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="sequential_workflows",
+        db_file="tmp/sequential_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True
+)
+
+# Execute with comprehensive tracking
+response = production_sequential.run(
+    message="Analyze the impact of edge computing on IoT applications in 2024",
+    additional_data={
+        "priority": "high",
+        "target_audience": "technical executives",
+        "content_length": "comprehensive",
+        "format": "executive_report"
+    }
+)
+
+print(f"Final content: {response.content}")
+print(f"Execution events: {len(response.events) if response.events else 0}")
+```
+
+## Sequential Pattern Variations
+
+### 1. Basic Linear Sequence
+```python
+# Simple agent sequence
+basic_sequence = Workflow(
+    name="Basic Linear",
+    steps=[agent1, agent2, agent3]
+)
+
+# Each step receives output from previous step
+# agent1 gets original input
+# agent2 gets agent1's output  
+# agent3 gets agent2's output
+```
+
+### 2. Mixed Executor Sequence
+```python
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def data_processor(step_input: StepInput) -> StepOutput:
+    """Custom processing between agents"""
+    data = step_input.previous_step_content or ""
+    processed = f"Processed: {data.upper()}"
+    return StepOutput(content=processed)
+
+# Mixed sequence: Agent → Function → Team → Agent
+mixed_sequence = Workflow(
+    name="Mixed Executor Sequence",
+    steps=[
+        researcher_agent,      # Agent: Initial research
+        data_processor,        # Function: Custom processing
+        analysis_team,         # Team: Collaborative analysis  
+        writer_agent          # Agent: Final content creation
+    ]
+)
+```
+
+### 3. Named Sequential Steps
+```python
+# Named steps for better tracking and debugging
+named_sequence = Workflow(
+    name="Named Sequential Pipeline",
+    steps=[
+        Step(
+            name="initial_research",
+            description="Gather preliminary research data",
+            agent=researcher
+        ),
+        Step(
+            name="deep_analysis", 
+            description="Perform comprehensive data analysis",
+            agent=analyst
+        ),
+        Step(
+            name="content_synthesis",
+            description="Synthesize analysis into coherent content",
+            agent=synthesizer
+        ),
+        Step(
+            name="final_editing",
+            description="Polish and refine final content",
+            agent=editor
+        )
+    ]
+)
+
+# Benefits: 
+# - Better logging with step names
+# - Access specific step outputs by name
+# - Clear workflow visualization
+# - Enhanced debugging capabilities
+```
+
+### 4. Conditional Sequential Steps
+```python
+from agno.workflow.v2 import Condition
+
+def needs_additional_research(step_input: StepInput) -> bool:
+    """Determine if additional research is needed"""
+    content = step_input.previous_step_content or ""
+    return len(content.split()) < 500  # Need more research if content is short
+
+# Sequential with conditional step
+conditional_sequence = Workflow(
+    name="Conditional Sequential",
+    steps=[
+        Step(name="initial_research", agent=researcher),
+        Condition(
+            name="additional_research_check",
+            evaluator=needs_additional_research,
+            steps=[Step(name="additional_research", agent=deep_researcher)]
+        ),
+        Step(name="analysis", agent=analyst),
+        Step(name="writing", agent=writer)
+    ]
+)
+```
+
+## Data Flow Patterns
+
+### Step-by-Step Data Transformation
+```python
+def step_data_tracker(step_input: StepInput) -> StepOutput:
+    """Track data transformation through sequential steps"""
+    
+    # Access all previous steps in order
+    all_previous = step_input.get_all_previous_content()
+    original_message = step_input.workflow_message
+    current_content = step_input.previous_step_content
+    
+    # Track data evolution
+    data_evolution = f"""
+    ## Data Flow Tracking Report
+    
+    **Original Input**: {original_message}
+    **Current Step Input**: {len(str(current_content))} characters
+    **Total Previous Content**: {len(all_previous)} characters
+    
+    **Data Transformation Chain**:
+    1. Original → Research Phase
+    2. Research → Analysis Phase  
+    3. Analysis → Current Processing
+    
+    **Current Processing**:
+    {current_content}
+    """
+    
+    return StepOutput(content=data_evolution)
+
+# Workflow with data flow tracking
+data_flow_sequence = Workflow(
+    name="Data Flow Sequential",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="analysis", agent=analyst),
+        Step(name="tracking", executor=step_data_tracker),
+        Step(name="writing", agent=writer)
+    ]
+)
+```
+
+### Sequential with State Accumulation
+```python
+def state_accumulator(step_input: StepInput) -> StepOutput:
+    """Accumulate and combine outputs from all previous steps"""
+    
+    # Get all previous step outputs by name
+    research_data = step_input.get_step_content("research") or ""
+    analysis_data = step_input.get_step_content("analysis") or ""
+    validation_data = step_input.get_step_content("validation") or ""
+    
+    # Combine all data
+    accumulated_report = f"""
+    ## Comprehensive Sequential Report
+    
+    ### Research Phase Results
+    {research_data[:300]}...
+    
+    ### Analysis Phase Results  
+    {analysis_data[:300]}...
+    
+    ### Validation Phase Results
+    {validation_data[:300]}...
+    
+    ### Combined Insights
+    - Research provided foundational data
+    - Analysis extracted key patterns
+    - Validation confirmed quality
+    
+    **Total Processing**: Combined outputs from {3} sequential phases
+    """
+    
+    return StepOutput(content=accumulated_report)
+
+# Sequential with accumulation
+accumulation_sequence = Workflow(
+    name="State Accumulation Sequential",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="analysis", agent=analyst),
+        Step(name="validation", agent=validator),
+        Step(name="accumulation", executor=state_accumulator)
+    ]
+)
+```
+
+## Advanced Sequential Patterns
+
+### Sequential with Error Handling
+```python
+def error_recovery_step(step_input: StepInput) -> StepOutput:
+    """Handle errors and recovery in sequential processing"""
+    
+    previous_content = step_input.previous_step_content
+    
+    # Check if previous step had issues
+    if not previous_content or len(previous_content.strip()) < 10:
+        # Recovery logic
+        recovery_content = f"""
+        ## Error Recovery Activated
+        
+        **Issue Detected**: Insufficient or missing input from previous step
+        **Recovery Action**: Generating fallback content
+        
+        **Fallback Processing**:
+        Based on original input: {step_input.workflow_message}
+        
+        Proceeding with basic analysis and recommendations.
+        """
+        
+        return StepOutput(
+            content=recovery_content,
+            success=True  # Recovered, can continue
+        )
+    
+    # Normal processing
+    return StepOutput(
+        content=f"Successfully processed: {previous_content}",
+        success=True
+    )
+
+# Sequential with error recovery
+error_resilient_sequence = Workflow(
+    name="Error Resilient Sequential",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="error_check", executor=error_recovery_step),
+        Step(name="analysis", agent=analyst),
+        Step(name="writing", agent=writer)
+    ]
+)
+```
+
+### Sequential with Performance Monitoring
+```python
+from datetime import datetime
+
+def performance_monitor(step_input: StepInput) -> StepOutput:
+    """Monitor sequential workflow performance"""
+    
+    start_time = datetime.now()
+    content = step_input.previous_step_content or ""
+    
+    # Performance metrics
+    content_length = len(content)
+    word_count = len(content.split())
+    processing_time = datetime.now() - start_time
+    
+    performance_report = f"""
+    ## Sequential Performance Monitor
+    
+    **Processing Metrics**:
+    - Content Length: {content_length} characters
+    - Word Count: {word_count} words
+    - Processing Time: {processing_time.total_seconds():.2f} seconds
+    
+    **Quality Indicators**:
+    - Content Density: {word_count/max(1, content_length/100):.1f} words per 100 chars
+    - Processing Rate: {word_count/max(1, processing_time.total_seconds()):.1f} words/second
+    
+    **Processed Content**:
+    {content}
+    """
+    
+    return StepOutput(content=performance_report)
+
+# Sequential with performance monitoring
+monitored_sequence = Workflow(
+    name="Performance Monitored Sequential",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="perf_monitor_1", executor=performance_monitor),
+        Step(name="analysis", agent=analyst),
+        Step(name="perf_monitor_2", executor=performance_monitor),
+        Step(name="writing", agent=writer)
+    ]
+)
+```
+
+## Sequential Execution Control
+
+### Early Termination in Sequential Workflows
+```python
+def quality_gate(step_input: StepInput) -> StepOutput:
+    """Quality gate that can stop sequential execution"""
+    
+    content = step_input.previous_step_content or ""
+    
+    # Quality checks
+    word_count = len(content.split())
+    has_key_elements = all(keyword in content.lower() 
+                          for keyword in ["analysis", "data", "conclusion"])
+    
+    if word_count < 100:
+        return StepOutput(
+            content="❌ Quality gate failed: Content too brief",
+            stop=True  # Terminates entire workflow
+        )
+    
+    if not has_key_elements:
+        return StepOutput(
+            content="❌ Quality gate failed: Missing key analytical elements",
+            stop=True  # Terminates entire workflow
+        )
+    
+    return StepOutput(
+        content=f"✅ Quality gate passed: Content meets standards\n\n{content}",
+        success=True
+    )
+
+# Sequential with quality gates
+gated_sequence = Workflow(
+    name="Quality Gated Sequential",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="quality_gate_1", executor=quality_gate),
+        Step(name="analysis", agent=analyst),
+        Step(name="quality_gate_2", executor=quality_gate),
+        Step(name="writing", agent=writer)
+    ]
+)
+```
+
+## Speed Tips
+
+### Rapid Sequential Development
+```python
+# Quick sequential workflow builder
+def build_sequential(*executors, name="Sequential Workflow"):
+    """Build sequential workflow from executors"""
+    return Workflow(name=name, steps=list(executors))
+
+# Usage
+content_pipeline = build_sequential(
+    researcher, analyzer, writer,
+    name="Content Pipeline"
+)
+
+analysis_pipeline = build_sequential(
+    data_gatherer, processor, validator,
+    name="Analysis Pipeline"
+)
+```
+
+### Sequential Template Factory
+```python
+class SequentialTemplateFactory:
+    """Factory for common sequential patterns"""
+    
+    @staticmethod
+    def research_analysis_writing(name="RAW Pipeline"):
+        return Workflow(
+            name=name,
+            steps=[
+                Step(name="research", agent=researcher),
+                Step(name="analysis", agent=analyst),
+                Step(name="writing", agent=writer)
+            ]
+        )
+    
+    @staticmethod
+    def gather_process_validate(name="GPV Pipeline"):
+        return Workflow(
+            name=name,
+            steps=[
+                Step(name="gather", agent=gatherer),
+                Step(name="process", agent=processor),
+                Step(name="validate", agent=validator)
+            ]
+        )
+    
+    @staticmethod
+    def custom_sequential(name, *agents):
+        return Workflow(
+            name=name,
+            steps=[Step(name=f"step_{i}", agent=agent) 
+                   for i, agent in enumerate(agents)]
+        )
+
+# Usage
+factory = SequentialTemplateFactory()
+pipeline1 = factory.research_analysis_writing("Content Creation")
+pipeline2 = factory.gather_process_validate("Data Processing")
+pipeline3 = factory.custom_sequential("Custom Flow", agent1, agent2, agent3)
+```
+
+## Common Pitfalls
+
+### Sequential Data Flow Issues
+```python
+# ❌ DON'T: Assume previous step always has content
+def bad_sequential_step(step_input: StepInput) -> StepOutput:
+    content = step_input.previous_step_content
+    return StepOutput(content=content.upper())  # content might be None
+
+# ✅ DO: Handle None values properly  
+def good_sequential_step(step_input: StepInput) -> StepOutput:
+    content = step_input.previous_step_content or ""
+    return StepOutput(content=content.upper() if content else "No input received")
+```
+
+### Step Naming Confusion
+```python
+# ❌ DON'T: Use duplicate or unclear names
+workflow = Workflow(
+    name="Confusing Sequential",
+    steps=[
+        Step(name="step", agent=agent1),  # Generic name
+        Step(name="step", agent=agent2),  # Duplicate name
+        Step(name="process", agent=agent3)  # Unclear purpose
+    ]
+)
+
+# ✅ DO: Use clear, unique step names
+workflow = Workflow(
+    name="Clear Sequential",
+    steps=[
+        Step(name="initial_research", agent=researcher),
+        Step(name="data_analysis", agent=analyst),
+        Step(name="content_writing", agent=writer)
+    ]
+)
+```
+
+### Sequential Performance Issues
+```python
+# ❌ DON'T: Create overly long sequential chains
+long_workflow = Workflow(
+    name="Too Long Sequential",
+    steps=[agent1, agent2, agent3, agent4, agent5, agent6, agent7, agent8]  # Too many steps
+)
+
+# ✅ DO: Break into logical phases or use parallel where appropriate
+efficient_workflow = Workflow(
+    name="Efficient Sequential",
+    steps=[
+        research_team,    # Combined research phase
+        analysis_agent,   # Single analysis step
+        content_agent     # Final content creation
+    ]
+)
+```
+
+## Best Practices Summary
+
+- **Logical Flow**: Ensure each step logically follows the previous one
+- **Clear Naming**: Use descriptive names for steps and workflows  
+- **Error Handling**: Include validation and error recovery steps
+- **Data Validation**: Check input quality between critical steps
+- **Performance Monitoring**: Track execution metrics for optimization
+- **Quality Gates**: Implement stopping points for quality control
+- **State Management**: Use session state for cross-step data sharing
+- **Modular Design**: Keep steps focused on single responsibilities
+- **Documentation**: Document the purpose and flow of each sequential step
+
+## References
+
+- [Step Architecture](/docs/workflows_2/step_architecture.md)
+- [Data Flow Patterns](/docs/workflows_2/data_flow.md)
+- [Error Handling](/docs/workflows_2/error_handling.md)
+- [Performance Optimization](/docs/workflows_2/performance.md)

@@ -1,0 +1,444 @@
+---
+description: DSPy 3.0.1 Module Ecosystem - Complete guide to all built-in reasoning and processing modules
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's complete module ecosystem. Master all built-in modules for building sophisticated AI programs through composition.
+
+## Module Ecosystem Architecture
+
+```
+Core Modules     Reasoning Modules    Selection Modules    Meta Modules
+     ↓                   ↓                   ↓               ↓
+  Predict           ChainOfThought        BestOfN         Parallel
+     ↓                   ↓                   ↓               ↓
+Basic LM Call    Step-by-step Logic   Multi-candidate   Multi-path
+Generation       Explicit Reasoning    Quality Filter    Execution
+     ↓                   ↓                   ↓               ↓
+Fast & Direct    Transparent Process  Robust Outputs   Scalable
+```
+
+## Instant Patterns
+
+### Quick Start - Core Module Usage
+
+```python
+import dspy
+
+# Configure once
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+
+# Basic prediction - fastest, simplest
+predict = dspy.Predict("question -> answer")
+
+# Add reasoning - better quality
+cot = dspy.ChainOfThought("question -> reasoning, answer")
+
+# Multiple candidates - highest quality
+best_of = dspy.BestOfN(dspy.ChainOfThought("question -> answer"), n=3)
+
+# Use any module identically
+result = predict(question="What is AI?")
+result = cot(question="What is AI?")
+result = best_of(question="What is AI?")
+```
+
+### Production Ready - Module Composition
+
+```python
+import dspy
+from typing import List
+
+class AdvancedQASystem(dspy.Module):
+    def __init__(self):
+        # Compose multiple modules for robust pipeline
+        self.retrieve_context = dspy.Predict("query -> relevant_passages: list[str]")
+
+        # Parallel reasoning paths
+        self.parallel_analysis = dspy.Parallel([
+            dspy.ChainOfThought("query, passages -> analysis1: str"),
+            dspy.ProgramOfThought("query, passages -> analysis2: str"),
+        ])
+
+        # Best answer selection
+        self.synthesize = dspy.BestOfN(
+            dspy.ChainOfThought("query, analysis1, analysis2 -> final_answer"),
+            n=5,
+            metric=lambda pred, _: len(pred.final_answer) > 50  # Quality check
+        )
+
+        # Refinement step
+        self.refine = dspy.Refine(
+            dspy.Predict("draft_answer -> polished_answer"),
+            iterations=2
+        )
+
+    def forward(self, query):
+        # Pipeline execution
+        context = self.retrieve_context(query=query)
+        analyses = self.parallel_analysis(query=query, passages=context.relevant_passages)
+        best_answer = self.synthesize(
+            query=query,
+            analysis1=analyses[0].analysis1,
+            analysis2=analyses[1].analysis2
+        )
+        final_answer = self.refine(draft_answer=best_answer.final_answer)
+
+        return dspy.Prediction(
+            query=query,
+            context=context.relevant_passages,
+            answer=final_answer.polished_answer
+        )
+
+# Use complex system as single module
+qa_system = AdvancedQASystem()
+result = qa_system(query="How does quantum computing work?")
+```
+
+## Core Modules
+
+### Predict - Foundation Module
+
+```python
+# Basic LM interaction - fastest
+predict = dspy.Predict("input -> output")
+predict = dspy.Predict(CustomSignature)
+
+# With configuration
+predict = dspy.Predict("question -> answer", temperature=0.7, max_tokens=500)
+
+# Multiple outputs
+multi_predict = dspy.Predict("text -> sentiment, confidence, keywords")
+
+# Use cases: Simple tasks, fast responses, basic generation
+```
+
+### ChainOfThought - Reasoning Module
+
+```python
+# Step-by-step reasoning
+cot = dspy.ChainOfThought("problem -> reasoning, solution")
+
+# Custom reasoning field
+cot = dspy.ChainOfThought(
+    "problem -> solution",
+    rationale_field=dspy.OutputField(
+        prefix="Let me think step by step:",
+        desc="Detailed reasoning process"
+    )
+)
+
+# Use cases: Complex reasoning, transparency, education
+result = cot(problem="If I have 23 apples and give away 7, how many remain?")
+print(result.reasoning)  # Shows step-by-step logic
+print(result.solution)   # Shows final answer
+```
+
+### ProgramOfThought - Code Reasoning
+
+```python
+# Mathematical and logical reasoning through code
+pot = dspy.ProgramOfThought("problem -> code, result")
+
+# With specific interpreter
+pot = dspy.ProgramOfThought(
+    "math_problem -> python_code, answer",
+    max_iters=3
+)
+
+# Use cases: Math problems, logic puzzles, computational tasks
+result = pot(problem="Calculate the compound interest on $1000 at 5% for 3 years")
+print(result.code)    # Shows Python code
+print(result.result)  # Shows execution result
+```
+
+## Selection Modules
+
+### BestOfN - Quality Selection
+
+```python
+# Generate multiple candidates, pick best
+best_of = dspy.BestOfN(
+    dspy.ChainOfThought("question -> answer"),
+    n=5,  # Number of candidates
+    metric=lambda pred, example: len(pred.answer.split()) > 10  # Quality metric
+)
+
+# With custom metric
+def answer_quality(prediction, example=None):
+    answer = prediction.answer
+    return len(answer) > 20 and "because" in answer.lower()
+
+best_writer = dspy.BestOfN(
+    dspy.Predict("topic -> essay"),
+    n=3,
+    metric=answer_quality
+)
+
+# Use cases: High-quality outputs, critical applications
+```
+
+### MultiChainComparison - Comparative Analysis
+
+```python
+# Compare multiple reasoning approaches
+comparison = dspy.MultiChainComparison([
+    dspy.ChainOfThought("problem -> solution1"),
+    dspy.ProgramOfThought("problem -> solution2"),
+    dspy.ReAct("problem -> solution3", tools=[calculator])
+])
+
+# Use cases: Complex problems, validation, robust solutions
+```
+
+## Meta Modules
+
+### Parallel - Concurrent Execution
+
+```python
+# Run multiple modules concurrently
+parallel = dspy.Parallel([
+    dspy.Predict("text -> summary"),
+    dspy.Predict("text -> keywords"),
+    dspy.Predict("text -> sentiment")
+])
+
+# Process different aspects simultaneously
+results = parallel(text="Long article content...")
+summary, keywords, sentiment = results
+```
+
+### Refine - Iterative Improvement
+
+```python
+# Iteratively improve outputs
+refiner = dspy.Refine(
+    dspy.Predict("draft -> improved"),
+    iterations=3
+)
+
+# With quality check
+def improvement_needed(current, previous):
+    return len(current.improved) <= len(previous.draft)
+
+careful_refiner = dspy.Refine(
+    dspy.ChainOfThought("draft -> reasoning, improved"),
+    iterations=5,
+    stop_condition=lambda pred: "excellent" in pred.improved.lower()
+)
+```
+
+### Avatar - Persona-based Processing
+
+```python
+from dspy.predict.avatar import Tool
+
+# Create persona-based module with tools
+web_search_tool = Tool(
+    tool=web_search_function,
+    name="WebSearch",
+    desc="Search the web for current information"
+)
+
+expert_avatar = dspy.Avatar(
+    signature="question -> expert_analysis",
+    tools=[web_search_tool],
+    max_iters=5
+)
+
+# Use cases: Complex research, multi-step reasoning, tool use
+```
+
+## Advanced Modules
+
+### ReAct - Tool-Enhanced Reasoning
+
+```python
+from dspy import Tool
+
+# Define tools
+calculator = Tool(
+    func=lambda x: eval(x),
+    name="Calculator",
+    desc="Performs mathematical calculations"
+)
+
+search_tool = Tool(
+    func=web_search,
+    name="Search",
+    desc="Searches the web for information"
+)
+
+# ReAct module with tools
+react = dspy.ReAct(
+    signature="question -> answer",
+    tools=[calculator, search_tool],
+    max_iters=5
+)
+
+# Use cases: Multi-step problems requiring external data
+```
+
+### CodeAct - Code Execution Module
+
+```python
+# Execute code to solve problems
+code_act = dspy.CodeAct(
+    signature="problem -> solution",
+    interpreter="python",  # or "jupyter"
+    max_iters=3
+)
+
+# Use cases: Programming problems, data analysis, computational tasks
+```
+
+## Module Composition Patterns
+
+### Sequential Pipeline
+
+```python
+class AnalysisPipeline(dspy.Module):
+    def __init__(self):
+        self.extract = dspy.Predict("text -> entities, topics")
+        self.analyze = dspy.ChainOfThought("entities, topics -> analysis")
+        self.summarize = dspy.Predict("analysis -> summary")
+
+    def forward(self, text):
+        extraction = self.extract(text=text)
+        analysis = self.analyze(
+            entities=extraction.entities,
+            topics=extraction.topics
+        )
+        summary = self.summarize(analysis=analysis.analysis)
+        return summary
+```
+
+### Conditional Execution
+
+```python
+class AdaptiveQA(dspy.Module):
+    def __init__(self):
+        self.simple_qa = dspy.Predict("question -> answer")
+        self.complex_qa = dspy.ChainOfThought("question -> reasoning, answer")
+        self.classifier = dspy.Predict("question -> complexity: str")
+
+    def forward(self, question):
+        complexity = self.classifier(question=question)
+
+        if "simple" in complexity.complexity.lower():
+            return self.simple_qa(question=question)
+        else:
+            return self.complex_qa(question=question)
+```
+
+### Error Recovery
+
+```python
+class RobustModule(dspy.Module):
+    def __init__(self):
+        self.primary = dspy.ChainOfThought("input -> output")
+        self.fallback = dspy.Predict("input -> output")
+
+    def forward(self, **kwargs):
+        try:
+            result = self.primary(**kwargs)
+            if self.validate_output(result):
+                return result
+        except Exception:
+            pass
+
+        return self.fallback(**kwargs)
+
+    def validate_output(self, result):
+        return hasattr(result, 'output') and len(result.output) > 10
+```
+
+## Speed Tips
+
+### Module Selection Guide
+
+```python
+# Task complexity guide
+SIMPLE_TASKS = ["classification", "sentiment", "keyword_extraction"]
+REASONING_TASKS = ["math", "logic", "analysis", "explanation"]
+QUALITY_CRITICAL = ["writing", "medical", "legal", "safety"]
+
+def choose_module(task_type, quality_needed="medium"):
+    if task_type in SIMPLE_TASKS:
+        return dspy.Predict  # Fastest
+    elif task_type in REASONING_TASKS:
+        return dspy.ChainOfThought  # Transparent
+    elif quality_needed == "high":
+        return lambda sig: dspy.BestOfN(dspy.ChainOfThought(sig), n=3)
+    else:
+        return dspy.Predict
+```
+
+### Performance Optimization
+
+```python
+# Development: Fast modules
+dev_modules = {
+    "classify": dspy.Predict("text -> category"),
+    "summarize": dspy.Predict("text -> summary")
+}
+
+# Production: Quality modules
+prod_modules = {
+    "classify": dspy.BestOfN(dspy.Predict("text -> category"), n=3),
+    "summarize": dspy.ChainOfThought("text -> reasoning, summary")
+}
+
+# Switch based on environment
+modules = prod_modules if os.getenv("ENV") == "prod" else dev_modules
+```
+
+## Common Pitfalls
+
+### Module Overuse
+
+```python
+# ❌ DON'T: Use complex modules for simple tasks
+overkill = dspy.BestOfN(
+    dspy.ChainOfThought("name -> greeting"),
+    n=5
+)
+
+# ✅ DO: Match module complexity to task
+simple_greeting = dspy.Predict("name -> greeting")
+```
+
+### Composition Complexity
+
+```python
+# ❌ DON'T: Over-engineer pipelines
+class OverEngineered(dspy.Module):
+    def __init__(self):
+        self.step1 = dspy.BestOfN(dspy.ChainOfThought("a -> b"), n=5)
+        self.step2 = dspy.MultiChainComparison([...])  # Unnecessary complexity
+
+# ✅ DO: Start simple, add complexity as needed
+class Progressive(dspy.Module):
+    def __init__(self, use_reasoning=False):
+        base_module = dspy.ChainOfThought if use_reasoning else dspy.Predict
+        self.process = base_module("input -> output")
+```
+
+## Best Practices Summary
+
+- **Start with Predict**: Fastest for simple tasks
+- **Add ChainOfThought**: For transparency and complex reasoning
+- **Use BestOfN**: When quality is critical
+- **Compose gradually**: Build complexity incrementally
+- **Profile performance**: Measure speed vs. quality tradeoffs
+- **Cache results**: Reuse expensive computations
+- **Handle errors**: Implement fallback strategies
+- **Match complexity**: Use appropriate modules for task difficulty
+
+## References
+
+- [Module API Documentation](/docs/api/modules/)
+- [Predict Module Reference](/docs/api/modules/Predict.md)
+- [ChainOfThought Module Reference](/docs/api/modules/ChainOfThought.md)
+- [Advanced Modules Tutorial](/docs/tutorials/core_development/)

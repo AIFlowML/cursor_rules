@@ -1,0 +1,541 @@
+---
+description: DSPy 3.0.1 ChainOfThought Module - Master step-by-step reasoning for transparent AI decision making
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's ChainOfThought module. Master transparent, step-by-step reasoning that shows the logical process behind AI decisions.
+
+## ChainOfThought Development Flow
+
+```
+Define Problem → Add Reasoning → Create CoT → Execute → Analyze Process
+      ↓              ↓            ↓         ↓           ↓
+Complex Task    Reasoning Field   Module    Forward    Reasoning Steps
+Multi-step      Step-by-step      Ready     Method     Transparent
+      ↓              ↓            ↓         ↓           ↓
+Logic Required  Explicit Steps   Composed  Prediction  Explainable AI
+```
+
+## Instant Patterns
+
+### Quick Start - Basic ChainOfThought
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Create ChainOfThought module
+math_solver = dspy.ChainOfThought("problem -> reasoning, solution")
+
+# Use with transparent reasoning
+result = math_solver(problem="If I have 23 apples and give away 7, how many do I have left?")
+print("Reasoning:", result.reasoning)
+print("Solution:", result.solution)
+```
+
+### Production Ready - Advanced ChainOfThought
+
+```python
+import dspy
+from typing import List
+
+class AnalyticalReasoningSignature(dspy.Signature):
+    """Analyze complex scenarios with detailed step-by-step reasoning."""
+
+    scenario: str = dspy.InputField(desc="Complex scenario to analyze")
+    context: List[str] = dspy.InputField(desc="Relevant background information")
+    constraints: str = dspy.InputField(desc="Limitations or constraints to consider")
+
+    reasoning: str = dspy.OutputField(
+        desc="Detailed step-by-step logical analysis",
+        prefix="Let me analyze this step by step:"
+    )
+    conclusion: str = dspy.OutputField(desc="Final conclusion based on reasoning")
+    confidence: float = dspy.OutputField(desc="Confidence in conclusion (0-1)")
+    assumptions: List[str] = dspy.OutputField(desc="Key assumptions made")
+
+# Create advanced reasoning module
+analyzer = dspy.ChainOfThought(AnalyticalReasoningSignature)
+
+# Use for complex analysis
+result = analyzer(
+    scenario="Company considering remote work policy",
+    context=["Productivity metrics", "Employee satisfaction data", "Cost analysis"],
+    constraints="Must maintain team collaboration and security"
+)
+
+print("Step-by-step reasoning:")
+print(result.reasoning)
+print(f"\nConclusion: {result.conclusion}")
+print(f"Confidence: {result.confidence}")
+```
+
+## Core ChainOfThought Patterns
+
+### Basic Reasoning Patterns
+
+```python
+# Mathematical problem solving
+math_cot = dspy.ChainOfThought("math_problem -> reasoning, answer")
+
+# Logical deduction
+logic_cot = dspy.ChainOfThought("premises -> reasoning, conclusion")
+
+# Analysis and conclusion
+analysis_cot = dspy.ChainOfThought("data, question -> analysis, insight")
+
+# Decision making
+decision_cot = dspy.ChainOfThought(
+    "situation, options -> reasoning, recommendation, rationale"
+)
+```
+
+### Custom Reasoning Fields
+
+```python
+# Custom reasoning prefix and description
+custom_cot = dspy.ChainOfThought(
+    "problem -> solution",
+    rationale_field=dspy.OutputField(
+        prefix="Step-by-step analysis:",
+        desc="Detailed logical reasoning process showing each step"
+    )
+)
+
+# Multiple reasoning fields for different aspects
+multi_aspect_cot = dspy.ChainOfThought(
+    dspy.Signature({
+        "scenario": (str, dspy.InputField(desc="Situation to analyze")),
+        "technical_reasoning": (str, dspy.OutputField(
+            prefix="Technical Analysis:",
+            desc="Technical aspects and considerations"
+        )),
+        "business_reasoning": (str, dspy.OutputField(
+            prefix="Business Analysis:",
+            desc="Business implications and factors"
+        )),
+        "final_recommendation": (str, dspy.OutputField(
+            desc="Final recommendation based on all analyses"
+        ))
+    })
+)
+```
+
+### Domain-Specific Reasoning
+
+```python
+# Scientific reasoning
+science_cot = dspy.ChainOfThought(
+    "hypothesis, data -> reasoning, validation, conclusion"
+)
+
+# Legal reasoning
+legal_cot = dspy.ChainOfThought(
+    "case_facts, relevant_law -> legal_reasoning, judgment"
+)
+
+# Medical diagnosis reasoning
+medical_cot = dspy.ChainOfThought(
+    "symptoms, patient_history -> diagnostic_reasoning, diagnosis, confidence"
+)
+
+# Financial analysis reasoning
+finance_cot = dspy.ChainOfThought(
+    "financial_data, market_conditions -> analysis, investment_recommendation"
+)
+```
+
+## Advanced Usage Patterns
+
+### Reasoning Validation and Correction
+
+```python
+class ValidatedChainOfThought(dspy.Module):
+    def __init__(self, signature):
+        super().__init__()
+        self.reasoner = dspy.ChainOfThought(signature)
+        self.validator = dspy.Predict(
+            "reasoning, conclusion -> is_valid: bool, issues: str"
+        )
+        self.corrector = dspy.ChainOfThought(
+            "original_reasoning, issues, problem -> corrected_reasoning, conclusion"
+        )
+
+    def forward(self, **kwargs):
+        # Initial reasoning
+        result = self.reasoner(**kwargs)
+
+        # Validate reasoning quality
+        validation = self.validator(
+            reasoning=result.reasoning,
+            conclusion=getattr(result, 'conclusion', getattr(result, 'solution', ''))
+        )
+
+        # Correct if needed
+        if not validation.is_valid:
+            corrected = self.corrector(
+                original_reasoning=result.reasoning,
+                issues=validation.issues,
+                **kwargs
+            )
+            return dspy.Prediction(
+                reasoning=corrected.corrected_reasoning,
+                conclusion=corrected.conclusion,
+                corrected=True,
+                original_reasoning=result.reasoning
+            )
+
+        return result
+
+# Usage
+validated_reasoner = ValidatedChainOfThought("complex_problem -> reasoning, conclusion")
+```
+
+### Multi-Step Reasoning Pipeline
+
+```python
+class MultiStepReasoning(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Sequential reasoning steps
+        self.step1_analyzer = dspy.ChainOfThought(
+            "problem -> initial_analysis, key_factors"
+        )
+        self.step2_evaluator = dspy.ChainOfThought(
+            "problem, initial_analysis, key_factors -> detailed_evaluation, alternatives"
+        )
+        self.step3_synthesizer = dspy.ChainOfThought(
+            "problem, detailed_evaluation, alternatives -> final_reasoning, recommendation"
+        )
+
+    def forward(self, problem):
+        # Step 1: Initial analysis
+        step1 = self.step1_analyzer(problem=problem)
+
+        # Step 2: Detailed evaluation
+        step2 = self.step2_evaluator(
+            problem=problem,
+            initial_analysis=step1.initial_analysis,
+            key_factors=step1.key_factors
+        )
+
+        # Step 3: Final synthesis
+        step3 = self.step3_synthesizer(
+            problem=problem,
+            detailed_evaluation=step2.detailed_evaluation,
+            alternatives=step2.alternatives
+        )
+
+        return dspy.Prediction(
+            problem=problem,
+            step1_analysis=step1.initial_analysis,
+            step2_evaluation=step2.detailed_evaluation,
+            final_reasoning=step3.final_reasoning,
+            recommendation=step3.recommendation,
+            reasoning_steps=[
+                step1.initial_analysis,
+                step2.detailed_evaluation,
+                step3.final_reasoning
+            ]
+        )
+```
+
+### Comparative Reasoning
+
+```python
+class ComparativeReasoning(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.option_analyzer = dspy.ChainOfThought(
+            "option, criteria -> analysis, score: float, justification"
+        )
+        self.comparator = dspy.ChainOfThought(
+            "options, analyses, scores -> comparative_reasoning, best_option, rationale"
+        )
+
+    def forward(self, options: List[str], criteria: str):
+        # Analyze each option
+        analyses = []
+        scores = []
+
+        for option in options:
+            analysis = self.option_analyzer(option=option, criteria=criteria)
+            analyses.append({
+                'option': option,
+                'analysis': analysis.analysis,
+                'score': analysis.score,
+                'justification': analysis.justification
+            })
+            scores.append(analysis.score)
+
+        # Compare options
+        comparison = self.comparator(
+            options=str(options),
+            analyses=str(analyses),
+            scores=str(scores)
+        )
+
+        return dspy.Prediction(
+            options=options,
+            criteria=criteria,
+            individual_analyses=analyses,
+            comparative_reasoning=comparison.comparative_reasoning,
+            best_option=comparison.best_option,
+            rationale=comparison.rationale
+        )
+```
+
+## Reasoning Quality Control
+
+### Reasoning Depth Control
+
+```python
+class DepthControlledReasoning(dspy.Module):
+    def __init__(self, depth="medium"):
+        super().__init__()
+
+        reasoning_prompts = {
+            "shallow": "Provide brief reasoning for",
+            "medium": "Think step by step to analyze",
+            "deep": "Conduct thorough, comprehensive analysis with detailed reasoning for"
+        }
+
+        self.reasoner = dspy.ChainOfThought(
+            "problem -> reasoning, solution",
+            rationale_field=dspy.OutputField(
+                prefix=f"{reasoning_prompts[depth]}:",
+                desc=f"{'Brief' if depth == 'shallow' else 'Detailed' if depth == 'medium' else 'Comprehensive'} reasoning process"
+            )
+        )
+
+    def forward(self, problem):
+        return self.reasoner(problem=problem)
+
+# Usage with different depths
+shallow_reasoner = DepthControlledReasoning("shallow")
+deep_reasoner = DepthControlledReasoning("deep")
+```
+
+### Reasoning Consistency Checking
+
+```python
+class ConsistentReasoning(dspy.Module):
+    def __init__(self, signature, num_attempts=3):
+        super().__init__()
+        self.reasoners = [
+            dspy.ChainOfThought(signature) for _ in range(num_attempts)
+        ]
+        self.consistency_checker = dspy.Predict(
+            "reasoning_attempts -> consistent: bool, consensus, confidence"
+        )
+
+    def forward(self, **kwargs):
+        # Generate multiple reasoning attempts
+        attempts = []
+        for reasoner in self.reasoners:
+            attempt = reasoner(**kwargs)
+            attempts.append({
+                'reasoning': attempt.reasoning,
+                'conclusion': getattr(attempt, 'conclusion',
+                                   getattr(attempt, 'solution', ''))
+            })
+
+        # Check consistency
+        consistency = self.consistency_checker(
+            reasoning_attempts=str(attempts)
+        )
+
+        return dspy.Prediction(
+            reasoning_attempts=attempts,
+            consistent=consistency.consistent,
+            consensus=consistency.consensus,
+            confidence=consistency.confidence,
+            final_reasoning=consistency.consensus
+        )
+```
+
+## Integration Patterns
+
+### With Other Modules
+
+```python
+class HybridReasoningSystem(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Different reasoning approaches
+        self.logical_reasoner = dspy.ChainOfThought(
+            "problem -> logical_reasoning, logical_conclusion"
+        )
+        self.creative_reasoner = dspy.ChainOfThought(
+            "problem -> creative_reasoning, creative_solution",
+            rationale_field=dspy.OutputField(
+                prefix="Creative exploration:",
+                desc="Out-of-the-box thinking and novel approaches"
+            )
+        )
+
+        # Synthesis
+        self.synthesizer = dspy.ChainOfThought(
+            "problem, logical_conclusion, creative_solution -> synthesis_reasoning, final_answer"
+        )
+
+    def forward(self, problem, use_creativity=True):
+        # Logical reasoning
+        logical_result = self.logical_reasoner(problem=problem)
+
+        results = {
+            'logical_reasoning': logical_result.logical_reasoning,
+            'logical_conclusion': logical_result.logical_conclusion
+        }
+
+        # Creative reasoning (optional)
+        if use_creativity:
+            creative_result = self.creative_reasoner(problem=problem)
+            results.update({
+                'creative_reasoning': creative_result.creative_reasoning,
+                'creative_solution': creative_result.creative_solution
+            })
+
+            # Synthesize both approaches
+            synthesis = self.synthesizer(
+                problem=problem,
+                logical_conclusion=logical_result.logical_conclusion,
+                creative_solution=creative_result.creative_solution
+            )
+            results.update({
+                'synthesis_reasoning': synthesis.synthesis_reasoning,
+                'final_answer': synthesis.final_answer
+            })
+        else:
+            results['final_answer'] = logical_result.logical_conclusion
+
+        return dspy.Prediction(**results)
+```
+
+## Speed Tips
+
+### Reasoning Optimization
+
+```python
+# Optimize for different scenarios
+class OptimizedReasoning:
+    def __init__(self):
+        # Fast reasoning for simple problems
+        self.fast_reasoner = dspy.ChainOfThought(
+            "simple_problem -> brief_reasoning, answer",
+            temperature=0.1  # More focused
+        )
+
+        # Thorough reasoning for complex problems
+        self.thorough_reasoner = dspy.ChainOfThought(
+            "complex_problem -> detailed_reasoning, comprehensive_answer",
+            temperature=0.3  # More exploration
+        )
+
+        # Complexity classifier
+        self.classifier = dspy.Predict("problem -> complexity: str")
+
+    def reason(self, problem):
+        complexity = self.classifier(problem=problem)
+
+        if "simple" in complexity.complexity.lower():
+            return self.fast_reasoner(simple_problem=problem)
+        else:
+            return self.thorough_reasoner(complex_problem=problem)
+```
+
+### Caching Reasoning Patterns
+
+```python
+from functools import lru_cache
+
+class CachedReasoning(dspy.Module):
+    def __init__(self, signature):
+        super().__init__()
+        self.reasoner = dspy.ChainOfThought(signature)
+        self._reasoning_cache = {}
+
+    @lru_cache(maxsize=1000)
+    def _get_cached_reasoning(self, problem_hash):
+        return self.reasoner(problem=problem_hash)
+
+    def forward(self, problem):
+        # Use problem as cache key (in real implementation, use hash)
+        problem_key = str(problem)[:100]  # Truncate for cache key
+
+        if problem_key in self._reasoning_cache:
+            return self._reasoning_cache[problem_key]
+
+        result = self.reasoner(problem=problem)
+        self._reasoning_cache[problem_key] = result
+        return result
+```
+
+## Common Pitfalls
+
+### Over-Reasoning
+
+```python
+# ❌ DON'T: Use CoT for simple tasks
+simple_greeting = dspy.ChainOfThought("name -> reasoning, greeting")  # Overkill
+
+# ✅ DO: Use CoT for complex tasks requiring reasoning
+math_problem = dspy.ChainOfThought("equation -> reasoning, solution")  # Appropriate
+```
+
+### Ignoring Reasoning Quality
+
+```python
+# ❌ DON'T: Ignore the reasoning output
+result = cot_module(problem="complex issue")
+answer = result.solution  # Only using final answer
+
+# ✅ DO: Analyze and validate reasoning
+result = cot_module(problem="complex issue")
+print("Reasoning steps:", result.reasoning)
+if "because" in result.reasoning.lower():  # Check reasoning quality
+    answer = result.solution
+```
+
+### Poor Reasoning Instructions
+
+```python
+# ❌ DON'T: Vague reasoning instructions
+vague_cot = dspy.ChainOfThought(
+    "problem -> thinking, answer",
+    rationale_field=dspy.OutputField(prefix="Think:", desc="thoughts")
+)
+
+# ✅ DO: Specific reasoning instructions
+clear_cot = dspy.ChainOfThought(
+    "problem -> reasoning, answer",
+    rationale_field=dspy.OutputField(
+        prefix="Step-by-step analysis:",
+        desc="Detailed logical reasoning showing each step of problem-solving"
+    )
+)
+```
+
+## Best Practices Summary
+
+- **Use for complexity**: Apply CoT to problems requiring logical steps
+- **Clear reasoning prompts**: Provide specific instructions for reasoning format
+- **Validate reasoning**: Check quality of reasoning steps, not just final answers
+- **Multiple perspectives**: Use different reasoning approaches for robust solutions
+- **Depth control**: Adjust reasoning depth based on problem complexity
+- **Cache patterns**: Reuse reasoning for similar problems
+- **Monitor consistency**: Check reasoning consistency across attempts
+- **Explainable AI**: Leverage reasoning transparency for trust and debugging
+
+## References
+
+- [ChainOfThought Module API](/docs/api/modules/ChainOfThought.md)
+- [Reasoning Patterns Tutorial](/docs/tutorials/reasoning/)
+- [Explainable AI Guide](/docs/tutorials/explainable_ai/)
+- [Advanced Reasoning Examples](/docs/examples/reasoning/)

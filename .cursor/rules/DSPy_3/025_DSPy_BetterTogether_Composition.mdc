@@ -1,0 +1,532 @@
+---
+description: DSPy BetterTogether - Multi-optimizer composition for maximum optimization
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 BetterTogether multi-optimizer composition for maximum development speed.
+
+## BetterTogether Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Prompt        │───▶│   Strategy       │───▶│   Weight        │
+│ Optimization    │    │  Orchestration   │    │ Optimization    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ BootstrapRS +   │    │ p -> w -> p      │    │ BootstrapFT +   │
+│ RandomSearch    │    │ w -> p -> w      │    │ Fine-tuning     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant BetterTogether Patterns
+
+### Quick Start
+
+```python
+import dspy
+
+# Enable experimental features
+dspy.settings.experimental = True
+
+# Initialize BetterTogether for multi-stage optimization
+def comprehensive_metric(gold, pred):
+    """Comprehensive metric for multi-stage optimization"""
+    return float(gold.answer.strip() == pred.answer.strip())
+
+better_together = dspy.BetterTogether(
+    metric=comprehensive_metric,
+    # Uses default optimizers:
+    # prompt_optimizer = BootstrapFewShotWithRandomSearch
+    # weight_optimizer = BootstrapFinetune
+)
+
+# Optimize with prompt -> weight strategy
+optimized = better_together.compile(
+    student=student_program,
+    trainset=trainset,
+    strategy="p -> w",        # Prompt then weight optimization
+    valset_ratio=0.1         # 10% validation split
+)
+```
+
+### Production Configuration
+
+```python
+# Enterprise BetterTogether with custom optimizers
+from dspy.teleprompt import BootstrapFewShotWithRandomSearch, BootstrapFinetune
+
+# Custom prompt optimizer
+prompt_opt = BootstrapFewShotWithRandomSearch(
+    metric=comprehensive_metric,
+    max_bootstrapped_demos=8,
+    max_labeled_demos=4,
+    max_rounds=3,
+    num_candidate_programs=12,
+    num_threads=8
+)
+
+# Custom weight optimizer
+weight_opt = BootstrapFinetune(
+    metric=comprehensive_metric,
+    multitask=True,
+    train_kwargs={
+        'epochs': 3,
+        'learning_rate': 2e-5,
+        'batch_size': 4,
+        'warmup_steps': 100,
+        'save_steps': 500,
+        'eval_steps': 100
+    },
+    adapter=dspy.ChatAdapter(),
+    exclude_demos=False,
+    num_threads=12
+)
+
+better_together = dspy.BetterTogether(
+    metric=comprehensive_metric,
+    prompt_optimizer=prompt_opt,
+    weight_optimizer=weight_opt,
+    seed=42
+)
+
+# Multi-stage optimization with validation
+optimized = better_together.compile(
+    student=student_program,
+    trainset=trainset,
+    strategy="p -> w -> p",   # Prompt -> Weight -> Prompt refinement
+    valset_ratio=0.15        # 15% validation for better evaluation
+)
+```
+
+## Core BetterTogether Patterns
+
+### Strategy Optimization Patterns
+
+```python
+def progressive_bettertogether(student, trainset, complexity='medium'):
+    """Progressive optimization with different strategies"""
+
+    strategies = {
+        'simple': ["p", "p -> w"],              # Light optimization
+        'medium': ["p -> w", "w -> p", "p -> w -> p"],  # Balanced
+        'complex': ["p -> w -> p", "w -> p -> w", "p -> w -> p -> w"]  # Intensive
+    }
+
+    results = {}
+    best_program = student
+    best_score = 0.0
+
+    for strategy in strategies[complexity]:
+        print(f"Testing strategy: {strategy}")
+
+        better_together = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42
+        )
+
+        program = better_together.compile(
+            student=best_program,  # Use best so far
+            trainset=trainset,
+            strategy=strategy,
+            valset_ratio=0.1
+        )
+
+        # Evaluate strategy
+        score = evaluate_program(program, valset)
+        results[strategy] = {'program': program, 'score': score}
+
+        if score > best_score:
+            best_score = score
+            best_program = program
+
+        print(f"Strategy '{strategy}' score: {score:.3f}")
+
+    return best_program, results
+
+def adaptive_strategy_selection(student, trainset, target_improvement=0.1):
+    """Adaptive strategy selection based on improvement thresholds"""
+
+    baseline_score = evaluate_program(student, valset)
+    current_program = student
+    current_score = baseline_score
+
+    strategies = ["p", "w", "p -> w", "w -> p", "p -> w -> p"]
+
+    for strategy in strategies:
+        better_together = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42
+        )
+
+        candidate = better_together.compile(
+            student=current_program,
+            trainset=trainset,
+            strategy=strategy,
+            valset_ratio=0.1
+        )
+
+        candidate_score = evaluate_program(candidate, valset)
+        improvement = candidate_score - baseline_score
+
+        print(f"Strategy '{strategy}': {candidate_score:.3f} (improvement: {improvement:.3f})")
+
+        if improvement >= target_improvement:
+            print(f"Target improvement {target_improvement} achieved with strategy '{strategy}'")
+            return candidate, strategy
+
+        if candidate_score > current_score:
+            current_program = candidate
+            current_score = candidate_score
+
+    return current_program, "best_found"
+```
+
+### Custom Optimizer Composition
+
+```python
+def create_custom_bettertogether(prompt_config, weight_config, metric):
+    """Create BetterTogether with custom optimizer configurations"""
+
+    # Custom prompt optimizer
+    if prompt_config['type'] == 'bootstrap_rs':
+        prompt_opt = BootstrapFewShotWithRandomSearch(
+            metric=metric,
+            max_bootstrapped_demos=prompt_config.get('max_demos', 6),
+            max_rounds=prompt_config.get('max_rounds', 2),
+            num_candidate_programs=prompt_config.get('candidates', 10)
+        )
+    else:
+        raise ValueError(f"Unsupported prompt optimizer: {prompt_config['type']}")
+
+    # Custom weight optimizer
+    if weight_config['type'] == 'bootstrap_ft':
+        weight_opt = BootstrapFinetune(
+            metric=metric,
+            multitask=weight_config.get('multitask', True),
+            train_kwargs=weight_config.get('train_kwargs', {}),
+            exclude_demos=weight_config.get('exclude_demos', False)
+        )
+    else:
+        raise ValueError(f"Unsupported weight optimizer: {weight_config['type']}")
+
+    return dspy.BetterTogether(
+        metric=metric,
+        prompt_optimizer=prompt_opt,
+        weight_optimizer=weight_opt
+    )
+
+def domain_specific_bettertogether(domain_type, model_capability):
+    """Domain-specific BetterTogether configurations"""
+
+    configs = {
+        'reasoning': {
+            'prompt': {
+                'type': 'bootstrap_rs',
+                'max_demos': 8,
+                'max_rounds': 3,
+                'candidates': 15
+            },
+            'weight': {
+                'type': 'bootstrap_ft',
+                'multitask': True,
+                'train_kwargs': {
+                    'epochs': 4,
+                    'learning_rate': 1e-5,
+                    'batch_size': 2
+                }
+            }
+        },
+        'classification': {
+            'prompt': {
+                'type': 'bootstrap_rs',
+                'max_demos': 4,
+                'max_rounds': 2,
+                'candidates': 8
+            },
+            'weight': {
+                'type': 'bootstrap_ft',
+                'multitask': True,
+                'train_kwargs': {
+                    'epochs': 2,
+                    'learning_rate': 5e-5,
+                    'batch_size': 8
+                }
+            }
+        }
+    }
+
+    config = configs.get(domain_type, configs['classification'])
+
+    # Adjust for model capability
+    if model_capability == 'weak':
+        config['weight']['train_kwargs']['epochs'] += 1
+        config['prompt']['max_demos'] += 2
+    elif model_capability == 'strong':
+        config['weight']['train_kwargs']['learning_rate'] *= 0.5
+        config['prompt']['max_rounds'] -= 1
+
+    return create_custom_bettertogether(
+        config['prompt'],
+        config['weight'],
+        accuracy_metric
+    )
+```
+
+### Multi-Stage Validation and Analysis
+
+```python
+def comprehensive_bettertogether_analysis(student, trainset, valset, strategies):
+    """Comprehensive analysis of BetterTogether strategies"""
+
+    results = {}
+
+    for strategy in strategies:
+        print(f"\n=== Analyzing Strategy: {strategy} ===")
+
+        better_together = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42
+        )
+
+        # Track optimization stages
+        stage_results = []
+
+        # Compile with detailed tracking
+        optimized = better_together.compile(
+            student=student,
+            trainset=trainset,
+            strategy=strategy,
+            valset_ratio=0.1
+        )
+
+        # Evaluate final result
+        final_score = evaluate_program(optimized, valset)
+
+        # Analyze optimization trajectory
+        analysis = {
+            'strategy': strategy,
+            'final_score': final_score,
+            'stages': len(strategy.split(' -> ')),
+            'optimization_time': None,  # Could track timing
+            'memory_usage': None,       # Could track memory
+            'convergence_analysis': analyze_convergence(optimized)
+        }
+
+        results[strategy] = analysis
+
+        print(f"Final Score: {final_score:.3f}")
+        print(f"Stages: {analysis['stages']}")
+
+    # Find best strategy
+    best_strategy = max(results.keys(), key=lambda k: results[k]['final_score'])
+
+    return results, best_strategy
+
+def incremental_bettertogether(student, trainset, max_stages=4):
+    """Incremental BetterTogether with early stopping"""
+
+    current_program = student
+    baseline_score = evaluate_program(student, valset)
+    current_score = baseline_score
+
+    stage_history = []
+    improvement_threshold = 0.02  # 2% improvement required
+
+    for stage in range(1, max_stages + 1):
+        print(f"\n=== Stage {stage} ===")
+
+        # Alternate between prompt and weight optimization
+        strategy = "p" if stage % 2 == 1 else "w"
+
+        better_together = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42 + stage
+        )
+
+        candidate = better_together.compile(
+            student=current_program,
+            trainset=trainset,
+            strategy=strategy,
+            valset_ratio=0.1
+        )
+
+        candidate_score = evaluate_program(candidate, valset)
+        improvement = candidate_score - current_score
+
+        stage_history.append({
+            'stage': stage,
+            'strategy': strategy,
+            'score': candidate_score,
+            'improvement': improvement,
+            'cumulative_improvement': candidate_score - baseline_score
+        })
+
+        print(f"Stage {stage} ({strategy}): {candidate_score:.3f} (improvement: {improvement:.3f})")
+
+        # Early stopping check
+        if improvement < improvement_threshold:
+            print(f"Early stopping: improvement {improvement:.3f} below threshold {improvement_threshold}")
+            break
+
+        current_program = candidate
+        current_score = candidate_score
+
+    return current_program, stage_history
+```
+
+### Advanced Strategy Patterns
+
+```python
+def ensemble_bettertogether(students, trainset, ensemble_strategy="majority"):
+    """BetterTogether optimization for ensemble models"""
+
+    optimized_students = []
+
+    # Optimize each student separately
+    for i, student in enumerate(students):
+        print(f"Optimizing student {i+1}/{len(students)}")
+
+        better_together = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42 + i
+        )
+
+        optimized = better_together.compile(
+            student=student,
+            trainset=trainset,
+            strategy="p -> w",
+            valset_ratio=0.1
+        )
+
+        optimized_students.append(optimized)
+
+    # Create ensemble
+    if ensemble_strategy == "majority":
+        return create_majority_ensemble(optimized_students)
+    elif ensemble_strategy == "weighted":
+        return create_weighted_ensemble(optimized_students, trainset)
+    else:
+        return optimized_students[0]  # Return best single model
+
+def hierarchical_bettertogether(complex_program, trainset, module_priorities):
+    """Hierarchical optimization for complex multi-module programs"""
+
+    # Extract modules by priority
+    high_priority = [name for name, priority in module_priorities.items() if priority == 'high']
+    medium_priority = [name for name, priority in module_priorities.items() if priority == 'medium']
+    low_priority = [name for name, priority in module_priorities.items() if priority == 'low']
+
+    current_program = complex_program
+
+    # Stage 1: High priority modules
+    if high_priority:
+        better_together_high = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=42
+        )
+        current_program = better_together_high.compile(
+            current_program,
+            trainset=trainset,
+            strategy="p -> w -> p",  # Intensive optimization
+            valset_ratio=0.1
+        )
+
+    # Stage 2: Medium priority modules
+    if medium_priority:
+        better_together_medium = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=43
+        )
+        current_program = better_together_medium.compile(
+            current_program,
+            trainset=trainset,
+            strategy="p -> w",  # Moderate optimization
+            valset_ratio=0.1
+        )
+
+    # Stage 3: Low priority modules
+    if low_priority:
+        better_together_low = dspy.BetterTogether(
+            metric=accuracy_metric,
+            seed=44
+        )
+        current_program = better_together_low.compile(
+            current_program,
+            trainset=trainset,
+            strategy="p",  # Light optimization
+            valset_ratio=0.1
+        )
+
+    return current_program
+```
+
+## Performance Insights
+
+### BetterTogether vs Single Optimizers
+
+- **Combined Gains**: 15-30% better than single optimizer approaches
+- **Strategy Impact**: "p -> w" often optimal for new domains
+- **Diminishing Returns**: More than 3 stages rarely cost-effective
+- **Validation Split**: 10-15% validation ratio optimal for strategy selection
+
+### Strategy Effectiveness Guide
+
+```python
+def strategy_selection_guide(task_type, model_type, dataset_size):
+    """Guide for selecting optimal BetterTogether strategies"""
+
+    recommendations = {
+        ('reasoning', 'local', 'small'): "w -> p",      # Weight then prompt
+        ('reasoning', 'local', 'large'): "p -> w",      # Prompt then weight
+        ('reasoning', 'api', 'any'): "p",               # Prompt only
+
+        ('classification', 'local', 'small'): "p -> w", # Standard approach
+        ('classification', 'local', 'large'): "p -> w -> p", # Refinement
+        ('classification', 'api', 'any'): "p",          # Prompt only
+
+        ('generation', 'local', 'any'): "p -> w",       # Prompt then weight
+        ('generation', 'api', 'any'): "p"               # Prompt only
+    }
+
+    size_category = 'small' if dataset_size < 1000 else 'large'
+    key = (task_type, model_type, size_category)
+
+    return recommendations.get(key, "p -> w")  # Default strategy
+```
+
+## Speed Tips
+
+- Use `valset_ratio=0.1` for faster strategy evaluation
+- Start with "p -> w" for most tasks (80% optimal)
+- Enable `dspy.settings.experimental = True` before use
+- Limit strategies to 2-3 stages for practical optimization
+- Use separate validation set for better strategy selection
+- Monitor each stage improvement for early stopping
+
+## Common Pitfalls
+
+- **Forgetting Experimental Flag**: Must set `dspy.settings.experimental = True`
+- **Too Many Stages**: Beyond 3 stages rarely improves results
+- **Wrong Strategy Order**: "w -> p" only optimal in specific cases
+- **Insufficient Validation**: Too small validation sets give noisy estimates
+- **Optimizer Mismatch**: Only BootstrapRS and BootstrapFT supported
+- **Memory Pressure**: Weight optimization requires significant GPU memory
+
+## Best Practices Summary
+
+- Always validate strategy selection on representative data
+- Use "p -> w" as default strategy for new domains
+- Monitor improvement per stage for early stopping
+- Allocate adequate memory for weight optimization stages
+- Consider model type when selecting optimization strategy
+- Balance optimization time with performance gains
+- Save intermediate results for strategy analysis
+
+## References
+
+- DSPy BetterTogether Source: `/docs/dspy/dspy/teleprompt/bettertogether.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/BetterTogether.md`
+- Related Optimizers: BootstrapFewShotWithRandomSearch, BootstrapFinetune
+- Tutorial Examples: Multi-stage optimization patterns

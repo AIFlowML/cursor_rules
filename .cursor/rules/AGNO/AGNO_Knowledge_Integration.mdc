@@ -1,8 +1,8 @@
 ---
-description: Knowledge integration in AGNO
-globs: 
+description: AGNO Knowledge integration in AGNO
 alwaysApply: false
 ---
+
 # AGNO Knowledge Integration
 
 This document provides a comprehensive reference for working with AGNO's knowledge integration components, including embedders, vector databases, storage solutions, and knowledge base types.
@@ -82,6 +82,7 @@ This document provides a comprehensive reference for working with AGNO's knowled
 AGNO provides several knowledge base types for different content formats:
 
 ### TextKnowledgeBase
+
 For working with plain text content.
 
 ```python
@@ -101,6 +102,7 @@ documents = text_kb.documents
 ```
 
 ### JSONKnowledgeBase
+
 For working with structured JSON data.
 
 ```python
@@ -120,6 +122,7 @@ documents = json_kb.documents
 ```
 
 ### PDFKnowledgeBase
+
 For working with PDF document content.
 
 ```python
@@ -141,6 +144,7 @@ documents = pdf_kb.documents
 ## Advanced Knowledge Base Patterns
 
 ### Custom Knowledge Base Implementation
+
 ```python
 # ✅ DO: Implement custom knowledge bases for specialized content
 from agno.knowledge.base import KnowledgeBase
@@ -153,7 +157,7 @@ class WebKnowledgeBase(KnowledgeBase):
         super().__init__(id=id)
         self.urls = urls
         self._documents = None
-    
+
     @property
     def documents(self) -> List[Dict]:
         """Extract content from web pages."""
@@ -164,7 +168,7 @@ class WebKnowledgeBase(KnowledgeBase):
                     response = requests.get(url, timeout=10)
                     soup = BeautifulSoup(response.content, 'html.parser')
                     content = soup.get_text(strip=True)
-                    
+
                     self._documents.append({
                         "id": f"web_{hash(url)}",
                         "content": content,
@@ -177,7 +181,7 @@ class WebKnowledgeBase(KnowledgeBase):
                 except Exception as e:
                     print(f"Error processing {url}: {e}")
                     continue
-        
+
         return self._documents
 
 # Usage
@@ -191,6 +195,7 @@ web_kb = WebKnowledgeBase(
 ```
 
 ### Knowledge Base Chunking Strategies
+
 ```python
 # ✅ DO: Implement intelligent chunking for large documents
 from agno.knowledge.text import TextKnowledgeBase
@@ -201,40 +206,40 @@ class ChunkedKnowledgeBase(TextKnowledgeBase):
         self.chunk_size = chunk_size
         self.overlap = overlap
         super().__init__(text=text, id=id)
-    
+
     def _chunk_text(self, text: str) -> List[str]:
         """Split text into overlapping chunks."""
         chunks = []
         start = 0
-        
+
         while start < len(text):
             end = start + self.chunk_size
             chunk = text[start:end]
-            
+
             # Find natural break points (sentences, paragraphs)
             if end < len(text):
                 last_period = chunk.rfind('.')
                 last_newline = chunk.rfind('\n')
                 break_point = max(last_period, last_newline)
-                
+
                 if break_point > start + (self.chunk_size // 2):
                     chunk = text[start:break_point + 1]
                     end = break_point + 1
-            
+
             chunks.append(chunk.strip())
             start = end - self.overlap
-            
+
             if start >= len(text):
                 break
-        
+
         return chunks
-    
+
     @property
     def documents(self) -> List[Dict]:
         """Return chunked documents with metadata."""
         chunks = self._chunk_text(self.text)
         documents = []
-        
+
         for i, chunk in enumerate(chunks):
             documents.append({
                 "id": f"{self.id}_chunk_{i}",
@@ -246,7 +251,7 @@ class ChunkedKnowledgeBase(TextKnowledgeBase):
                     "chunk_size": len(chunk)
                 }
             })
-        
+
         return documents
 
 # ❌ DON'T: Use fixed chunking without considering content structure
@@ -258,6 +263,7 @@ class ChunkedKnowledgeBase(TextKnowledgeBase):
 AGNO supports various embedding models for transforming text into vector representations.
 
 ### FastEmbedEmbedder
+
 High-performance embedding model using the FastEmbed library.
 
 ```python
@@ -277,6 +283,7 @@ vector = embedder.embed("Your text here")
 ```
 
 ### OpenAI Embedder Implementation
+
 ```python
 # ✅ DO: Implement OpenAI embeddings for high-quality vectors
 from agno.embedder.openai import OpenAIEmbedder
@@ -297,6 +304,7 @@ vectors = embedder.embed_batch(texts)
 ```
 
 ### Custom Embedder Implementation
+
 ```python
 # ✅ DO: Create custom embedders for specialized use cases
 from agno.embedder.base import Embedder
@@ -308,12 +316,12 @@ class CustomSentenceTransformerEmbedder(Embedder):
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model = SentenceTransformer(model_name)
         self.dimensions = self.model.get_sentence_embedding_dimension()
-    
+
     def embed(self, text: str) -> List[float]:
         """Embed a single text."""
         embedding = self.model.encode(text)
         return embedding.tolist()
-    
+
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed multiple texts efficiently."""
         embeddings = self.model.encode(texts)
@@ -328,6 +336,7 @@ class CustomSentenceTransformerEmbedder(Embedder):
 AGNO supports multiple vector databases for storing and retrieving knowledge embeddings.
 
 ### LanceDB
+
 In-memory and on-disk vector database with fast similarity search.
 
 ```python
@@ -358,6 +367,7 @@ results = await lance_db.search(query="search query", limit=5)
 ```
 
 ### PgVector
+
 PostgreSQL-based vector database using the pgvector extension.
 
 ```python
@@ -386,7 +396,7 @@ document_id = await pg_vector.add({
 
 # Search with metadata filtering
 results = await pg_vector.search(
-    query="search query", 
+    query="search query",
     limit=5,
     filter={"metadata.source": "pdf_document.pdf"}
 )
@@ -396,6 +406,7 @@ results = await pg_vector.search(
 ```
 
 ### Advanced Vector Database Patterns
+
 ```python
 # ✅ DO: Implement vector database abstraction for flexibility
 from abc import ABC, abstractmethod
@@ -406,17 +417,17 @@ class VectorDBInterface(ABC):
     async def add(self, documents: List[Dict]) -> List[str]:
         """Add documents to the vector database."""
         pass
-    
+
     @abstractmethod
     async def search(self, query: str, limit: int = 10, filter: Optional[Dict] = None) -> List[Dict]:
         """Search for similar documents."""
         pass
-    
+
     @abstractmethod
     async def delete(self, document_ids: List[str]) -> bool:
         """Delete documents by IDs."""
         pass
-    
+
     @abstractmethod
     async def update(self, document_id: str, document: Dict) -> bool:
         """Update a document."""
@@ -425,25 +436,25 @@ class VectorDBInterface(ABC):
 class VectorDBManager:
     def __init__(self, vector_db: VectorDBInterface):
         self.vector_db = vector_db
-    
+
     async def bulk_add_with_batching(self, documents: List[Dict], batch_size: int = 100):
         """Add documents in batches for better performance."""
         for i in range(0, len(documents), batch_size):
             batch = documents[i:i + batch_size]
             await self.vector_db.add(batch)
-    
+
     async def hybrid_search(self, query: str, filters: List[Dict], limit: int = 10) -> List[Dict]:
         """Perform hybrid search with multiple filters."""
         all_results = []
-        
+
         for filter_condition in filters:
             results = await self.vector_db.search(
-                query=query, 
-                limit=limit, 
+                query=query,
+                limit=limit,
                 filter=filter_condition
             )
             all_results.extend(results)
-        
+
         # Deduplicate and rank results
         seen_ids = set()
         unique_results = []
@@ -451,7 +462,7 @@ class VectorDBManager:
             if result['id'] not in seen_ids:
                 unique_results.append(result)
                 seen_ids.add(result['id'])
-        
+
         return sorted(unique_results, key=lambda x: x.get('score', 0), reverse=True)[:limit]
 
 # ❌ DON'T: Couple your application tightly to a specific vector database
@@ -463,6 +474,7 @@ class VectorDBManager:
 AGNO provides storage solutions for persisting agent sessions and data.
 
 ### PostgresStorage
+
 PostgreSQL-based storage for agent session data.
 
 ```python
@@ -477,7 +489,7 @@ storage = PostgresStorage(
 
 # Store session data
 await storage.save_session(
-    session_id="user123", 
+    session_id="user123",
     data={"history": ["message1", "message2"]}
 )
 
@@ -489,6 +501,7 @@ session_data = await storage.get_session(session_id="user123")
 ```
 
 ### Advanced Storage Patterns
+
 ```python
 # ✅ DO: Implement storage with caching and compression
 from agno.storage.postgres import PostgresStorage
@@ -501,40 +514,40 @@ class AdvancedSessionStorage(PostgresStorage):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cache = {}  # Simple in-memory cache
-    
+
     def _compress_data(self, data: Dict[Any, Any]) -> str:
         """Compress session data to save storage space."""
         json_str = json.dumps(data)
         compressed = gzip.compress(json_str.encode('utf-8'))
         return base64.b64encode(compressed).decode('utf-8')
-    
+
     def _decompress_data(self, compressed_data: str) -> Dict[Any, Any]:
         """Decompress session data."""
         compressed_bytes = base64.b64decode(compressed_data.encode('utf-8'))
         json_str = gzip.decompress(compressed_bytes).decode('utf-8')
         return json.loads(json_str)
-    
+
     async def save_session_compressed(self, session_id: str, data: Dict[Any, Any]):
         """Save session with compression."""
         compressed_data = self._compress_data(data)
         await self.save_session(session_id, {"compressed": compressed_data})
-        
+
         # Update cache
         self.cache[session_id] = data
-    
+
     async def get_session_cached(self, session_id: str) -> Dict[Any, Any]:
         """Get session with caching."""
         # Check cache first
         if session_id in self.cache:
             return self.cache[session_id]
-        
+
         # Get from database
         session_data = await self.get_session(session_id)
         if session_data and "compressed" in session_data:
             data = self._decompress_data(session_data["compressed"])
             self.cache[session_id] = data
             return data
-        
+
         return session_data
 
 # ❌ DON'T: Store large session data without compression
@@ -544,6 +557,7 @@ class AdvancedSessionStorage(PostgresStorage):
 ## Integration Patterns
 
 ### Complete RAG (Retrieval-Augmented Generation) Implementation
+
 ```python
 # ✅ DO: Implement comprehensive RAG system
 import asyncio
@@ -568,11 +582,11 @@ class RAGSystem:
             instructions="""You are a helpful assistant that answers questions based on provided context.
             Always cite sources when possible and indicate when information is not available in the context."""
         )
-    
+
     async def add_knowledge_sources(self, sources: List[Dict]):
         """Add multiple knowledge sources to the system."""
         all_documents = []
-        
+
         for source in sources:
             if source["type"] == "text":
                 kb = TextKnowledgeBase(text=source["content"], id=source["id"])
@@ -580,7 +594,7 @@ class RAGSystem:
                 kb = PDFKnowledgeBase(pdf_path=source["path"], id=source["id"])
             else:
                 continue
-            
+
             documents = kb.documents
             # Add source metadata
             for doc in documents:
@@ -589,57 +603,57 @@ class RAGSystem:
                     "source_type": source["type"],
                     "source_id": source["id"]
                 }
-            
+
             all_documents.extend(documents)
-        
+
         await self.vector_db.add(all_documents)
-    
+
     async def query(self, question: str, context_limit: int = 5) -> str:
         """Query the RAG system with a question."""
         # Retrieve relevant context
         search_results = await self.vector_db.search(
-            query=question, 
+            query=question,
             limit=context_limit
         )
-        
+
         # Build context from search results
         context_pieces = []
         sources = set()
-        
+
         for result in search_results:
             context_pieces.append(result["content"])
             if "metadata" in result and "source_id" in result["metadata"]:
                 sources.add(result["metadata"]["source_id"])
-        
+
         context = "\n\n".join(context_pieces)
-        
+
         # Generate response with context
         prompt = f"""
         Context information:
         {context}
-        
+
         Question: {question}
-        
+
         Please answer the question based on the provided context. If the context doesn't contain enough information to answer the question, please say so.
         """
-        
+
         response = self.agent.run(prompt)
-        
+
         # Add source information
         source_info = f"\n\nSources: {', '.join(sources)}" if sources else ""
-        
+
         return response.content + source_info
 
 # Usage example
 async def main():
     rag = RAGSystem()
-    
+
     # Add knowledge sources
     await rag.add_knowledge_sources([
         {"type": "text", "content": "Python is a programming language...", "id": "python_intro"},
         {"type": "pdf", "path": "/path/to/manual.pdf", "id": "user_manual"}
     ])
-    
+
     # Query the system
     answer = await rag.query("How do I use Python for data analysis?")
     print(answer)
@@ -662,26 +676,26 @@ async def main():
     try:
         # Setup embedder
         embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
-        
+
         # Setup vector database
         db = LanceDb(
             uri="/tmp/knowledge_db",
             table_name="knowledge",
             embedder=embedder
         )
-        
+
         # Load knowledge
         pdf_kb = PDFKnowledgeBase(pdf_path="document.pdf", id="doc1")
         text_kb = TextKnowledgeBase(text="Important information...", id="info1")
-        
+
         # Store in database
         await db.add(pdf_kb.documents)
         await db.add(text_kb.documents)
-        
+
         # Query
         results = await db.search("How do I use this feature?", limit=3)
         print(results)
-        
+
     except Exception as e:
         print(f"Error in knowledge integration: {e}")
 
@@ -694,6 +708,7 @@ asyncio.run(main())
 ## Performance Optimization
 
 ### Embedding Optimization
+
 ```python
 # ✅ DO: Optimize embedding operations for performance
 from agno.embedder.fastembed import FastEmbedEmbedder
@@ -705,22 +720,22 @@ class OptimizedEmbeddingProcessor:
         self.embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
         self.batch_size = batch_size
         self.embedding_cache = {}
-    
+
     async def embed_with_cache(self, text: str) -> List[float]:
         """Embed text with caching."""
         text_hash = hash(text)
         if text_hash in self.embedding_cache:
             return self.embedding_cache[text_hash]
-        
+
         embedding = self.embedder.embed(text)
         self.embedding_cache[text_hash] = embedding
         return embedding
-    
+
     async def batch_embed_documents(self, documents: List[Dict]) -> List[Dict]:
         """Batch embed documents for efficiency."""
         texts = [doc["content"] for doc in documents]
         embeddings = []
-        
+
         # Process in batches
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i:i + self.batch_size]
@@ -728,11 +743,11 @@ class OptimizedEmbeddingProcessor:
                 self.embed_with_cache(text) for text in batch
             ])
             embeddings.extend(batch_embeddings)
-        
+
         # Add embeddings to documents
         for doc, embedding in zip(documents, embeddings):
             doc["embedding"] = embedding
-        
+
         return documents
 
 # ❌ DON'T: Embed documents one by one without batching
@@ -740,6 +755,7 @@ class OptimizedEmbeddingProcessor:
 ```
 
 ### Vector Database Optimization
+
 ```python
 # ✅ DO: Optimize vector database operations
 from agno.vectordb.lancedb.lance_db import LanceDb
@@ -750,18 +766,18 @@ class OptimizedVectorDB:
     def __init__(self, db_path: str, embedder):
         self.db = LanceDb(uri=db_path, table_name="optimized_knowledge", embedder=embedder)
         self.batch_size = 100
-    
+
     async def bulk_add_optimized(self, documents: List[Dict]):
         """Optimized bulk addition of documents."""
         # Add documents in batches
         for i in range(0, len(documents), self.batch_size):
             batch = documents[i:i + self.batch_size]
             await self.db.add(batch)
-            
+
             # Small delay to prevent overwhelming the system
             if i + self.batch_size < len(documents):
                 await asyncio.sleep(0.1)
-    
+
     async def parallel_search(self, queries: List[str], limit: int = 5) -> List[List[Dict]]:
         """Perform multiple searches in parallel."""
         tasks = [self.db.search(query, limit=limit) for query in queries]
@@ -775,6 +791,7 @@ class OptimizedVectorDB:
 ## Testing Patterns
 
 ### Knowledge Integration Testing
+
 ```python
 # ✅ DO: Test knowledge integration components thoroughly
 import pytest
@@ -794,7 +811,7 @@ class TestKnowledgeIntegration:
             embedder=embedder
         )
         yield db
-    
+
     @pytest.mark.asyncio
     async def test_knowledge_base_creation(self):
         """Test knowledge base creation and document extraction."""
@@ -802,62 +819,62 @@ class TestKnowledgeIntegration:
             text="This is test content for knowledge base.",
             id="test_kb"
         )
-        
+
         documents = kb.documents
         assert len(documents) > 0
         assert documents[0]["content"] == "This is test content for knowledge base."
         assert documents[0]["id"] is not None
-    
+
     @pytest.mark.asyncio
     async def test_vector_search(self, setup_test_db):
         """Test vector search functionality."""
         db = setup_test_db
-        
+
         # Add test documents
         test_docs = [
             {"id": "1", "content": "Python programming language"},
             {"id": "2", "content": "Machine learning algorithms"},
             {"id": "3", "content": "Data science with Python"}
         ]
-        
+
         await db.add(test_docs)
-        
+
         # Search for relevant documents
         results = await db.search("Python", limit=2)
-        
+
         assert len(results) <= 2
         assert any("Python" in result["content"] for result in results)
-    
+
     @pytest.mark.asyncio
     async def test_embedding_consistency(self):
         """Test embedding consistency."""
         embedder = FastEmbedEmbedder(id="BAAI/bge-small-en-v1.5")
-        
+
         text = "Test text for embedding"
         embedding1 = embedder.embed(text)
         embedding2 = embedder.embed(text)
-        
+
         # Embeddings should be identical for the same text
         assert embedding1 == embedding2
         assert len(embedding1) == 384  # Default dimension
-    
+
     @pytest.mark.asyncio
     async def test_knowledge_integration_pipeline(self, setup_test_db):
         """Test complete knowledge integration pipeline."""
         db = setup_test_db
-        
+
         # Create knowledge base
         kb = TextKnowledgeBase(
             text="AGNO is a framework for building AI agents.",
             id="agno_info"
         )
-        
+
         # Add to vector database
         await db.add(kb.documents)
-        
+
         # Search for information
         results = await db.search("AI agents", limit=1)
-        
+
         assert len(results) > 0
         assert "AGNO" in results[0]["content"]
 
@@ -868,13 +885,15 @@ class TestKnowledgeIntegration:
 ## Best Practices Summary
 
 ### Knowledge Base Management
+
 - Use appropriate knowledge base types for different content formats
-- Implement intelligent chunking strategies for large documents  
+- Implement intelligent chunking strategies for large documents
 - Add comprehensive metadata for better search and filtering
 - Track knowledge bases by unique IDs for easier management
 - Implement validation for knowledge base content before processing
 
 ### Embedding Best Practices
+
 - Choose embedding models appropriate for your domain and language
 - Maintain consistent embedding dimensions across your application
 - Implement caching for frequently embedded texts
@@ -882,6 +901,7 @@ class TestKnowledgeIntegration:
 - Consider fine-tuning embeddings for specialized domains
 
 ### Vector Database Optimization
+
 - Choose the right vector database for your scale and requirements
 - Implement proper indexing strategies for your search patterns
 - Use metadata filtering to improve search relevance
@@ -889,6 +909,7 @@ class TestKnowledgeIntegration:
 - Monitor database performance and optimize queries regularly
 
 ### Performance Considerations
+
 - Batch process documents and embeddings for efficiency
 - Implement caching at multiple levels (embeddings, search results)
 - Use async operations for I/O-bound tasks
@@ -896,6 +917,7 @@ class TestKnowledgeIntegration:
 - Implement proper error handling and retries
 
 ### Security and Privacy
+
 - Encrypt sensitive knowledge base content at rest
 - Implement access controls for knowledge bases
 - Sanitize and validate input content before processing
@@ -918,6 +940,7 @@ class TestKnowledgeIntegration:
 - **Connection Errors**: Use connection pooling and implement proper retry mechanisms
 
 ## References
+
 - [AGNO Knowledge Documentation](mdc:https:/docs.phidata.com/knowledge)
 - [AGNO Vector Database Guide](mdc:https:/docs.phidata.com/vectordb)
 - [AGNO Embedders Reference](mdc:https:/docs.phidata.com/embedders)

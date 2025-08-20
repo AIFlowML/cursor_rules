@@ -1,0 +1,1191 @@
+---
+description: "AGNO router patterns for dynamic workflow routing, conditional execution paths, and intelligent workflow orchestration"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 router patterns and dynamic execution orchestration. You design intelligent routing systems, conditional execution paths, and adaptive workflows that dynamically select optimal processing routes based on input analysis and runtime conditions.
+
+## Router Patterns Architecture
+
+```
+┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│   Input Analysis    │───▶│   Routing Decision   │───▶│  Execution Path     │
+│                     │    │                      │    │                     │
+│ • Content Analysis  │    │ • Rule Evaluation    │    │ • Route-Specific    │
+│ • Metadata Extract  │    │ • Priority Scoring   │    │ • Specialized Agents│
+│ • Pattern Recognition│    │ • Fallback Logic     │    │ • Optimized Steps   │
+│ • Context Assessment│    │ • Dynamic Selection  │    │ • Results Integration│
+└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+```
+
+## Instant Router Patterns
+
+### Quick Start - Basic Content Router
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+
+# Define specialized agents for different content types
+technical_agent = Agent(
+    name="Technical Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle technical and engineering content",
+    instructions=["Focus on technical accuracy and implementation details"]
+)
+
+business_agent = Agent(
+    name="Business Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle business and strategic content",
+    instructions=["Focus on business value and strategic implications"]
+)
+
+creative_agent = Agent(
+    name="Creative Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Handle creative and marketing content",
+    instructions=["Focus on creativity, engagement, and brand messaging"]
+)
+
+def content_router_function(step_input: StepInput) -> StepOutput:
+    """Basic content routing based on input analysis"""
+
+    try:
+        content = step_input.message.lower()
+
+        # Simple routing logic
+        if any(keyword in content for keyword in ['technical', 'engineering', 'code', 'implementation', 'architecture']):
+            route = "technical"
+            selected_agent = technical_agent
+        elif any(keyword in content for keyword in ['business', 'strategy', 'market', 'revenue', 'roi']):
+            route = "business"
+            selected_agent = business_agent
+        elif any(keyword in content for keyword in ['creative', 'marketing', 'brand', 'campaign', 'design']):
+            route = "creative"
+            selected_agent = creative_agent
+        else:
+            route = "general_business"  # Default route
+            selected_agent = business_agent
+
+        # Execute with selected agent
+        result = selected_agent.run(step_input.message)
+
+        routed_output = f"""
+        # Content Routing Results
+
+        **Routing Decision**
+        - Selected Route: {route}
+        - Agent: {selected_agent.name}
+        - Routing Logic: Keyword-based content analysis
+
+        ## Processed Results
+        {result.content}
+
+        ## Routing Metadata
+        - Route Optimization: ✓ Content-specific processing
+        - Agent Specialization: ✓ Domain expertise applied
+        - Processing Quality: Optimized for content type
+        """
+
+        return StepOutput(
+            content=routed_output,
+            response=result,
+            metadata={
+                "route_selected": route,
+                "routing_type": "content_based",
+                "agent_used": selected_agent.name
+            }
+        )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Content routing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+# Create basic router workflow
+router_step = Step(
+    name="content_router",
+    executor=content_router_function,
+    description="Route content to appropriate specialized agent"
+)
+
+basic_router_workflow = Workflow(
+    name="Basic Content Router",
+    description="Workflow with basic content-based routing",
+    steps=[router_step]
+)
+
+basic_router_workflow.run("Develop a technical architecture for scalable microservices deployment")
+```
+
+### Production Ready - Advanced Intelligent Router
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import Dict, List, Any, Optional, Tuple
+import json
+import logging
+import re
+from datetime import datetime
+from dataclasses import dataclass
+from enum import Enum
+
+# Configure logging for routing operations
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ProcessingRoute(Enum):
+    """Available processing routes"""
+    TECHNICAL_DEEP = "technical_deep"
+    BUSINESS_STRATEGIC = "business_strategic"
+    MARKET_RESEARCH = "market_research"
+    CREATIVE_CONTENT = "creative_content"
+    DATA_ANALYSIS = "data_analysis"
+    COMPLIANCE_LEGAL = "compliance_legal"
+    EMERGENCY_PRIORITY = "emergency_priority"
+    GENERAL_PROCESSING = "general_processing"
+
+@dataclass
+class RoutingDecision:
+    """Structured routing decision with metadata"""
+    selected_route: ProcessingRoute
+    confidence_score: float
+    routing_factors: Dict[str, Any]
+    alternative_routes: List[ProcessingRoute]
+    processing_priority: str
+    estimated_duration: int
+    specialized_requirements: List[str]
+
+class IntelligentRouter:
+    """Advanced intelligent routing system with multiple decision factors"""
+
+    def __init__(self):
+        self.routing_history = []
+        self.performance_metrics = {}
+        self.routing_rules = self._initialize_routing_rules()
+
+    def _initialize_routing_rules(self) -> Dict[str, Dict]:
+        """Initialize comprehensive routing rules"""
+
+        return {
+            ProcessingRoute.TECHNICAL_DEEP.value: {
+                "keywords": [
+                    "technical", "architecture", "engineering", "code", "implementation",
+                    "system design", "api", "database", "infrastructure", "development",
+                    "programming", "software", "platform", "integration", "scalability"
+                ],
+                "patterns": [
+                    r"\b(API|REST|GraphQL|microservices|docker|kubernetes)\b",
+                    r"\b(database|SQL|NoSQL|MongoDB|PostgreSQL)\b",
+                    r"\b(cloud|AWS|Azure|GCP|deployment)\b"
+                ],
+                "priority_indicators": ["urgent", "critical system", "production issue"],
+                "complexity_threshold": 7,
+                "estimated_duration": 180
+            },
+            ProcessingRoute.BUSINESS_STRATEGIC.value: {
+                "keywords": [
+                    "strategy", "business", "market", "revenue", "growth", "roi",
+                    "investment", "funding", "valuation", "competitive", "analysis",
+                    "opportunity", "partnership", "acquisition", "expansion"
+                ],
+                "patterns": [
+                    r"\b(ROI|revenue|profit|market share|competitive advantage)\b",
+                    r"\b(strategy|strategic|business model|value proposition)\b",
+                    r"\b(funding|investment|valuation|IPO|acquisition)\b"
+                ],
+                "priority_indicators": ["executive", "board", "strategic decision"],
+                "complexity_threshold": 8,
+                "estimated_duration": 240
+            },
+            ProcessingRoute.MARKET_RESEARCH.value: {
+                "keywords": [
+                    "market research", "industry analysis", "competitor", "trends",
+                    "customer", "survey", "demographics", "segmentation", "positioning",
+                    "market size", "growth rate", "adoption", "penetration"
+                ],
+                "patterns": [
+                    r"\b(market (size|research|analysis|trends))\b",
+                    r"\b(competitor|competitive (landscape|analysis))\b",
+                    r"\b(customer (segment|analysis|research))\b"
+                ],
+                "priority_indicators": ["market entry", "launch", "expansion"],
+                "complexity_threshold": 6,
+                "estimated_duration": 200
+            },
+            ProcessingRoute.CREATIVE_CONTENT.value: {
+                "keywords": [
+                    "creative", "content", "marketing", "campaign", "brand", "design",
+                    "messaging", "copywriting", "social media", "advertising", "promotion",
+                    "storytelling", "engagement", "viral", "influencer"
+                ],
+                "patterns": [
+                    r"\b(brand|branding|brand (identity|strategy))\b",
+                    r"\b(campaign|marketing (campaign|strategy))\b",
+                    r"\b(content (creation|strategy|marketing))\b"
+                ],
+                "priority_indicators": ["launch", "campaign", "brand crisis"],
+                "complexity_threshold": 5,
+                "estimated_duration": 120
+            },
+            ProcessingRoute.DATA_ANALYSIS.value: {
+                "keywords": [
+                    "data", "analytics", "analysis", "metrics", "kpi", "dashboard",
+                    "reporting", "visualization", "insights", "statistics", "trends",
+                    "correlation", "prediction", "machine learning", "ai model"
+                ],
+                "patterns": [
+                    r"\b(data (analysis|analytics|science|mining))\b",
+                    r"\b(metrics|KPI|dashboard|reporting)\b",
+                    r"\b(machine learning|AI|predictive|algorithm)\b"
+                ],
+                "priority_indicators": ["urgent analysis", "board report", "decision support"],
+                "complexity_threshold": 7,
+                "estimated_duration": 160
+            },
+            ProcessingRoute.EMERGENCY_PRIORITY.value: {
+                "keywords": [
+                    "urgent", "emergency", "critical", "immediate", "asap", "crisis",
+                    "escalation", "priority", "breaking", "incident", "outage", "security breach"
+                ],
+                "patterns": [
+                    r"\b(urgent|emergency|critical|immediate|ASAP)\b",
+                    r"\b(crisis|incident|outage|breach|failure)\b"
+                ],
+                "priority_indicators": ["urgent", "critical", "emergency", "immediate"],
+                "complexity_threshold": 9,
+                "estimated_duration": 60
+            }
+        }
+
+    def analyze_input_content(self, content: str) -> Dict[str, Any]:
+        """Comprehensive input content analysis"""
+
+        content_lower = content.lower()
+
+        analysis = {
+            "content_length": len(content),
+            "word_count": len(content.split()),
+            "complexity_indicators": [],
+            "domain_signals": {},
+            "priority_signals": [],
+            "technical_complexity": 0,
+            "business_complexity": 0,
+            "urgency_score": 0
+        }
+
+        # Analyze domain signals for each route
+        for route, rules in self.routing_rules.items():
+            domain_score = 0
+
+            # Keyword matching
+            keyword_matches = sum(1 for keyword in rules["keywords"] if keyword in content_lower)
+            domain_score += keyword_matches * 2
+
+            # Pattern matching
+            pattern_matches = sum(1 for pattern in rules["patterns"] if re.search(pattern, content, re.IGNORECASE))
+            domain_score += pattern_matches * 3
+
+            # Priority indicators
+            priority_matches = sum(1 for indicator in rules["priority_indicators"] if indicator in content_lower)
+            domain_score += priority_matches * 5
+
+            analysis["domain_signals"][route] = {
+                "total_score": domain_score,
+                "keyword_matches": keyword_matches,
+                "pattern_matches": pattern_matches,
+                "priority_matches": priority_matches
+            }
+
+            # Update urgency score
+            if priority_matches > 0:
+                analysis["urgency_score"] += priority_matches * 10
+
+        # Calculate complexity indicators
+        complexity_keywords = ["complex", "comprehensive", "detailed", "thorough", "in-depth", "advanced"]
+        analysis["complexity_indicators"] = [kw for kw in complexity_keywords if kw in content_lower]
+
+        # Calculate technical and business complexity
+        tech_indicators = ["integration", "scalability", "performance", "security", "architecture"]
+        business_indicators = ["strategic", "market", "competitive", "financial", "roi"]
+
+        analysis["technical_complexity"] = sum(1 for indicator in tech_indicators if indicator in content_lower)
+        analysis["business_complexity"] = sum(1 for indicator in business_indicators if indicator in content_lower)
+
+        return analysis
+
+    def make_routing_decision(self, step_input: StepInput) -> RoutingDecision:
+        """Make intelligent routing decision based on comprehensive analysis"""
+
+        content_analysis = self.analyze_input_content(step_input.message)
+        domain_signals = content_analysis["domain_signals"]
+
+        # Score all routes
+        route_scores = {}
+        for route, signals in domain_signals.items():
+            base_score = signals["total_score"]
+
+            # Apply complexity bonus
+            complexity_bonus = len(content_analysis["complexity_indicators"]) * 2
+
+            # Apply urgency multiplier
+            urgency_multiplier = 1.0
+            if content_analysis["urgency_score"] > 0:
+                urgency_multiplier = 1.5
+
+            # Apply content length factor
+            length_factor = min(1.2, len(step_input.message) / 1000)
+
+            final_score = (base_score + complexity_bonus) * urgency_multiplier * length_factor
+            route_scores[route] = final_score
+
+        # Select best route
+        if not route_scores or max(route_scores.values()) == 0:
+            selected_route = ProcessingRoute.GENERAL_PROCESSING
+            confidence_score = 0.5
+        else:
+            selected_route_str = max(route_scores, key=route_scores.get)
+            selected_route = ProcessingRoute(selected_route_str)
+            confidence_score = min(1.0, route_scores[selected_route_str] / 20)  # Normalize to 0-1
+
+        # Determine processing priority
+        if content_analysis["urgency_score"] > 10:
+            processing_priority = "high"
+        elif content_analysis["urgency_score"] > 5:
+            processing_priority = "medium"
+        else:
+            processing_priority = "normal"
+
+        # Get alternative routes
+        sorted_routes = sorted(route_scores.items(), key=lambda x: x[1], reverse=True)
+        alternative_routes = [ProcessingRoute(route) for route, _ in sorted_routes[1:3] if route != selected_route.value]
+
+        # Determine specialized requirements
+        specialized_requirements = []
+        if content_analysis["technical_complexity"] > 2:
+            specialized_requirements.append("technical_expertise")
+        if content_analysis["business_complexity"] > 2:
+            specialized_requirements.append("business_strategy_expertise")
+        if content_analysis["urgency_score"] > 5:
+            specialized_requirements.append("priority_handling")
+
+        routing_decision = RoutingDecision(
+            selected_route=selected_route,
+            confidence_score=confidence_score,
+            routing_factors={
+                "content_analysis": content_analysis,
+                "route_scores": route_scores
+            },
+            alternative_routes=alternative_routes,
+            processing_priority=processing_priority,
+            estimated_duration=self.routing_rules.get(selected_route.value, {}).get("estimated_duration", 120),
+            specialized_requirements=specialized_requirements
+        )
+
+        # Log routing decision
+        self.routing_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "input_preview": step_input.message[:100],
+            "selected_route": selected_route.value,
+            "confidence": confidence_score,
+            "priority": processing_priority
+        })
+
+        logger.info(f"Routing decision: {selected_route.value} (confidence: {confidence_score:.2f})")
+        return routing_decision
+
+# Define specialized agents and teams for different routes
+technical_specialist = Agent(
+    name="Technical Architecture Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle complex technical architecture and engineering challenges",
+    instructions=[
+        "Provide detailed technical solutions with implementation guidance",
+        "Focus on scalability, performance, and best practices",
+        "Include architectural diagrams and technical specifications where relevant"
+    ]
+)
+
+business_strategist = Agent(
+    name="Strategic Business Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle strategic business analysis and decision support",
+    instructions=[
+        "Provide comprehensive business analysis with strategic insights",
+        "Focus on market opportunities, competitive positioning, and ROI",
+        "Include financial projections and strategic recommendations"
+    ]
+)
+
+market_researcher = Agent(
+    name="Market Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Conduct comprehensive market research and competitive analysis",
+    instructions=[
+        "Gather current market data and industry insights",
+        "Analyze competitive landscape and market trends",
+        "Provide data-driven market recommendations"
+    ]
+)
+
+creative_director = Agent(
+    name="Creative Strategy Director",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Handle creative content and marketing strategy development",
+    instructions=[
+        "Develop compelling creative concepts and messaging strategies",
+        "Focus on brand alignment and audience engagement",
+        "Provide innovative creative solutions and campaign ideas"
+    ]
+)
+
+data_analyst = Agent(
+    name="Senior Data Analytics Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle complex data analysis and insights generation",
+    instructions=[
+        "Perform comprehensive data analysis with statistical rigor",
+        "Generate actionable insights from complex datasets",
+        "Provide data visualization recommendations and KPI frameworks"
+    ]
+)
+
+emergency_coordinator = Agent(
+    name="Emergency Response Coordinator",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Handle urgent and critical priority requests",
+    instructions=[
+        "Provide immediate response to urgent situations",
+        "Prioritize critical action items and escalation procedures",
+        "Focus on rapid resolution and damage mitigation"
+    ]
+)
+
+general_consultant = Agent(
+    name="General Business Consultant",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Handle general business inquiries and provide broad expertise",
+    instructions=[
+        "Provide balanced business perspective on general inquiries",
+        "Offer practical solutions and recommendations",
+        "Escalate to specialists when deep expertise is needed"
+    ]
+)
+
+class AdvancedRouterExecutor:
+    """Execute routed workflows with specialized processing"""
+
+    def __init__(self):
+        self.intelligent_router = IntelligentRouter()
+        self.route_agents = {
+            ProcessingRoute.TECHNICAL_DEEP: technical_specialist,
+            ProcessingRoute.BUSINESS_STRATEGIC: business_strategist,
+            ProcessingRoute.MARKET_RESEARCH: market_researcher,
+            ProcessingRoute.CREATIVE_CONTENT: creative_director,
+            ProcessingRoute.DATA_ANALYSIS: data_analyst,
+            ProcessingRoute.EMERGENCY_PRIORITY: emergency_coordinator,
+            ProcessingRoute.GENERAL_PROCESSING: general_consultant,
+            ProcessingRoute.COMPLIANCE_LEGAL: general_consultant  # Fallback for now
+        }
+
+    def intelligent_router_function(self, step_input: StepInput) -> StepOutput:
+        """Execute intelligent routing with comprehensive decision making"""
+
+        try:
+            logger.info("Starting intelligent routing analysis")
+
+            # Make routing decision
+            routing_decision = self.intelligent_router.make_routing_decision(step_input)
+
+            # Get specialized agent
+            selected_agent = self.route_agents.get(
+                routing_decision.selected_route,
+                self.route_agents[ProcessingRoute.GENERAL_PROCESSING]
+            )
+
+            # Create enhanced prompt with routing context
+            routing_context_prompt = f"""
+            SPECIALIZED PROCESSING REQUEST:
+
+            Original Request: {step_input.message}
+
+            Routing Analysis:
+            - Selected Route: {routing_decision.selected_route.value}
+            - Confidence Score: {routing_decision.confidence_score:.2f}
+            - Processing Priority: {routing_decision.processing_priority}
+            - Specialized Requirements: {', '.join(routing_decision.specialized_requirements)}
+            - Estimated Duration: {routing_decision.estimated_duration} seconds
+
+            Route-Specific Processing:
+            As a {selected_agent.role}, provide specialized processing optimized for this routing decision.
+            Apply your domain expertise to deliver the highest quality response for this specific request type.
+
+            Alternative Routes Considered: {[route.value for route in routing_decision.alternative_routes]}
+
+            Please provide comprehensive specialized processing aligned with the routing analysis.
+            """
+
+            # Execute with specialized agent
+            processing_result = selected_agent.run(routing_context_prompt)
+
+            # Create comprehensive routing output
+            routing_output = f"""
+            # Intelligent Router Processing Results
+
+            **Routing Decision Summary**
+            - Selected Route: {routing_decision.selected_route.value}
+            - Processing Agent: {selected_agent.name}
+            - Confidence Score: {routing_decision.confidence_score:.2f}
+            - Processing Priority: {routing_decision.processing_priority}
+            - Estimated Duration: {routing_decision.estimated_duration}s
+
+            ## Specialized Processing Results
+            {processing_result.content}
+
+            ## Routing Analysis Details
+            ### Content Analysis Factors
+            - Word Count: {routing_decision.routing_factors['content_analysis']['word_count']}
+            - Complexity Indicators: {len(routing_decision.routing_factors['content_analysis']['complexity_indicators'])}
+            - Technical Complexity: {routing_decision.routing_factors['content_analysis']['technical_complexity']}
+            - Business Complexity: {routing_decision.routing_factors['content_analysis']['business_complexity']}
+            - Urgency Score: {routing_decision.routing_factors['content_analysis']['urgency_score']}
+
+            ### Alternative Routes Considered
+            {chr(10).join([f"- {route.value}" for route in routing_decision.alternative_routes]) if routing_decision.alternative_routes else "- No significant alternatives"}
+
+            ### Specialized Requirements Applied
+            {chr(10).join([f"- {req}" for req in routing_decision.specialized_requirements]) if routing_decision.specialized_requirements else "- Standard processing requirements"}
+
+            ## Routing Performance Metrics
+            - Route Selection: ✓ Optimized for content type
+            - Agent Specialization: ✓ Domain expertise applied
+            - Processing Quality: ✓ Route-specific optimization
+            - Confidence Level: {routing_decision.confidence_score:.1%}
+            """
+
+            return StepOutput(
+                content=routing_output,
+                response=processing_result,
+                metadata={
+                    "selected_route": routing_decision.selected_route.value,
+                    "confidence_score": routing_decision.confidence_score,
+                    "processing_priority": routing_decision.processing_priority,
+                    "agent_used": selected_agent.name,
+                    "estimated_duration": routing_decision.estimated_duration,
+                    "specialized_requirements": routing_decision.specialized_requirements,
+                    "alternative_routes": [route.value for route in routing_decision.alternative_routes]
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Intelligent routing failed: {e}")
+            return StepOutput(
+                content=f"Intelligent routing processing failed: {str(e)}",
+                success=False,
+                error=str(e)
+            )
+
+    def get_routing_analytics(self) -> Dict[str, Any]:
+        """Get comprehensive routing performance analytics"""
+
+        history = self.intelligent_router.routing_history
+        if not history:
+            return {"status": "no_routing_history"}
+
+        # Calculate route usage statistics
+        route_counts = {}
+        priority_counts = {}
+        total_confidence = 0
+
+        for entry in history:
+            route = entry["selected_route"]
+            priority = entry["priority"]
+            confidence = entry["confidence"]
+
+            route_counts[route] = route_counts.get(route, 0) + 1
+            priority_counts[priority] = priority_counts.get(priority, 0) + 1
+            total_confidence += confidence
+
+        analytics = {
+            "total_routings": len(history),
+            "average_confidence": total_confidence / len(history),
+            "route_distribution": route_counts,
+            "priority_distribution": priority_counts,
+            "most_used_route": max(route_counts, key=route_counts.get),
+            "routing_efficiency": "high" if total_confidence / len(history) > 0.7 else "medium" if total_confidence / len(history) > 0.5 else "low"
+        }
+
+        return analytics
+
+# Create advanced router executor
+advanced_router = AdvancedRouterExecutor()
+
+# Create intelligent router step
+intelligent_router_step = Step(
+    name="intelligent_content_router",
+    executor=advanced_router.intelligent_router_function,
+    description="Intelligent routing with comprehensive analysis and specialized processing"
+)
+
+# Create production router workflow
+production_router_workflow = Workflow(
+    name="Advanced Intelligent Router Pipeline",
+    description="Production-grade intelligent routing workflow with specialized agent selection",
+    storage=SqliteStorage(
+        table_name="router_workflows",
+        db_file="router_workflow_data.db",
+        mode="workflow_v2"
+    ),
+    steps=[intelligent_router_step]
+)
+
+# Execute with comprehensive monitoring
+if __name__ == "__main__":
+    try:
+        logger.info("Starting advanced intelligent router workflow")
+
+        # Test different types of content
+        test_requests = [
+            "Design a scalable microservices architecture for a high-traffic e-commerce platform with real-time inventory management",
+            "Develop a comprehensive market entry strategy for AI-powered healthcare diagnostics in the European market",
+            "Create an engaging social media campaign for launching a sustainable fashion brand targeting Gen-Z consumers",
+            "URGENT: Analyze the impact of the security breach on our customer data and provide immediate mitigation steps",
+            "Generate insights from our customer behavior data to improve conversion rates and reduce churn"
+        ]
+
+        for i, request in enumerate(test_requests, 1):
+            print(f"\n=== Test Request {i} ===")
+            print(f"Input: {request[:100]}...")
+
+            result = production_router_workflow.run(
+                message=request,
+                stream=False
+            )
+
+            print("Processing completed successfully")
+
+        # Get routing analytics
+        analytics = advanced_router.get_routing_analytics()
+        print(f"\n=== Routing Analytics ===")
+        print(f"Total routings: {analytics.get('total_routings', 0)}")
+        print(f"Average confidence: {analytics.get('average_confidence', 0):.2f}")
+        print(f"Most used route: {analytics.get('most_used_route', 'N/A')}")
+        print(f"Routing efficiency: {analytics.get('routing_efficiency', 'N/A')}")
+
+    except Exception as e:
+        logger.error(f"Advanced router workflow failed: {e}")
+        print(f"Workflow failed: {e}")
+```
+
+## Advanced Router Patterns
+
+### Multi-Stage Routing
+
+```python
+class MultiStageRouter:
+    """Multi-stage routing with refinement at each stage"""
+
+    def __init__(self):
+        self.stage_routers = {}
+
+    def create_multi_stage_routing_function(self, step_input: StepInput) -> StepOutput:
+        """Multi-stage routing with progressive refinement"""
+
+        try:
+            # Stage 1: Primary domain classification
+            primary_route = self._classify_primary_domain(step_input.message)
+
+            # Stage 2: Secondary specialization routing
+            secondary_route = self._classify_specialization(step_input.message, primary_route)
+
+            # Stage 3: Priority and complexity assessment
+            priority_assessment = self._assess_priority_complexity(step_input.message)
+
+            # Stage 4: Final agent selection
+            selected_agent = self._select_optimal_agent(primary_route, secondary_route, priority_assessment)
+
+            # Execute with multi-stage context
+            multi_stage_prompt = f"""
+            MULTI-STAGE ROUTED PROCESSING:
+
+            Original Request: {step_input.message}
+
+            Routing Analysis:
+            - Primary Domain: {primary_route}
+            - Specialization: {secondary_route}
+            - Priority Level: {priority_assessment['priority']}
+            - Complexity Score: {priority_assessment['complexity']}
+
+            Multi-Stage Processing Context:
+            This request has been analyzed through multiple routing stages to ensure optimal processing.
+            Apply specialized expertise based on the multi-stage routing analysis.
+            """
+
+            result = selected_agent.run(multi_stage_prompt)
+
+            multi_stage_output = f"""
+            # Multi-Stage Routing Results
+
+            **Routing Pipeline Summary**
+            - Stage 1 (Domain): {primary_route}
+            - Stage 2 (Specialization): {secondary_route}
+            - Stage 3 (Priority): {priority_assessment['priority']}
+            - Stage 4 (Agent): {selected_agent.name}
+
+            ## Processed Results
+            {result.content}
+
+            ## Multi-Stage Benefits
+            - Progressive Refinement: ✓ 4-stage analysis
+            - Optimal Agent Selection: ✓ Multi-factor decision
+            - Context Preservation: ✓ Full routing context maintained
+            """
+
+            return StepOutput(
+                content=multi_stage_output,
+                response=result,
+                metadata={
+                    "routing_type": "multi_stage",
+                    "primary_route": primary_route,
+                    "secondary_route": secondary_route,
+                    "priority_assessment": priority_assessment
+                }
+            )
+
+        except Exception as e:
+            return StepOutput(
+                content=f"Multi-stage routing failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+    def _classify_primary_domain(self, content: str) -> str:
+        """Stage 1: Primary domain classification"""
+        # Implementation would analyze content for primary domain
+        return "business"  # Simplified for example
+
+    def _classify_specialization(self, content: str, primary_route: str) -> str:
+        """Stage 2: Specialization within domain"""
+        # Implementation would determine specialization
+        return "strategic_analysis"  # Simplified for example
+
+    def _assess_priority_complexity(self, content: str) -> Dict[str, Any]:
+        """Stage 3: Priority and complexity assessment"""
+        return {"priority": "high", "complexity": 8}  # Simplified for example
+
+    def _select_optimal_agent(self, primary: str, secondary: str, assessment: Dict) -> Agent:
+        """Stage 4: Final optimal agent selection"""
+        return business_strategist  # Simplified for example
+```
+
+### Fallback and Error Routing
+
+```python
+class RobustRouter:
+    """Router with fallback mechanisms and error handling"""
+
+    def __init__(self):
+        self.fallback_chain = [
+            business_strategist,  # Primary fallback
+            general_consultant,   # Secondary fallback
+        ]
+        self.error_handlers = {}
+
+    def robust_routing_function(self, step_input: StepInput) -> StepOutput:
+        """Routing with comprehensive fallback and error handling"""
+
+        try:
+            # Primary routing attempt
+            primary_result = self._attempt_primary_routing(step_input)
+            if primary_result.success:
+                return primary_result
+
+            # Fallback routing
+            logger.warning("Primary routing failed, attempting fallback")
+            fallback_result = self._attempt_fallback_routing(step_input)
+            if fallback_result.success:
+                return fallback_result
+
+            # Emergency routing
+            logger.error("Fallback routing failed, using emergency routing")
+            return self._emergency_routing(step_input)
+
+        except Exception as e:
+            logger.error(f"All routing attempts failed: {e}")
+            return self._create_error_response(step_input, e)
+
+    def _attempt_primary_routing(self, step_input: StepInput) -> StepOutput:
+        """Attempt primary routing logic"""
+        try:
+            # Primary routing logic here
+            result = business_strategist.run(step_input.message)
+            return StepOutput(content=result.content, response=result, success=True)
+        except Exception as e:
+            return StepOutput(content="Primary routing failed", success=False, error=str(e))
+
+    def _attempt_fallback_routing(self, step_input: StepInput) -> StepOutput:
+        """Attempt fallback routing with alternative agents"""
+        for fallback_agent in self.fallback_chain:
+            try:
+                result = fallback_agent.run(f"FALLBACK PROCESSING: {step_input.message}")
+                return StepOutput(
+                    content=f"# Fallback Processing Results\n\n{result.content}",
+                    response=result,
+                    success=True,
+                    metadata={"routing_type": "fallback", "agent": fallback_agent.name}
+                )
+            except Exception as e:
+                logger.warning(f"Fallback agent {fallback_agent.name} failed: {e}")
+                continue
+
+        return StepOutput(content="All fallback attempts failed", success=False)
+
+    def _emergency_routing(self, step_input: StepInput) -> StepOutput:
+        """Emergency routing for critical failures"""
+        emergency_response = f"""
+        # Emergency Processing Response
+
+        **Emergency Routing Activated**
+        - Primary routing: Failed
+        - Fallback routing: Failed
+        - Emergency processing: Active
+
+        ## Basic Processing Results
+        Request received: {step_input.message[:200]}...
+
+        Emergency processing has been applied due to routing failures.
+        Please retry your request or contact support for assistance.
+        """
+
+        return StepOutput(
+            content=emergency_response,
+            success=True,
+            metadata={"routing_type": "emergency", "all_primary_failed": True}
+        )
+
+    def _create_error_response(self, step_input: StepInput, error: Exception) -> StepOutput:
+        """Create structured error response"""
+        return StepOutput(
+            content=f"Routing system failure: {str(error)}",
+            success=False,
+            error=str(error),
+            metadata={"routing_failure": True}
+        )
+```
+
+### Adaptive Learning Router
+
+```python
+import sqlite3
+from typing import NamedTuple
+
+class RoutingOutcome(NamedTuple):
+    """Structure for routing outcome tracking"""
+    route_selected: str
+    confidence: float
+    processing_time: float
+    success: bool
+    user_satisfaction: Optional[float]
+
+class AdaptiveLearningRouter:
+    """Router that learns from routing outcomes to improve decisions"""
+
+    def __init__(self, db_path: str = "router_learning.db"):
+        self.db_path = db_path
+        self.initialize_learning_database()
+
+    def initialize_learning_database(self):
+        """Initialize database for learning data"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS routing_outcomes (
+            id INTEGER PRIMARY KEY,
+            content_hash TEXT,
+            route_selected TEXT,
+            confidence REAL,
+            processing_time REAL,
+            success BOOLEAN,
+            user_satisfaction REAL,
+            timestamp TEXT
+        )
+        """)
+
+        conn.commit()
+        conn.close()
+
+    def learn_from_outcome(self, content: str, outcome: RoutingOutcome):
+        """Learn from routing outcome to improve future decisions"""
+
+        content_hash = str(hash(content.lower()))
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        INSERT INTO routing_outcomes
+        (content_hash, route_selected, confidence, processing_time, success, user_satisfaction, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            content_hash,
+            outcome.route_selected,
+            outcome.confidence,
+            outcome.processing_time,
+            outcome.success,
+            outcome.user_satisfaction,
+            datetime.now().isoformat()
+        ))
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Learned from routing outcome: {outcome.route_selected} (success: {outcome.success})")
+
+    def get_historical_performance(self, route: str) -> Dict[str, float]:
+        """Get historical performance metrics for a route"""
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        SELECT AVG(confidence), AVG(processing_time), AVG(CAST(success AS FLOAT)), AVG(user_satisfaction), COUNT(*)
+        FROM routing_outcomes
+        WHERE route_selected = ?
+        """, (route,))
+
+        result = cursor.fetchone()
+        conn.close()
+
+        if result and result[4] > 0:  # If we have data
+            return {
+                "avg_confidence": result[0] or 0,
+                "avg_processing_time": result[1] or 0,
+                "success_rate": result[2] or 0,
+                "avg_satisfaction": result[3] or 0,
+                "sample_size": result[4]
+            }
+        else:
+            return {"sample_size": 0}
+
+    def adaptive_routing_function(self, step_input: StepInput) -> StepOutput:
+        """Routing function that adapts based on historical performance"""
+
+        try:
+            # Get base routing decision
+            base_router = IntelligentRouter()
+            base_decision = base_router.make_routing_decision(step_input)
+
+            # Get historical performance for top routes
+            performance_adjustments = {}
+            for route in [base_decision.selected_route] + base_decision.alternative_routes:
+                performance = self.get_historical_performance(route.value)
+
+                if performance["sample_size"] > 5:  # Only adjust if we have enough data
+                    # Adjust confidence based on historical success rate
+                    performance_multiplier = performance["success_rate"] * 1.2
+                    performance_adjustments[route.value] = performance_multiplier
+
+            # Apply learning adjustments
+            if performance_adjustments:
+                adjusted_confidence = base_decision.confidence_score
+                route_performance = performance_adjustments.get(base_decision.selected_route.value, 1.0)
+                adjusted_confidence *= route_performance
+
+                # Consider switching routes if historical performance suggests better alternative
+                best_alternative = max(
+                    performance_adjustments.items(),
+                    key=lambda x: x[1]
+                ) if performance_adjustments else None
+
+                if best_alternative and best_alternative[1] > route_performance * 1.3:
+                    # Switch to better performing route
+                    base_decision.selected_route = ProcessingRoute(best_alternative[0])
+                    adjusted_confidence = base_decision.confidence_score * best_alternative[1]
+                    logger.info(f"Switched to historically better route: {best_alternative[0]}")
+
+            # Execute with selected route (same as standard routing)
+            selected_agent = advanced_router.route_agents[base_decision.selected_route]
+            result = selected_agent.run(step_input.message)
+
+            adaptive_output = f"""
+            # Adaptive Learning Router Results
+
+            **Adaptive Routing Summary**
+            - Selected Route: {base_decision.selected_route.value}
+            - Base Confidence: {base_decision.confidence_score:.2f}
+            - Learning Applied: {"✓ Historical performance considered" if performance_adjustments else "○ Insufficient historical data"}
+
+            ## Processing Results
+            {result.content}
+
+            ## Learning Integration
+            - Historical Data: {len(performance_adjustments)} routes with performance history
+            - Route Optimization: Learning-based route selection
+            - Continuous Improvement: Outcome tracking active
+            """
+
+            return StepOutput(
+                content=adaptive_output,
+                response=result,
+                metadata={
+                    "routing_type": "adaptive_learning",
+                    "selected_route": base_decision.selected_route.value,
+                    "learning_applied": bool(performance_adjustments),
+                    "historical_routes": list(performance_adjustments.keys())
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Adaptive routing failed: {e}")
+            return StepOutput(
+                content=f"Adaptive routing failed: {e}",
+                success=False,
+                error=str(e)
+            )
+```
+
+## Speed Tips
+
+### Router Performance Optimization
+
+- **Rule Efficiency**: Optimize routing rules for fast pattern matching and keyword detection
+- **Caching**: Cache routing decisions for similar inputs to avoid redundant analysis
+- **Agent Pool Management**: Pre-initialize agents to reduce routing execution time
+- **Fallback Strategy**: Design efficient fallback chains to handle routing failures quickly
+- **Learning Integration**: Use historical data to improve routing accuracy over time
+- **Parallel Analysis**: Perform routing analysis components in parallel where possible
+
+### Common Router Patterns
+
+```python
+# Pattern 1: Simple keyword-based routing
+def keyword_router(content: str) -> str:
+    if "technical" in content.lower():
+        return "technical_route"
+    elif "business" in content.lower():
+        return "business_route"
+    else:
+        return "general_route"
+
+# Pattern 2: Score-based multi-factor routing
+def scored_router(content: str) -> Tuple[str, float]:
+    scores = {}
+    for route, keywords in route_keywords.items():
+        scores[route] = sum(1 for kw in keywords if kw in content.lower())
+
+    best_route = max(scores, key=scores.get)
+    confidence = scores[best_route] / len(route_keywords[best_route])
+    return best_route, confidence
+
+# Pattern 3: Machine learning-enhanced routing
+def ml_enhanced_router(content: str, historical_data: List) -> str:
+    # Use ML model trained on historical routing outcomes
+    features = extract_content_features(content)
+    predicted_route = ml_model.predict([features])[0]
+    return predicted_route
+
+# Pattern 4: Hierarchical routing
+def hierarchical_router(content: str) -> Tuple[str, str]:
+    domain = classify_domain(content)  # First level
+    specialty = classify_specialty(content, domain)  # Second level
+    return domain, specialty
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Routing Logic Issues
+
+```python
+# ❌ WRONG - Overly simplistic routing
+def bad_router(content: str):
+    if "help" in content:
+        return general_agent  # Too generic!
+    else:
+        return business_agent  # Default without analysis!
+
+# ✅ CORRECT - Comprehensive routing analysis
+def good_router(step_input: StepInput) -> StepOutput:
+    content_analysis = analyze_content_comprehensively(step_input.message)
+    routing_decision = make_intelligent_routing_decision(content_analysis)
+    selected_agent = select_optimal_agent(routing_decision)
+    return execute_with_routing_context(selected_agent, step_input, routing_decision)
+
+# ❌ WRONG - No fallback handling
+def no_fallback_router(content: str):
+    route = complex_routing_algorithm(content)  # Might fail!
+    return route_agents[route]  # No error handling!
+
+# ✅ CORRECT - Robust fallback handling
+def robust_router(content: str):
+    try:
+        route = complex_routing_algorithm(content)
+        return route_agents[route]
+    except Exception as e:
+        logger.warning(f"Primary routing failed: {e}")
+        return fallback_agent  # Always have a fallback!
+```
+
+### Performance and Scalability Issues
+
+```python
+# ❌ WRONG - Inefficient routing analysis
+def slow_router(content: str):
+    # Expensive operations on every request!
+    all_patterns = load_all_routing_patterns()  # Slow I/O!
+    complex_analysis = perform_deep_nlp_analysis(content)  # CPU intensive!
+    ml_prediction = run_ml_model(content)  # Model inference!
+    return combine_all_results(all_patterns, complex_analysis, ml_prediction)
+
+# ✅ CORRECT - Optimized routing
+def fast_router(content: str):
+    # Pre-loaded patterns and cached analysis
+    quick_classification = fast_pattern_matching(content, cached_patterns)
+
+    # Only do expensive analysis if needed
+    if quick_classification.confidence < 0.7:
+        detailed_analysis = perform_detailed_analysis(content)
+        return combine_results(quick_classification, detailed_analysis)
+
+    return quick_classification
+
+# ❌ WRONG - No routing performance monitoring
+def unmonitored_router(content: str):
+    start_time = time.time()
+    result = complex_routing_logic(content)
+    # No timing or performance tracking!
+    return result
+
+# ✅ CORRECT - Performance monitoring
+def monitored_router(content: str):
+    start_time = time.time()
+    result = complex_routing_logic(content)
+    routing_time = time.time() - start_time
+
+    # Track performance metrics
+    log_routing_performance(result.route, routing_time, result.confidence)
+    return result
+```
+
+## Best Practices Summary
+
+- **Comprehensive Analysis**: Implement multi-factor routing analysis including content, context, and metadata
+- **Intelligent Decision Making**: Use confidence scores and alternative routes for robust routing decisions
+- **Specialized Agents**: Deploy specialized agents optimized for specific content types and domains
+- **Fallback Strategy**: Always implement fallback routing chains to handle edge cases and failures
+- **Performance Optimization**: Cache routing decisions and optimize pattern matching for speed
+- **Learning Integration**: Use historical routing outcomes to improve future routing accuracy
+- **Error Handling**: Implement comprehensive error handling with graceful degradation
+- **Monitoring and Analytics**: Track routing performance and decision quality for continuous improvement

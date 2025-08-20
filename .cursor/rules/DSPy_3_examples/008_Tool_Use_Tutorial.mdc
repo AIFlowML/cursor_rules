@@ -1,0 +1,1067 @@
+---
+
+description: DSPY 3 Tool Use Tutorial - Advanced tool integration from official DSPy 3.0.1 tutorial with SIMBA optimizer
+alwaysApply: false
+
+> You are an expert in implementing Advanced Tool Use Systems using DSPy 3.0.1 based on official tutorials with SIMBA optimization.
+
+## Tool Use Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   User Query    │────│   Agent          │────│   Tool Suite    │
+│   Complex Task  │    │   (ReAct + Tool  │    │   (Dynamic      │
+└─────────────────┘    │   Selection)     │    │   Function Set) │
+                       └──────────────────┘    └─────────────────┘
+                              │                          │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Result   │────│   SIMBA          │────│   Tool Results  │
+│  Optimized      │    │   Optimization   │    │   + Metadata    │
+│  Performance    │    │   (35% → 60%)    │    │   + Errors      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   MLflow         │
+                    │   Experiment     │
+                    │   Tracking       │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Tool Use System (From Official Notebook)
+
+```python
+import dspy
+import ujson
+import random
+import re
+import inspect
+from func_timeout import func_set_timeout
+
+# Configure DSPy (from tutorial)
+gpt4o = dspy.LM("openai/gpt-4o", temperature=0.7)
+dspy.configure(lm=gpt4o)
+
+# Tutorial data loading (exact from notebook)
+from dspy.utils import download
+
+download("https://huggingface.co/datasets/bytedance-research/ToolHop/resolve/main/data/ToolHop.json")
+data = ujson.load(open("ToolHop.json"))
+random.Random(0).shuffle(data)
+
+# Tutorial tool processing (exact implementation)
+examples = []
+fns2code = {}
+
+def finish(answer: str):
+    """Conclude the trajectory and return the final answer."""
+    return answer
+
+for datapoint in data:
+    func_dict = {}
+    for func_code in datapoint["functions"]:
+        cleaned_code = func_code.rsplit("\n\n# Example usage", 1)[0]
+        fn_name = re.search(r"^\s*def\s+([a-zA-Z0-9_]+)\s*\(", cleaned_code)
+        fn_name = fn_name.group(1) if fn_name else None
+
+        if not fn_name:
+            continue
+
+        local_vars = {}
+        exec(cleaned_code, {}, local_vars)
+        fn_obj = local_vars.get(fn_name)
+
+        if callable(fn_obj):
+            func_dict[fn_name] = fn_obj
+            assert fn_obj not in fns2code, f"Duplicate function found: {fn_name}"
+            fns2code[fn_obj] = (fn_name, cleaned_code)
+
+    func_dict["finish"] = finish
+    example = dspy.Example(question=datapoint["question"], answer=datapoint["answer"], functions=func_dict)
+    examples.append(example.with_inputs("question", "functions"))
+
+trainset, devset, testset = examples[:100], examples[100:400], examples[400:]
+
+# Tutorial helper functions (exact from notebook)
+def wrap_function_with_timeout(fn):
+    @func_set_timeout(10)
+    def wrapper(*args, **kwargs):
+        try:
+            return {"return_value": fn(*args, **kwargs), "errors": None}
+        except Exception as e:
+            return {"return_value": None, "errors": str(e)}
+    return wrapper
+
+def fn_metadata(func):
+    signature = inspect.signature(func)
+    docstring = inspect.getdoc(func) or "No docstring."
+    return dict(function_name=func.__name__, arguments=str(signature), docstring=docstring)
+
+# Tutorial evaluation metric (exact)
+def metric(example, pred, trace=None):
+    gold = str(example.answer).rstrip(".0").replace(",", "").lower()
+    pred = str(pred.answer).rstrip(".0").replace(",", "").lower()
+    return pred == gold  # stricter than the original paper's metric!
+
+evaluate = dspy.Evaluate(devset=devset, metric=metric, num_threads=24, display_progress=True, display_table=0, max_errors=999)
+
+# Tutorial Agent implementation (exact from notebook)
+class Agent(dspy.Module):
+    def __init__(self, max_steps=5):
+        self.max_steps = max_steps
+        instructions = "For the final answer, produce short (not full sentence) answers in which you format dates as YYYY-MM-DD, names as Firstname Lastname, and numbers without leading 0s."
+        signature = dspy.Signature('question, trajectory, functions -> next_selected_fn, args: dict[str, Any]', instructions)
+        self.react = dspy.ChainOfThought(signature)
+
+    def forward(self, question, functions):
+        tools = {fn_name: fn_metadata(fn) for fn_name, fn in functions.items()}
+        trajectory = []
+
+        for _ in range(self.max_steps):
+            pred = self.react(question=question, trajectory=trajectory, functions=tools)
+            selected_fn = pred.next_selected_fn.strip('"').strip("'")
+            fn_output = wrap_function_with_timeout(functions[selected_fn])(**pred.args)
+            trajectory.append(dict(reasoning=pred.reasoning, selected_fn=selected_fn, args=pred.args, **fn_output))
+
+            if selected_fn == "finish":
+                break
+
+        return dspy.Prediction(answer=fn_output.get("return_value", ''), trajectory=trajectory)
+
+# Tutorial optimization (exact SIMBA usage)
+simba = dspy.SIMBA(metric=metric, max_steps=12, max_demos=10)
+optimized_agent = simba.compile(Agent(), trainset=trainset, seed=6793115)
+
+# Tutorial baseline and optimized evaluation (exact results)
+agent = Agent()
+baseline_score = evaluate(agent)  # 35.0%
+optimized_score = evaluate(optimized_agent)  # 60.67%
+```
+
+### Production Tool Use System
+
+```python
+import logging
+import mlflow
+import time
+import asyncio
+from typing import Dict, List, Optional, Any, Union, Callable, Type
+from pydantic import BaseModel, Field, validator
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+import json
+from collections import defaultdict, deque
+import uuid
+from datetime import datetime
+import inspect
+import ast
+import hashlib
+import traceback
+
+# Production configuration
+class ToolUseConfig(BaseModel):
+    model_name: str = "openai/gpt-4o"
+    max_steps: int = 10
+    temperature: float = 0.7
+    tool_timeout_seconds: int = 30
+    max_parallel_tools: int = 3
+    enable_tool_validation: bool = True
+    enable_safety_checks: bool = True
+    allowed_imports: List[str] = Field(default=["math", "datetime", "re", "json", "random"])
+    restricted_functions: List[str] = Field(default=["exec", "eval", "open", "file", "__import__"])
+    optimization_strategy: str = "simba"  # simba, mipro, bootstrap
+    cache_tool_results: bool = True
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+class ToolExecutionResult(BaseModel):
+    tool_name: str
+    args: Dict[str, Any]
+    return_value: Any
+    errors: Optional[str] = None
+    execution_time_ms: float = 0.0
+    success: bool = True
+    metadata: Dict[str, Any] = {}
+
+class ToolUseResult(BaseModel):
+    question: str
+    final_answer: str
+    trajectory: List[Dict[str, Any]]
+    total_steps: int
+    successful_steps: int
+    total_time_ms: float
+    tools_used: List[str]
+    success: bool
+    model_version: str
+
+# Production tool interface
+class ProductionTool(ABC):
+    """Abstract base class for production tools"""
+
+    def __init__(self, name: str, description: str):
+        self.name = name
+        self.description = description
+        self.usage_count = 0
+        self.success_count = 0
+        self.avg_execution_time = 0.0
+        self.logger = logging.getLogger(f"Tool.{name}")
+
+    @abstractmethod
+    def execute(self, *args, **kwargs) -> Any:
+        """Execute the tool - must be implemented by subclasses"""
+        pass
+
+    def __call__(self, *args, **kwargs) -> ToolExecutionResult:
+        """Production wrapper for tool execution"""
+        start_time = time.time()
+        self.usage_count += 1
+
+        try:
+            result = self.execute(*args, **kwargs)
+            execution_time = (time.time() - start_time) * 1000
+            self.success_count += 1
+
+            # Update running average
+            self.avg_execution_time = (
+                (self.avg_execution_time * (self.usage_count - 1) + execution_time) / self.usage_count
+            )
+
+            self.logger.info(f"Tool {self.name} executed successfully in {execution_time:.2f}ms")
+
+            return ToolExecutionResult(
+                tool_name=self.name,
+                args=kwargs,
+                return_value=result,
+                execution_time_ms=execution_time,
+                success=True,
+                metadata={'usage_count': self.usage_count}
+            )
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            error_msg = f"{type(e).__name__}: {str(e)}"
+
+            self.logger.error(f"Tool {self.name} failed: {error_msg}")
+
+            return ToolExecutionResult(
+                tool_name=self.name,
+                args=kwargs,
+                return_value=None,
+                errors=error_msg,
+                execution_time_ms=execution_time,
+                success=False,
+                metadata={'usage_count': self.usage_count}
+            )
+
+    def get_metadata(self) -> Dict[str, Any]:
+        """Get tool metadata for agent reasoning"""
+        signature = inspect.signature(self.execute)
+
+        return {
+            'function_name': self.name,
+            'description': self.description,
+            'arguments': str(signature),
+            'docstring': self.execute.__doc__ or "No documentation available",
+            'success_rate': self.success_count / max(self.usage_count, 1),
+            'avg_execution_time_ms': self.avg_execution_time
+        }
+
+# Tool safety validator
+class ToolSafetyValidator:
+    """Validates tool code for security and safety"""
+
+    def __init__(self, config: ToolUseConfig):
+        self.config = config
+        self.logger = logging.getLogger("ToolSafetyValidator")
+
+    def validate_tool_code(self, code: str) -> Tuple[bool, List[str]]:
+        """Validate tool code for security issues"""
+        warnings = []
+
+        if not self.config.enable_safety_checks:
+            return True, warnings
+
+        try:
+            # Parse AST to check for dangerous operations
+            tree = ast.parse(code)
+
+            for node in ast.walk(tree):
+                # Check for restricted functions
+                if isinstance(node, ast.Name) and node.id in self.config.restricted_functions:
+                    return False, [f"Restricted function: {node.id}"]
+
+                # Check for dangerous imports
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name not in self.config.allowed_imports:
+                            return False, [f"Unauthorized import: {alias.name}"]
+
+                # Check for subprocess or os operations
+                if isinstance(node, ast.Call):
+                    if hasattr(node.func, 'attr'):
+                        if node.func.attr in ['system', 'popen', 'spawn']:
+                            return False, [f"Dangerous system call: {node.func.attr}"]
+
+        except SyntaxError as e:
+            return False, [f"Syntax error in tool code: {e}"]
+
+        return True, warnings
+
+    def create_safe_environment(self) -> Dict[str, Any]:
+        """Create safe execution environment"""
+        safe_builtins = {
+            'abs': abs, 'all': all, 'any': any, 'bin': bin, 'bool': bool,
+            'chr': chr, 'dict': dict, 'enumerate': enumerate, 'float': float,
+            'int': int, 'len': len, 'list': list, 'max': max, 'min': min,
+            'range': range, 'round': round, 'str': str, 'sum': sum, 'tuple': tuple,
+        }
+
+        safe_env = {'__builtins__': safe_builtins}
+
+        # Add allowed modules
+        for module_name in self.config.allowed_imports:
+            try:
+                module = __import__(module_name)
+                safe_env[module_name] = module
+            except ImportError:
+                self.logger.warning(f"Could not import allowed module: {module_name}")
+
+        return safe_env
+
+# Dynamic tool factory
+class DynamicToolFactory:
+    """Factory for creating tools from code dynamically"""
+
+    def __init__(self, config: ToolUseConfig):
+        self.config = config
+        self.validator = ToolSafetyValidator(config)
+        self.logger = logging.getLogger("DynamicToolFactory")
+
+    def create_tool_from_code(self, name: str, code: str, description: str = "") -> Optional[ProductionTool]:
+        """Create a tool from Python code"""
+
+        # Validate code safety
+        is_safe, warnings = self.validator.validate_tool_code(code)
+        if not is_safe:
+            self.logger.error(f"Tool {name} failed safety validation: {warnings}")
+            return None
+
+        try:
+            # Create safe environment
+            safe_env = self.validator.create_safe_environment()
+
+            # Execute code to extract function
+            exec(code, safe_env)
+
+            # Find the function
+            if name not in safe_env:
+                self.logger.error(f"Function {name} not found in code")
+                return None
+
+            func = safe_env[name]
+            if not callable(func):
+                self.logger.error(f"{name} is not callable")
+                return None
+
+            # Create tool wrapper
+            class DynamicTool(ProductionTool):
+                def __init__(self, func, name, description):
+                    super().__init__(name, description)
+                    self.func = func
+
+                def execute(self, *args, **kwargs) -> Any:
+                    return self.func(*args, **kwargs)
+
+            return DynamicTool(func, name, description)
+
+        except Exception as e:
+            self.logger.error(f"Failed to create tool {name}: {e}")
+            return None
+
+    def create_tools_from_dataset(self, functions_list: List[str]) -> Dict[str, ProductionTool]:
+        """Create multiple tools from dataset format"""
+        tools = {}
+
+        for func_code in functions_list:
+            # Extract function name
+            fn_name_match = re.search(r"^\s*def\s+([a-zA-Z0-9_]+)\s*\(", func_code, re.MULTILINE)
+            if not fn_name_match:
+                continue
+
+            fn_name = fn_name_match.group(1)
+
+            # Clean code
+            cleaned_code = func_code.rsplit("\n\n# Example usage", 1)[0]
+
+            # Extract description from docstring
+            description = ""
+            try:
+                tree = ast.parse(cleaned_code)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef) and node.name == fn_name:
+                        if node.body and isinstance(node.body[0], ast.Expr):
+                            if isinstance(node.body[0].value, ast.Str):
+                                description = node.body[0].value.s
+                            elif isinstance(node.body[0].value, ast.Constant):
+                                description = node.body[0].value.value
+                        break
+            except:
+                pass
+
+            # Create tool
+            tool = self.create_tool_from_code(fn_name, cleaned_code, description)
+            if tool:
+                tools[fn_name] = tool
+
+        return tools
+
+# Production agent with advanced tool use
+class ProductionToolUseAgent(dspy.Module):
+    """Production agent with advanced tool integration and safety"""
+
+    def __init__(self, config: ToolUseConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+        self.tool_factory = DynamicToolFactory(config)
+
+        # Enhanced signature for tool use
+        instructions = (
+            "You are an intelligent agent with access to various tools. Analyze the question carefully, "
+            "select appropriate tools, and use them systematically to find the answer. "
+            "For the final answer, produce short (not full sentence) answers with proper formatting: "
+            "dates as YYYY-MM-DD, names as Firstname Lastname, and numbers without leading 0s."
+        )
+
+        signature = dspy.Signature(
+            'question, trajectory, functions -> next_selected_fn, args: dict[str, Any]',
+            instructions
+        )
+
+        self.react = dspy.ChainOfThought(signature)
+
+        # Tool result cache
+        self.tool_cache = {} if config.cache_tool_results else None
+
+        # Performance tracking
+        self.agent_stats = {
+            'total_questions': 0,
+            'successful_questions': 0,
+            'avg_steps': 0.0,
+            'avg_processing_time': 0.0,
+            'tool_usage_counts': defaultdict(int),
+            'tool_success_rates': defaultdict(lambda: {'total': 0, 'success': 0})
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        return logging.getLogger(f"ToolUseAgent.{self.config.environment}")
+
+    def _generate_cache_key(self, tool_name: str, args: Dict[str, Any]) -> str:
+        """Generate cache key for tool results"""
+        key_data = {'tool': tool_name, 'args': args}
+        key_str = json.dumps(key_data, sort_keys=True, default=str)
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _execute_tool_safely(self, tool: ProductionTool, args: Dict[str, Any]) -> ToolExecutionResult:
+        """Execute tool with safety measures and caching"""
+
+        # Check cache first
+        if self.tool_cache:
+            cache_key = self._generate_cache_key(tool.name, args)
+            if cache_key in self.tool_cache:
+                cached_result = self.tool_cache[cache_key]
+                self.logger.info(f"Using cached result for {tool.name}")
+                return cached_result
+
+        # Execute tool
+        try:
+            result = tool(**args)
+
+            # Cache successful results
+            if self.tool_cache and result.success:
+                cache_key = self._generate_cache_key(tool.name, args)
+                self.tool_cache[cache_key] = result
+
+            # Update statistics
+            self.agent_stats['tool_usage_counts'][tool.name] += 1
+            stats = self.agent_stats['tool_success_rates'][tool.name]
+            stats['total'] += 1
+            if result.success:
+                stats['success'] += 1
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Tool execution failed: {e}")
+            return ToolExecutionResult(
+                tool_name=tool.name,
+                args=args,
+                return_value=None,
+                errors=str(e),
+                execution_time_ms=0.0,
+                success=False
+            )
+
+    def forward(self, question: str, functions: Dict[str, Any], **kwargs) -> ToolUseResult:
+        start_time = time.time()
+        session_id = str(uuid.uuid4())
+
+        try:
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("question", question[:200])
+                mlflow.log_param("session_id", session_id)
+                mlflow.log_param("available_tools", len(functions))
+
+                # Convert functions to tools
+                tools = {}
+                for fn_name, fn_obj in functions.items():
+                    if fn_name == "finish":
+                        # Special finish function
+                        class FinishTool(ProductionTool):
+                            def execute(self, answer: str) -> str:
+                                return answer
+                        tools[fn_name] = FinishTool("finish", "Conclude and return final answer")
+                    else:
+                        # Try to wrap existing function
+                        class FunctionTool(ProductionTool):
+                            def __init__(self, func, name):
+                                desc = inspect.getdoc(func) or f"Tool: {name}"
+                                super().__init__(name, desc)
+                                self.func = func
+
+                            def execute(self, *args, **kwargs) -> Any:
+                                return self.func(*args, **kwargs)
+
+                        tools[fn_name] = FunctionTool(fn_obj, fn_name)
+
+                # Prepare tool metadata for agent
+                tool_metadata = {name: tool.get_metadata() for name, tool in tools.items()}
+
+                # Execute reasoning loop
+                trajectory = []
+                final_answer = ""
+                successful_steps = 0
+
+                self.logger.info(f"Starting tool use session {session_id} for: {question[:100]}...")
+
+                for step in range(self.config.max_steps):
+                    try:
+                        # Get next action from agent
+                        pred = self.react(
+                            question=question,
+                            trajectory=trajectory,
+                            functions=tool_metadata
+                        )
+
+                        # Clean and validate tool selection
+                        selected_fn = pred.next_selected_fn.strip('"').strip("'")
+                        if selected_fn not in tools:
+                            self.logger.warning(f"Invalid tool selected: {selected_fn}")
+                            break
+
+                        # Execute tool
+                        tool_result = self._execute_tool_safely(tools[selected_fn], pred.args)
+
+                        # Update trajectory
+                        step_info = {
+                            'step': step + 1,
+                            'reasoning': pred.reasoning,
+                            'selected_fn': selected_fn,
+                            'args': pred.args,
+                            'return_value': tool_result.return_value,
+                            'errors': tool_result.errors,
+                            'execution_time_ms': tool_result.execution_time_ms
+                        }
+                        trajectory.append(step_info)
+
+                        if tool_result.success:
+                            successful_steps += 1
+
+                        # Check for completion
+                        if selected_fn == "finish":
+                            final_answer = str(tool_result.return_value) if tool_result.return_value else ""
+                            break
+
+                    except Exception as e:
+                        self.logger.error(f"Step {step + 1} failed: {e}")
+                        trajectory.append({
+                            'step': step + 1,
+                            'error': str(e),
+                            'reasoning': getattr(pred, 'reasoning', ''),
+                            'selected_fn': 'error',
+                            'args': {},
+                            'return_value': None,
+                            'errors': str(e),
+                            'execution_time_ms': 0.0
+                        })
+                        break
+
+                # Calculate final metrics
+                total_time = (time.time() - start_time) * 1000
+                tools_used = list(set(step.get('selected_fn', '') for step in trajectory if step.get('selected_fn')))
+                success = final_answer != "" and successful_steps > 0
+
+                # Update agent statistics
+                self._update_agent_stats(len(trajectory), total_time, success)
+
+                # Log metrics to MLflow
+                mlflow.log_metrics({
+                    'total_steps': len(trajectory),
+                    'successful_steps': successful_steps,
+                    'total_time_ms': total_time,
+                    'success': int(success),
+                    'tools_used_count': len(tools_used)
+                })
+
+                result = ToolUseResult(
+                    question=question,
+                    final_answer=final_answer,
+                    trajectory=trajectory,
+                    total_steps=len(trajectory),
+                    successful_steps=successful_steps,
+                    total_time_ms=total_time,
+                    tools_used=tools_used,
+                    success=success,
+                    model_version="v1.0.0"
+                )
+
+                self.logger.info(
+                    f"Session {session_id} completed: {len(trajectory)} steps, "
+                    f"{successful_steps} successful, answer: {final_answer[:50]}..."
+                )
+
+                return dspy.Prediction(
+                    answer=final_answer,
+                    tool_use_result=result
+                )
+
+        except Exception as e:
+            self.logger.error(f"Agent execution failed: {e}")
+            total_time = (time.time() - start_time) * 1000
+
+            return dspy.Prediction(
+                answer="",
+                tool_use_result=ToolUseResult(
+                    question=question,
+                    final_answer="",
+                    trajectory=[],
+                    total_steps=0,
+                    successful_steps=0,
+                    total_time_ms=total_time,
+                    tools_used=[],
+                    success=False,
+                    model_version="v1.0.0"
+                )
+            )
+
+    def _update_agent_stats(self, steps: int, processing_time: float, success: bool):
+        """Update agent performance statistics"""
+        self.agent_stats['total_questions'] += 1
+        if success:
+            self.agent_stats['successful_questions'] += 1
+
+        # Update averages
+        total = self.agent_stats['total_questions']
+
+        current_avg_steps = self.agent_stats['avg_steps']
+        self.agent_stats['avg_steps'] = (
+            (current_avg_steps * (total - 1) + steps) / total
+        )
+
+        current_avg_time = self.agent_stats['avg_processing_time']
+        self.agent_stats['avg_processing_time'] = (
+            (current_avg_time * (total - 1) + processing_time) / total
+        )
+
+    def get_performance_stats(self) -> Dict:
+        """Get comprehensive performance statistics"""
+        stats = dict(self.agent_stats)
+
+        # Calculate success rate
+        if stats['total_questions'] > 0:
+            stats['success_rate'] = stats['successful_questions'] / stats['total_questions']
+        else:
+            stats['success_rate'] = 0.0
+
+        # Calculate tool success rates
+        tool_success_rates = {}
+        for tool_name, counts in stats['tool_success_rates'].items():
+            if counts['total'] > 0:
+                tool_success_rates[tool_name] = counts['success'] / counts['total']
+            else:
+                tool_success_rates[tool_name] = 0.0
+
+        stats['tool_success_rates'] = tool_success_rates
+        stats['cache_size'] = len(self.tool_cache) if self.tool_cache else 0
+
+        return stats
+
+# Production optimization trainer
+class ToolUseOptimizer:
+    """Optimizer for tool use agents with SIMBA and other strategies"""
+
+    def __init__(self, config: ToolUseConfig):
+        self.config = config
+        self.logger = logging.getLogger("ToolUseOptimizer")
+
+    def optimize_agent(
+        self,
+        agent: ProductionToolUseAgent,
+        trainset: List[dspy.Example],
+        metric: Callable = None
+    ):
+        """Optimize agent using configured strategy"""
+
+        if not metric:
+            # Default metric (exact match)
+            def default_metric(example, pred, trace=None):
+                gold = str(example.answer).rstrip(".0").replace(",", "").lower()
+                pred_answer = str(pred.answer).rstrip(".0").replace(",", "").lower()
+                return pred_answer == gold
+            metric = default_metric
+
+        try:
+            if self.config.optimization_strategy == "simba":
+                optimizer = dspy.SIMBA(
+                    metric=metric,
+                    max_steps=12,
+                    max_demos=10
+                )
+            elif self.config.optimization_strategy == "mipro":
+                optimizer = dspy.MIPROv2(
+                    metric=metric,
+                    auto="medium",
+                    num_threads=16
+                )
+            else:
+                optimizer = dspy.BootstrapFewShot(
+                    metric=metric,
+                    max_bootstrapped_demos=4
+                )
+
+            self.logger.info(f"Starting optimization with {self.config.optimization_strategy}")
+
+            optimized_agent = optimizer.compile(
+                agent,
+                trainset=trainset,
+                seed=6793115 if self.config.optimization_strategy == "simba" else None
+            )
+
+            return optimized_agent
+
+        except Exception as e:
+            self.logger.error(f"Optimization failed: {e}")
+            raise
+```
+
+## Performance Results (From Tutorial)
+
+- **Baseline Agent**: 35.0% accuracy on ToolHop dataset
+- **SIMBA Optimized**: 60.7% accuracy (+71% relative improvement)
+- **Processing**: Dynamic tool loading and execution with timeout safety
+- **Strict Evaluation**: Exact match criteria (stricter than original paper)
+
+## Production Enhancements
+
+### FastAPI Tool Use Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="Production Tool Use API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ToolUseRequest(BaseModel):
+    question: str = Field(..., min_length=10, max_length=2000)
+    functions: Optional[List[str]] = None  # Function code strings
+    max_steps: Optional[int] = Field(None, ge=1, le=20)
+    enable_caching: bool = True
+
+# Global agent system
+tool_use_agent = None
+config = None
+
+@app.on_event("startup")
+async def startup_event():
+    global tool_use_agent, config
+
+    config = ToolUseConfig()
+    tool_use_agent = ProductionToolUseAgent(config)
+
+@app.post("/solve", response_model=ToolUseResult)
+async def solve_with_tools(
+    request: ToolUseRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        # Create function dictionary
+        functions = {}
+
+        if request.functions:
+            # Create tools from provided code
+            tool_factory = DynamicToolFactory(config)
+            functions = tool_factory.create_tools_from_dataset(request.functions)
+        else:
+            # Use default tools (empty for this example)
+            pass
+
+        # Add finish function
+        def finish(answer: str) -> str:
+            return answer
+        functions["finish"] = finish
+
+        # Override config if requested
+        if request.max_steps:
+            tool_use_agent.config.max_steps = request.max_steps
+
+        result = tool_use_agent(question=request.question, functions=functions)
+
+        # Log usage in background
+        background_tasks.add_task(
+            log_tool_use_metrics,
+            request,
+            result.tool_use_result
+        )
+
+        return result.tool_use_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/agent/stats")
+async def get_agent_stats():
+    return tool_use_agent.get_performance_stats()
+
+@app.post("/tools/validate")
+async def validate_tool_code(code: str):
+    """Validate tool code for safety"""
+    try:
+        validator = ToolSafetyValidator(config)
+        is_safe, warnings = validator.validate_tool_code(code)
+
+        return {
+            "is_safe": is_safe,
+            "warnings": warnings,
+            "validation_enabled": config.enable_safety_checks
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "agent_loaded": tool_use_agent is not None,
+        "safety_checks_enabled": config.enable_safety_checks if config else False
+    }
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Parallel tool execution
+async def execute_tools_parallel(tools_and_args: List[Tuple[ProductionTool, Dict]]) -> List[ToolExecutionResult]:
+    """Execute multiple tools in parallel when safe"""
+    tasks = []
+
+    for tool, args in tools_and_args:
+        task = asyncio.create_task(
+            asyncio.to_thread(tool, **args)
+        )
+        tasks.append(task)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    processed_results = []
+    for result in results:
+        if isinstance(result, Exception):
+            processed_results.append(ToolExecutionResult(
+                tool_name="unknown",
+                args={},
+                return_value=None,
+                errors=str(result),
+                success=False
+            ))
+        else:
+            processed_results.append(result)
+
+    return processed_results
+
+# Compiled tool caching
+from functools import lru_cache
+
+class CompiledToolCache:
+    """Cache compiled tool functions for faster execution"""
+
+    def __init__(self, max_size: int = 1000):
+        self.max_size = max_size
+        self._cache = {}
+        self._usage_count = defaultdict(int)
+
+    @lru_cache(maxsize=1000)
+    def compile_tool_code(self, code_hash: str, code: str) -> Any:
+        """Compile tool code with caching"""
+        try:
+            compiled_code = compile(code, f'<tool_{code_hash}>', 'exec')
+            return compiled_code
+        except SyntaxError as e:
+            raise ValueError(f"Tool compilation failed: {e}")
+
+    def get_compiled_tool(self, code: str) -> Any:
+        """Get compiled tool function"""
+        code_hash = hashlib.md5(code.encode()).hexdigest()
+        self._usage_count[code_hash] += 1
+
+        return self.compile_tool_code(code_hash, code)
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Dynamic Tool Loading**: Safely execute and validate tool code from dataset
+2. **Timeout Management**: Implement proper timeouts for tool execution
+3. **Error Recovery**: Handle tool failures gracefully and continue reasoning
+4. **Function Signature Parsing**: Extract function metadata for agent reasoning
+
+### Production Solutions
+
+```python
+# Robust tool execution with retries
+import tenacity
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=10),
+    stop=tenacity.stop_after_attempt(3),
+    retry=tenacity.retry_if_exception_type((TimeoutError, ConnectionError))
+)
+def robust_tool_execution(tool: ProductionTool, args: Dict[str, Any]) -> ToolExecutionResult:
+    return tool(**args)
+
+# Memory monitoring for tool execution
+def memory_limited_tool_execution(tool: ProductionTool, args: Dict[str, Any], memory_limit_mb: int = 500) -> ToolExecutionResult:
+    """Execute tool with memory monitoring"""
+    import psutil
+    import signal
+
+    def memory_monitor():
+        process = psutil.Process()
+        memory_usage = process.memory_info().rss / 1024 / 1024
+        if memory_usage > memory_limit_mb:
+            raise MemoryError(f"Tool execution exceeded memory limit: {memory_usage:.1f}MB")
+
+    # Execute with monitoring
+    old_handler = signal.signal(signal.SIGALRM, lambda s, f: memory_monitor())
+    signal.alarm(1)  # Check every second
+
+    try:
+        return tool(**args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+# Tool sandboxing for security
+import subprocess
+import tempfile
+
+def sandboxed_tool_execution(code: str, args: Dict[str, Any], timeout: int = 30) -> ToolExecutionResult:
+    """Execute tool in isolated sandbox"""
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            # Write sandboxed execution script
+            sandbox_code = f"""
+import json
+import sys
+import signal
+
+def timeout_handler(signum, frame):
+    raise TimeoutError("Tool execution timed out")
+
+signal.signal(signal.SIGALRM, timeout_handler)
+signal.alarm({timeout})
+
+try:
+    {code}
+    # Execute function with args
+    args = {json.dumps(args)}
+    result = locals()[list(locals().keys())[-1]](**args)
+    print(json.dumps({{"success": True, "result": result}}))
+except Exception as e:
+    print(json.dumps({{"success": False, "error": str(e)}}))
+finally:
+    signal.alarm(0)
+"""
+            f.write(sandbox_code)
+            f.flush()
+
+            # Execute in subprocess
+            result = subprocess.run(
+                [sys.executable, f.name],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 5
+            )
+
+            # Parse result
+            output = json.loads(result.stdout)
+
+            return ToolExecutionResult(
+                tool_name="sandboxed",
+                args=args,
+                return_value=output.get("result"),
+                errors=output.get("error"),
+                success=output.get("success", False)
+            )
+
+    except Exception as e:
+        return ToolExecutionResult(
+            tool_name="sandboxed",
+            args=args,
+            return_value=None,
+            errors=str(e),
+            success=False
+        )
+    finally:
+        try:
+            os.unlink(f.name)
+        except:
+            pass
+```
+
+## Best Practices Summary
+
+### Tool Use Guidelines
+
+- Always validate tool code for security before execution
+- Implement proper timeouts and resource limits for tool execution
+- Use SIMBA optimization for significant performance improvements
+- Cache tool results to avoid redundant expensive operations
+
+### Production Guidelines
+
+- Implement proper sandboxing for dynamic code execution
+- Monitor resource usage during tool execution
+- Use circuit breakers for unreliable external tools
+- Log all tool executions for debugging and optimization
+- Implement proper error handling and recovery mechanisms
+
+## References
+
+- [Official Tool Use Tutorial](https://dspy.ai/tutorials/tool_use/)
+- [DSPy SIMBA Optimizer](https://dspy.ai/api/optimizers/SIMBA/)
+- [ToolHop Dataset](https://huggingface.co/datasets/bytedance-research/ToolHop)
+- [Python AST Security](https://docs.python.org/3/library/ast.html)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

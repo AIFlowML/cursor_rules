@@ -1,0 +1,899 @@
+---
+description: DSPY 3 Program of Thought Tutorial - Production code reasoning system from official DSPy 3.0.1 tutorial
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready Program of Thought (PoT) Systems using DSPy 3.0.1 based on official tutorials.
+
+## Program of Thought Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Math/Logic    │────│   Code Generation│────│   Python        │
+│   Question      │    │   (LLM)          │    │   Interpreter   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │                          │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Answer   │────│   Result         │────│   Code          │
+│  + Reasoning    │    │   Processing     │    │   Execution     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   Error          │
+                    │   Handling &     │
+                    │   Validation     │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Program of Thought (From Official Notebook)
+
+```python
+import dspy
+
+# Tutorial Python interpreter setup (exact from notebook)
+interpreter = dspy.PythonInterpreter()
+expr = "value = 2*5 + 4\nvalue"
+answer = interpreter.execute(expr)
+print(answer)  # Output: 14
+
+# Tutorial basic signature (exact)
+class BasicGenerateAnswer(dspy.Signature):
+    question = dspy.InputField()
+    answer = dspy.OutputField()
+
+# Tutorial PoT module (exact implementation)
+pot = dspy.ProgramOfThought(BasicGenerateAnswer)
+
+# Configure DSPy (from tutorial)
+llama31_70b = dspy.LM("openai/meta-llama/Meta-Llama-3-70b-Instruct", api_base="API_BASE", api_key="None")
+dspy.settings.configure(lm=llama31_70b)
+
+# Tutorial basic example (exact)
+problem = "2*5 + 4"
+result = pot(question=problem)
+print(result.answer)  # Output: '14'
+
+# Tutorial complex computation (exact from notebook)
+complex_problem = "Compute 12! / sum of prime numbers between 1 and 30."
+complex_result = pot(question=complex_problem)
+print(complex_result.answer)  # Output: '3713190.697674419'
+
+# Tutorial multi-hop search with PoT (exact implementation)
+def search_wikipedia(query: str):
+    results = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')(query, k=3)
+    return [x['text'] for x in results]
+
+class GenerateAnswer(dspy.Signature):
+    """Answer questions with short factoid answers."""
+    context = dspy.InputField(desc="may contain relevant facts")
+    question = dspy.InputField()
+    answer = dspy.OutputField(desc="often between 1 and 5 words")
+
+class GenerateSearchQuery(dspy.Signature):
+    """Write a simple search query that will help answer the non-numerical components of a complex question."""
+    context = dspy.InputField(desc="may contain relevant facts")
+    question = dspy.InputField()
+    query = dspy.OutputField()
+
+from dspy.dsp.utils import deduplicate
+
+class MultiHopSearchWithPoT(dspy.Module):
+    def __init__(self, num_hops):
+        self.num_hops = num_hops
+        self.generate_query = dspy.ChainOfThought(GenerateSearchQuery)
+        self.generate_answer = dspy.ProgramOfThought(GenerateAnswer, max_iters=3)
+
+    def forward(self, question):
+        context = []
+        for _ in range(self.num_hops):
+            query = self.generate_query(context=context, question=question).query
+            context = deduplicate(context + search_wikipedia(query))
+        prediction = self.generate_answer(context=context, question=question)
+        return dspy.Prediction(context=context, answer=prediction.answer)
+
+# Tutorial complex multi-hop example (exact)
+multi_hop_pot = MultiHopSearchWithPoT(num_hops=2)
+question = (
+    "What is the square of the total sum of the atomic number of the metal "
+    "that makes up the gift from France to the United States in the late "
+    "19th century and the sum of the number of digits in the first 10 prime numbers?"
+)
+result = multi_hop_pot(question=question)
+print(result.answer)  # Output: '2025'
+```
+
+### Production Program of Thought System
+
+```python
+import logging
+import mlflow
+import time
+import ast
+import sys
+import io
+import contextlib
+import re
+from typing import Dict, List, Optional, Any, Union, Tuple
+from pydantic import BaseModel, Field, validator
+from abc import ABC, abstractmethod
+from enum import Enum
+import json
+import traceback
+import subprocess
+import tempfile
+import os
+from collections import defaultdict
+import uuid
+
+# Production configuration
+class PoTConfig(BaseModel):
+    model_name: str = "openai/gpt-4o"
+    max_iterations: int = 5
+    timeout_seconds: int = 30
+    max_code_length: int = 2000
+    enable_code_validation: bool = True
+    allowed_imports: List[str] = Field(default=[
+        "math", "statistics", "itertools", "collections",
+        "numpy", "pandas", "datetime", "re", "json"
+    ])
+    restricted_functions: List[str] = Field(default=[
+        "exec", "eval", "open", "file", "__import__", "input", "raw_input"
+    ])
+    max_execution_time: float = 10.0
+    cache_results: bool = True
+    enable_step_by_step: bool = True
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+class ProblemType(str, Enum):
+    ARITHMETIC = "arithmetic"
+    ALGEBRA = "algebra"
+    GEOMETRY = "geometry"
+    STATISTICS = "statistics"
+    COMBINATORICS = "combinatorics"
+    LOGIC = "logic"
+    WORD_PROBLEM = "word_problem"
+    DATA_ANALYSIS = "data_analysis"
+
+class ExecutionResult(BaseModel):
+    success: bool
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    execution_time_ms: float = 0.0
+    generated_code: str = ""
+    variables: Dict[str, Any] = {}
+    warnings: List[str] = []
+
+class PoTResult(BaseModel):
+    question: str
+    problem_type: ProblemType
+    generated_code: str
+    execution_result: ExecutionResult
+    final_answer: str
+    step_by_step_reasoning: List[str]
+    processing_time_ms: float
+    model_version: str
+    validation_passed: bool
+    confidence_score: float
+
+# Enhanced Python interpreter with security
+class SecurePythonInterpreter:
+    def __init__(self, config: PoTConfig):
+        self.config = config
+        self.logger = logging.getLogger("SecurePythonInterpreter")
+        self.execution_stats = {
+            'total_executions': 0,
+            'successful_executions': 0,
+            'avg_execution_time': 0.0
+        }
+
+    def _validate_code(self, code: str) -> Tuple[bool, List[str]]:
+        """Validate code for security and safety"""
+        warnings = []
+
+        # Check code length
+        if len(code) > self.config.max_code_length:
+            return False, [f"Code too long: {len(code)} > {self.config.max_code_length}"]
+
+        # Check for restricted functions
+        for restricted in self.config.restricted_functions:
+            if restricted in code:
+                return False, [f"Restricted function found: {restricted}"]
+
+        # Parse AST to check imports
+        try:
+            tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name not in self.config.allowed_imports:
+                            return False, [f"Unauthorized import: {alias.name}"]
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module not in self.config.allowed_imports:
+                        return False, [f"Unauthorized import from: {node.module}"]
+        except SyntaxError as e:
+            return False, [f"Syntax error: {e}"]
+
+        return True, warnings
+
+    def _create_safe_globals(self) -> Dict[str, Any]:
+        """Create a safe global environment for code execution"""
+        safe_builtins = {
+            'abs': abs, 'all': all, 'any': any, 'bin': bin, 'bool': bool,
+            'chr': chr, 'dict': dict, 'dir': dir, 'divmod': divmod,
+            'enumerate': enumerate, 'filter': filter, 'float': float,
+            'format': format, 'frozenset': frozenset, 'hash': hash,
+            'hex': hex, 'int': int, 'isinstance': isinstance,
+            'issubclass': issubclass, 'iter': iter, 'len': len,
+            'list': list, 'map': map, 'max': max, 'min': min,
+            'oct': oct, 'ord': ord, 'pow': pow, 'range': range,
+            'reversed': reversed, 'round': round, 'set': set,
+            'slice': slice, 'sorted': sorted, 'str': str, 'sum': sum,
+            'tuple': tuple, 'type': type, 'zip': zip,
+        }
+
+        safe_globals = {
+            '__builtins__': safe_builtins,
+            '__name__': '__main__',
+        }
+
+        # Add allowed imports
+        for module_name in self.config.allowed_imports:
+            try:
+                if module_name == "math":
+                    import math
+                    safe_globals['math'] = math
+                elif module_name == "statistics":
+                    import statistics
+                    safe_globals['statistics'] = statistics
+                elif module_name == "itertools":
+                    import itertools
+                    safe_globals['itertools'] = itertools
+                elif module_name == "collections":
+                    import collections
+                    safe_globals['collections'] = collections
+                elif module_name == "datetime":
+                    import datetime
+                    safe_globals['datetime'] = datetime
+                elif module_name == "re":
+                    import re
+                    safe_globals['re'] = re
+                elif module_name == "json":
+                    import json
+                    safe_globals['json'] = json
+            except ImportError:
+                self.logger.warning(f"Could not import {module_name}")
+
+        return safe_globals
+
+    def execute(self, code: str) -> ExecutionResult:
+        """Execute code safely and return results"""
+        start_time = time.time()
+        self.execution_stats['total_executions'] += 1
+
+        try:
+            # Validate code if enabled
+            if self.config.enable_code_validation:
+                is_valid, warnings = self._validate_code(code)
+                if not is_valid:
+                    return ExecutionResult(
+                        success=False,
+                        error=f"Code validation failed: {warnings[0]}",
+                        execution_time_ms=(time.time() - start_time) * 1000,
+                        generated_code=code,
+                        warnings=warnings
+                    )
+
+            # Prepare execution environment
+            safe_globals = self._create_safe_globals()
+            local_vars = {}
+
+            # Capture stdout
+            old_stdout = sys.stdout
+            sys.stdout = captured_output = io.StringIO()
+
+            try:
+                # Execute code with timeout
+                exec(code, safe_globals, local_vars)
+
+                # Get the result
+                output = captured_output.getvalue().strip()
+
+                # Try to find the main result
+                result = None
+                if output:
+                    try:
+                        result = eval(output) if output.replace('.', '', 1).replace('-', '', 1).isdigit() else output
+                    except:
+                        result = output
+
+                # If no output, try to get the last expression value
+                if result is None:
+                    lines = code.strip().split('\n')
+                    for line in reversed(lines):
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            try:
+                                result = eval(line, safe_globals, local_vars)
+                                break
+                            except:
+                                continue
+
+                # If still no result, check local variables
+                if result is None and local_vars:
+                    # Look for common result variable names
+                    result_vars = ['result', 'answer', 'value', 'output']
+                    for var_name in result_vars:
+                        if var_name in local_vars:
+                            result = local_vars[var_name]
+                            break
+
+                    # If no common names, use the last assigned variable
+                    if result is None and local_vars:
+                        result = list(local_vars.values())[-1]
+
+                execution_time = (time.time() - start_time) * 1000
+                self.execution_stats['successful_executions'] += 1
+
+                # Update average execution time
+                total = self.execution_stats['total_executions']
+                current_avg = self.execution_stats['avg_execution_time']
+                self.execution_stats['avg_execution_time'] = (
+                    (current_avg * (total - 1) + execution_time) / total
+                )
+
+                return ExecutionResult(
+                    success=True,
+                    result=result,
+                    execution_time_ms=execution_time,
+                    generated_code=code,
+                    variables=dict(local_vars),
+                    warnings=warnings if 'warnings' in locals() else []
+                )
+
+            finally:
+                sys.stdout = old_stdout
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            error_msg = f"{type(e).__name__}: {str(e)}"
+
+            self.logger.error(f"Code execution failed: {error_msg}")
+
+            return ExecutionResult(
+                success=False,
+                error=error_msg,
+                execution_time_ms=execution_time,
+                generated_code=code,
+                warnings=warnings if 'warnings' in locals() else []
+            )
+
+# Production Program of Thought module
+class ProductionProgramOfThought(dspy.Module):
+    def __init__(self, config: PoTConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+        self.interpreter = SecurePythonInterpreter(config)
+
+        # Enhanced signature for code generation
+        class CodeGeneration(dspy.Signature):
+            f"""Generate Python code to solve the given mathematical or logical problem.
+            Write clean, well-commented code that computes the answer step by step.
+            Only use basic Python and math operations. Do not use external libraries unless specified."""
+
+            question: str = dspy.InputField(desc="The problem to solve")
+            problem_type: str = dspy.InputField(desc="Type of problem (arithmetic, algebra, etc.)")
+
+            reasoning: str = dspy.OutputField(desc="Step-by-step approach to solve the problem")
+            generated_code: str = dspy.OutputField(desc="Python code that solves the problem")
+            explanation: str = dspy.OutputField(desc="Explanation of the code and solution method")
+
+        self.code_generator = dspy.ChainOfThought(CodeGeneration)
+
+        # Answer extraction signature
+        class AnswerExtraction(dspy.Signature):
+            """Extract the final numerical or textual answer from code execution results."""
+
+            question: str = dspy.InputField()
+            code: str = dspy.InputField()
+            execution_result: str = dspy.InputField()
+
+            final_answer: str = dspy.OutputField(desc="The final answer to the question")
+
+        self.answer_extractor = dspy.Predict(AnswerExtraction)
+
+        # Performance tracking
+        self.pot_stats = {
+            'total_problems': 0,
+            'successful_solutions': 0,
+            'code_validation_failures': 0,
+            'execution_failures': 0,
+            'avg_processing_time': 0.0,
+            'problem_type_counts': defaultdict(int)
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"ProgramOfThought.{self.config.environment}")
+        return logger
+
+    def _classify_problem(self, question: str) -> ProblemType:
+        """Classify the type of mathematical problem"""
+        question_lower = question.lower()
+
+        if any(word in question_lower for word in ['factorial', 'prime', 'fibonacci', 'sum', 'product']):
+            return ProblemType.ARITHMETIC
+        elif any(word in question_lower for word in ['equation', 'solve', 'variable', 'x', 'y']):
+            return ProblemType.ALGEBRA
+        elif any(word in question_lower for word in ['area', 'perimeter', 'volume', 'angle', 'triangle']):
+            return ProblemType.GEOMETRY
+        elif any(word in question_lower for word in ['mean', 'median', 'standard deviation', 'probability']):
+            return ProblemType.STATISTICS
+        elif any(word in question_lower for word in ['combination', 'permutation', 'choose']):
+            return ProblemType.COMBINATORICS
+        elif any(word in question_lower for word in ['data', 'dataset', 'analyze', 'calculate']):
+            return ProblemType.DATA_ANALYSIS
+        elif any(word in question_lower for word in ['if', 'then', 'logical', 'true', 'false']):
+            return ProblemType.LOGIC
+        else:
+            return ProblemType.WORD_PROBLEM
+
+    def _extract_step_by_step_reasoning(self, reasoning: str) -> List[str]:
+        """Extract step-by-step reasoning from the generated explanation"""
+        steps = []
+
+        # Split by common step indicators
+        step_patterns = [
+            r'step \d+:?',
+            r'\d+\.',
+            r'first,?',
+            r'second,?',
+            r'third,?',
+            r'then,?',
+            r'next,?',
+            r'finally,?'
+        ]
+
+        reasoning_lines = reasoning.split('\n')
+        current_step = ""
+
+        for line in reasoning_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Check if this line starts a new step
+            is_new_step = any(re.match(pattern, line.lower()) for pattern in step_patterns)
+
+            if is_new_step and current_step:
+                steps.append(current_step.strip())
+                current_step = line
+            else:
+                current_step += " " + line if current_step else line
+
+        # Add the last step
+        if current_step:
+            steps.append(current_step.strip())
+
+        # If no clear steps found, split by sentences
+        if not steps:
+            steps = [s.strip() for s in reasoning.split('.') if s.strip()]
+
+        return steps[:10]  # Limit to 10 steps
+
+    def _validate_answer(self, question: str, answer: str, execution_result: ExecutionResult) -> Tuple[bool, float]:
+        """Validate the answer makes sense for the question"""
+        try:
+            # Basic validation checks
+            if not answer or answer.lower() in ['none', 'null', 'error']:
+                return False, 0.1
+
+            # Check if it's a reasonable numerical answer
+            try:
+                num_answer = float(answer.replace(',', ''))
+
+                # Check for reasonable ranges
+                if abs(num_answer) > 1e15:  # Very large numbers might be errors
+                    return False, 0.3
+
+                if execution_result.success and execution_result.execution_time_ms < 100:
+                    return True, 0.9  # Fast execution usually means simple, correct code
+                elif execution_result.success:
+                    return True, 0.7  # Successful execution
+                else:
+                    return False, 0.2
+
+            except ValueError:
+                # Non-numerical answer
+                if len(answer) > 200:  # Very long answers might be errors
+                    return False, 0.3
+                return True, 0.6  # Text answers are harder to validate
+
+        except Exception as e:
+            self.logger.warning(f"Answer validation failed: {e}")
+            return False, 0.1
+
+    def forward(self, question: str, **kwargs) -> PoTResult:
+        start_time = time.time()
+        session_id = str(uuid.uuid4())
+
+        try:
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("question", question[:200])
+                mlflow.log_param("session_id", session_id)
+
+                # Classify problem type
+                problem_type = self._classify_problem(question)
+                mlflow.log_param("problem_type", problem_type.value)
+
+                self.logger.info(f"Processing {problem_type.value} problem: {question[:100]}...")
+
+                # Generate code
+                code_result = self.code_generator(
+                    question=question,
+                    problem_type=problem_type.value
+                )
+
+                # Execute generated code
+                execution_result = self.interpreter.execute(code_result.generated_code)
+
+                # Extract final answer
+                answer_result = self.answer_extractor(
+                    question=question,
+                    code=code_result.generated_code,
+                    execution_result=str(execution_result.result) if execution_result.success else execution_result.error
+                )
+
+                # Process results
+                final_answer = answer_result.final_answer if execution_result.success else "Error in computation"
+                step_by_step = self._extract_step_by_step_reasoning(code_result.reasoning)
+
+                # Validate answer
+                validation_passed, confidence_score = self._validate_answer(
+                    question, final_answer, execution_result
+                )
+
+                # Calculate processing time
+                processing_time = (time.time() - start_time) * 1000
+
+                # Update statistics
+                self._update_stats(problem_type, execution_result.success, processing_time)
+
+                # Log metrics
+                mlflow.log_metrics({
+                    'processing_time_ms': processing_time,
+                    'execution_time_ms': execution_result.execution_time_ms,
+                    'code_success': int(execution_result.success),
+                    'validation_passed': int(validation_passed),
+                    'confidence_score': confidence_score,
+                    'code_length': len(code_result.generated_code)
+                })
+
+                pot_result = PoTResult(
+                    question=question,
+                    problem_type=problem_type,
+                    generated_code=code_result.generated_code,
+                    execution_result=execution_result,
+                    final_answer=final_answer,
+                    step_by_step_reasoning=step_by_step,
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    validation_passed=validation_passed,
+                    confidence_score=confidence_score
+                )
+
+                self.logger.info(
+                    f"PoT completed: {problem_type.value} problem solved in {processing_time:.2f}ms "
+                    f"(confidence: {confidence_score:.2f})"
+                )
+
+                return dspy.Prediction(
+                    answer=final_answer,
+                    pot_result=pot_result
+                )
+
+        except Exception as e:
+            self.logger.error(f"PoT processing failed: {e}")
+            processing_time = (time.time() - start_time) * 1000
+
+            return dspy.Prediction(
+                answer="Error: Unable to solve problem",
+                pot_result=PoTResult(
+                    question=question,
+                    problem_type=ProblemType.WORD_PROBLEM,
+                    generated_code="# Error occurred",
+                    execution_result=ExecutionResult(
+                        success=False,
+                        error=str(e),
+                        execution_time_ms=0.0,
+                        generated_code=""
+                    ),
+                    final_answer="Error",
+                    step_by_step_reasoning=[f"Error: {str(e)}"],
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    validation_passed=False,
+                    confidence_score=0.0
+                )
+            )
+
+    def _update_stats(self, problem_type: ProblemType, success: bool, processing_time: float):
+        """Update performance statistics"""
+        self.pot_stats['total_problems'] += 1
+        if success:
+            self.pot_stats['successful_solutions'] += 1
+
+        self.pot_stats['problem_type_counts'][problem_type.value] += 1
+
+        # Update average processing time
+        total = self.pot_stats['total_problems']
+        current_avg = self.pot_stats['avg_processing_time']
+        self.pot_stats['avg_processing_time'] = (
+            (current_avg * (total - 1) + processing_time) / total
+        )
+
+    def get_performance_stats(self) -> Dict:
+        """Get comprehensive performance statistics"""
+        stats = dict(self.pot_stats)
+
+        if stats['total_problems'] > 0:
+            stats['success_rate'] = stats['successful_solutions'] / stats['total_problems']
+        else:
+            stats['success_rate'] = 0.0
+
+        stats['interpreter_stats'] = dict(self.interpreter.execution_stats)
+
+        return stats
+```
+
+## Performance Results (From Tutorial)
+
+- **Simple Arithmetic**: Immediate execution (14 for "2\*5 + 4")
+- **Complex Computation**: Accurate results (3713190.697674419 for factorial/prime sum)
+- **Multi-hop with PoT**: Contextual reasoning + computation (2025 for complex word problem)
+- **vs Chain-of-Thought**: More accurate for mathematical problems requiring exact computation
+
+## Production Enhancements
+
+### FastAPI Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="Production Program of Thought API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class PoTRequest(BaseModel):
+    question: str = Field(..., min_length=10, max_length=2000)
+    problem_type: Optional[ProblemType] = None
+    enable_validation: bool = True
+    max_execution_time: Optional[float] = Field(None, ge=1.0, le=30.0)
+
+# Global PoT system
+pot_system = None
+
+@app.on_event("startup")
+async def startup_event():
+    global pot_system
+
+    config = PoTConfig()
+    pot_system = ProductionProgramOfThought(config)
+
+@app.post("/solve", response_model=PoTResult)
+async def solve_problem(
+    request: PoTRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        # Override configuration if provided
+        if request.max_execution_time:
+            pot_system.interpreter.config.max_execution_time = request.max_execution_time
+
+        result = pot_system(question=request.question)
+
+        # Log usage metrics in background
+        background_tasks.add_task(
+            log_pot_metrics,
+            request,
+            result.pot_result
+        )
+
+        return result.pot_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/solve/batch")
+async def solve_batch(questions: List[str]) -> List[PoTResult]:
+    if len(questions) > 20:
+        raise HTTPException(status_code=400, detail="Batch size cannot exceed 20")
+
+    try:
+        results = []
+        for question in questions:
+            result = pot_system(question=question)
+            results.append(result.pot_result)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stats")
+async def get_stats():
+    return pot_system.get_performance_stats()
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "pot_system_loaded": pot_system is not None,
+        "interpreter_ready": pot_system.interpreter is not None if pot_system else False
+    }
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Parallel processing for batch problems
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+class OptimizedPoT(ProductionProgramOfThought):
+    def __init__(self, config: PoTConfig):
+        super().__init__(config)
+        self.executor = ThreadPoolExecutor(max_workers=4)
+
+    async def batch_solve(self, questions: List[str]) -> List[PoTResult]:
+        """Solve multiple problems in parallel"""
+        loop = asyncio.get_event_loop()
+
+        tasks = [
+            loop.run_in_executor(self.executor, self.forward, question)
+            for question in questions
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        pot_results = []
+        for result in results:
+            if isinstance(result, Exception):
+                self.logger.error(f"Batch processing error: {result}")
+                pot_results.append(None)
+            else:
+                pot_results.append(result.pot_result)
+
+        return pot_results
+
+# Code compilation optimization
+import compile
+
+class CompiledPythonInterpreter(SecurePythonInterpreter):
+    def __init__(self, config: PoTConfig):
+        super().__init__(config)
+        self.compiled_cache = {}
+
+    def execute(self, code: str) -> ExecutionResult:
+        """Execute code with compilation caching"""
+        code_hash = hash(code)
+
+        if code_hash in self.compiled_cache:
+            compiled_code = self.compiled_cache[code_hash]
+        else:
+            try:
+                compiled_code = compile(code, '<string>', 'exec')
+                self.compiled_cache[code_hash] = compiled_code
+            except SyntaxError as e:
+                return ExecutionResult(
+                    success=False,
+                    error=f"Syntax error: {e}",
+                    execution_time_ms=0.0,
+                    generated_code=code
+                )
+
+        # Execute compiled code (rest of execution logic...)
+        return super().execute(code)
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Code Generation Quality**: Use clear prompts and examples for better code generation
+2. **Execution Security**: Always validate and sandbox code execution
+3. **Result Extraction**: Handle various output formats and edge cases
+4. **Timeout Management**: Set appropriate timeouts for complex computations
+
+### Production Solutions
+
+```python
+# Robust error handling with retries
+import tenacity
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
+    stop=tenacity.stop_after_attempt(3),
+    retry=tenacity.retry_if_exception_type(Exception)
+)
+def robust_code_generation(pot_system, question):
+    return pot_system.code_generator(question=question, problem_type="arithmetic")
+
+# Memory monitoring for code execution
+import psutil
+import signal
+
+def memory_limited_execution(code: str, memory_limit_mb: int = 100):
+    """Execute code with memory limit"""
+    process = psutil.Process()
+    initial_memory = process.memory_info().rss / 1024 / 1024
+
+    def check_memory():
+        current_memory = process.memory_info().rss / 1024 / 1024
+        if current_memory - initial_memory > memory_limit_mb:
+            raise MemoryError(f"Memory limit exceeded: {current_memory:.2f}MB")
+
+    # Set up memory monitoring
+    old_trace = sys.settrace
+    sys.settrace(lambda *args: check_memory())
+
+    try:
+        result = interpreter.execute(code)
+        return result
+    finally:
+        sys.settrace(old_trace)
+
+# Input sanitization
+def sanitize_question(question: str) -> str:
+    """Sanitize user input to prevent injection attacks"""
+    # Remove potential code injection patterns
+    dangerous_patterns = [
+        r'import\s+\w+',
+        r'exec\s*\(',
+        r'eval\s*\(',
+        r'__.*__',
+        r'file\s*\(',
+        r'open\s*\('
+    ]
+
+    cleaned_question = question
+    for pattern in dangerous_patterns:
+        cleaned_question = re.sub(pattern, '[FILTERED]', cleaned_question, flags=re.IGNORECASE)
+
+    return cleaned_question[:1000]  # Limit length
+```
+
+## Best Practices Summary
+
+### Program of Thought Guidelines
+
+- Always validate and sandbox code execution for security
+- Use clear, step-by-step code generation prompts
+- Implement proper timeout and resource limits
+- Validate answers for reasonableness and accuracy
+
+### Production Guidelines
+
+- Monitor code execution performance and resource usage
+- Implement proper error handling and recovery mechanisms
+- Use compilation caching for frequently executed code patterns
+- Log all code generation and execution for debugging and improvement
+- Set appropriate security restrictions for production environments
+
+## References
+
+- [Official Program of Thought Tutorial](https://dspy.ai/tutorials/program_of_thought/)
+- [DSPy ProgramOfThought Module](https://dspy.ai/api/modules/ProgramOfThought/)
+- [Python AST Documentation](https://docs.python.org/3/library/ast.html)
+- [Code Security Best Practices](https://owasp.org/www-project-code-review-guide/)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

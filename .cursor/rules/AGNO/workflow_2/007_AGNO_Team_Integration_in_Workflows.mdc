@@ -1,0 +1,638 @@
+---
+description: "AGNO Team integration patterns, coordination modes, and team-based workflow execution"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 Team integration patterns. You create powerful multi-agent workflows that leverage teams for complex coordination, parallel execution, and specialized task handling.
+
+## Team Integration Workflow Patterns
+
+```
+┌─────────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
+│    Team Definition  │───▶│ Team Coordination│───▶│  Workflow Execution │
+│                     │    │                  │    │                     │
+│ • Agent Members     │    │ • Sequential     │    │ • Team in Steps     │
+│ • Team Mode         │    │ • Coordinate     │    │ • Team as Executor  │
+│ • Instructions      │    │ • Debate         │    │ • Mixed Execution   │
+│ • Context Sharing   │    │ • Custom Logic   │    │ • Result Handling   │
+└─────────────────────┘    └──────────────────┘    └─────────────────────┘
+```
+
+## Instant Team Patterns
+
+### Quick Start - Basic Research Team
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.workflow.v2.step import Step
+from agno.workflow.v2.workflow import Workflow
+
+# Define specialized agents
+hackernews_agent = Agent(
+    name="Hackernews Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools()],
+    role="Extract key insights and content from Hackernews posts",
+)
+
+web_agent = Agent(
+    name="Web Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Search the web for the latest news and trends",
+)
+
+# Create coordinated research team
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",  # Sequential execution with context sharing
+    members=[hackernews_agent, web_agent],
+    instructions="Research tech topics comprehensively from multiple sources",
+)
+
+# Use team in workflow step
+research_step = Step(
+    name="Research Phase",
+    team=research_team,
+    description="Comprehensive multi-source research"
+)
+
+workflow = Workflow(
+    name="Research Workflow",
+    description="Team-based research workflow",
+    steps=[research_step]
+)
+
+workflow.run("AI trends in 2024")
+```
+
+### Production Ready - Multi-Team Workflow
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import List
+import logging
+
+# Configure logging for team coordination
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Define specialized research agents
+market_researcher = Agent(
+    name="Market Research Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Analyze market trends and competitive landscape",
+    instructions=[
+        "Focus on market data, statistics, and competitive analysis",
+        "Provide quantitative insights where possible",
+        "Identify market opportunities and threats"
+    ]
+)
+
+tech_researcher = Agent(
+    name="Technical Research Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools()],
+    role="Research technical developments and innovations",
+    instructions=[
+        "Focus on technical innovations and emerging technologies",
+        "Analyze developer discussions and technical trends",
+        "Identify adoption patterns and technical challenges"
+    ]
+)
+
+industry_analyst = Agent(
+    name="Industry Research Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Analyze industry trends and business implications",
+    instructions=[
+        "Focus on business impact and industry transformation",
+        "Analyze funding, acquisitions, and strategic moves",
+        "Identify business opportunities and disruption patterns"
+    ]
+)
+
+# Define content creation agents
+content_strategist = Agent(
+    name="Content Strategist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Develop comprehensive content strategies",
+    instructions=[
+        "Create multi-channel content strategies",
+        "Define content calendar and distribution plans",
+        "Optimize for engagement and reach"
+    ]
+)
+
+copywriter = Agent(
+    name="Copywriter",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Create compelling marketing copy",
+    instructions=[
+        "Write engaging headlines and copy",
+        "Adapt tone for different channels",
+        "Focus on conversion and engagement"
+    ]
+)
+
+# Create specialized teams with different coordination modes
+research_team = Team(
+    name="Research Intelligence Team",
+    mode="coordinate",  # Sequential with full context sharing
+    members=[market_researcher, tech_researcher, industry_analyst],
+    instructions="Conduct comprehensive research across market, technical, and industry dimensions",
+    show_tool_calls=True
+)
+
+content_team = Team(
+    name="Content Creation Team",
+    mode="sequential",  # Sequential execution
+    members=[content_strategist, copywriter],
+    instructions="Create comprehensive content strategy and copy based on research insights"
+)
+
+def enhanced_research_function(step_input: StepInput) -> StepOutput:
+    """Enhanced research function with team coordination"""
+    try:
+        logger.info(f"Starting enhanced research for: {step_input.message}")
+
+        # Execute research team with enhanced prompt
+        research_prompt = f"""
+        COMPREHENSIVE RESEARCH REQUEST:
+
+        Topic: {step_input.message}
+
+        Research Scope:
+        1. Market Analysis - Current market size, growth trends, key players
+        2. Technical Analysis - Core technologies, innovations, adoption barriers
+        3. Industry Analysis - Business impact, disruption potential, strategic implications
+
+        Deliverable: Structured research report with actionable insights
+        """
+
+        research_response = research_team.run(research_prompt)
+
+        # Add metadata about team coordination
+        enhanced_output = f"""
+        # Enhanced Research Results
+        **Research Team Coordination**: {len(research_team.members)} specialized agents
+        **Coordination Mode**: {research_team.mode}
+
+        ## Research Findings
+        {research_response.content}
+
+        ## Team Performance Metrics
+        - Agents Coordinated: {len(research_team.members)}
+        - Research Dimensions: Market, Technical, Industry
+        - Context Sharing: Full cross-agent awareness
+        """
+
+        return StepOutput(
+            content=enhanced_output,
+            response=research_response,
+            metadata={"team_size": len(research_team.members), "coordination_mode": research_team.mode}
+        )
+
+    except Exception as e:
+        logger.error(f"Enhanced research failed: {e}")
+        return StepOutput(
+            content=f"Enhanced research failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+def content_strategy_function(step_input: StepInput) -> StepOutput:
+    """Content strategy function with team-based content creation"""
+    try:
+        logger.info("Starting team-based content strategy creation")
+
+        research_content = step_input.previous_step_content or "No research available"
+
+        strategy_prompt = f"""
+        CONTENT STRATEGY DEVELOPMENT:
+
+        Research Base:
+        {research_content[:1000]}...
+
+        Strategy Requirements:
+        1. Multi-channel content strategy (social, blog, email, video)
+        2. Content calendar for 4 weeks
+        3. Engagement optimization tactics
+        4. Distribution and amplification strategy
+
+        Deliverable: Comprehensive content strategy with implementation plan
+        """
+
+        strategy_response = content_team.run(strategy_prompt)
+
+        enhanced_strategy = f"""
+        # Team-Based Content Strategy
+        **Content Team**: {len(content_team.members)} specialized agents
+        **Strategy Mode**: {content_team.mode}
+
+        ## Content Strategy
+        {strategy_response.content}
+
+        ## Team Coordination Results
+        - Strategy Development: {content_team.members[0].name}
+        - Copy Creation: {content_team.members[1].name}
+        - Sequential Processing: Optimized for quality
+        """
+
+        return StepOutput(
+            content=enhanced_strategy,
+            response=strategy_response,
+            metadata={"content_team_size": len(content_team.members)}
+        )
+
+    except Exception as e:
+        logger.error(f"Content strategy creation failed: {e}")
+        return StepOutput(
+            content=f"Content strategy failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+# Define workflow steps with different team integration patterns
+research_step = Step(
+    name="Enhanced Research",
+    executor=enhanced_research_function,
+    description="Multi-agent research with specialized coordination"
+)
+
+content_step = Step(
+    name="Content Strategy",
+    executor=content_strategy_function,
+    description="Team-based content strategy development"
+)
+
+# Create production workflow with team integration
+team_workflow = Workflow(
+    name="Multi-Team Content Pipeline",
+    description="Advanced team-based content creation workflow",
+    storage=SqliteStorage(
+        table_name="team_workflows",
+        db_file="team_workflow.db",
+        mode="workflow_v2"
+    ),
+    steps=[research_step, content_step]
+)
+
+# Execute with comprehensive error handling
+if __name__ == "__main__":
+    try:
+        result = team_workflow.run(
+            message="AI-powered customer service automation trends 2024",
+            stream=False
+        )
+        print("Team workflow completed successfully")
+        logger.info(f"Workflow result: {result}")
+    except Exception as e:
+        logger.error(f"Workflow execution failed: {e}")
+        print(f"Workflow failed: {e}")
+```
+
+## Advanced Team Coordination Patterns
+
+### Team Mode Configurations
+
+```python
+# Sequential Mode - Ordered execution
+research_team = Team(
+    name="Sequential Research Team",
+    mode="sequential",  # Agents execute in order
+    members=[agent1, agent2, agent3],
+    instructions="Each agent builds on previous results"
+)
+
+# Coordinate Mode - Context sharing
+analysis_team = Team(
+    name="Coordinated Analysis Team",
+    mode="coordinate",  # All agents see all context
+    members=[analyst1, analyst2, analyst3],
+    instructions="Collaborate with full context awareness"
+)
+
+# Debate Mode - Iterative refinement
+review_team = Team(
+    name="Debate Review Team",
+    mode="debate",  # Agents debate and refine
+    members=[reviewer1, reviewer2, reviewer3],
+    instructions="Debate and refine until consensus"
+)
+```
+
+### Custom Team Coordination Logic
+
+```python
+def custom_team_coordinator(step_input: StepInput) -> StepOutput:
+    """Custom team coordination with advanced logic"""
+
+    # Phase 1: Parallel research
+    research_tasks = [
+        ("market_analysis", market_team),
+        ("tech_analysis", tech_team),
+        ("competitive_analysis", competitive_team)
+    ]
+
+    research_results = {}
+    for task_name, team in research_tasks:
+        try:
+            result = team.run(f"Analyze {task_name} for: {step_input.message}")
+            research_results[task_name] = result.content
+        except Exception as e:
+            research_results[task_name] = f"Failed: {e}"
+
+    # Phase 2: Synthesis team with all results
+    synthesis_prompt = f"""
+    SYNTHESIS REQUEST:
+
+    Market Analysis: {research_results.get('market_analysis', 'N/A')}
+    Tech Analysis: {research_results.get('tech_analysis', 'N/A')}
+    Competitive Analysis: {research_results.get('competitive_analysis', 'N/A')}
+
+    Create unified strategic analysis.
+    """
+
+    synthesis_result = synthesis_team.run(synthesis_prompt)
+
+    return StepOutput(
+        content=synthesis_result.content,
+        metadata={"research_phases": 2, "teams_coordinated": len(research_tasks) + 1}
+    )
+```
+
+### Team Result Aggregation
+
+```python
+def aggregate_team_results(team_results: List[str]) -> str:
+    """Intelligent aggregation of team results"""
+
+    aggregation_prompt = f"""
+    INTELLIGENT RESULT AGGREGATION:
+
+    Team Results to Synthesize:
+    {''.join([f"Result {i+1}: {result}\n\n" for i, result in enumerate(team_results)])}
+
+    Create a unified, coherent synthesis that:
+    1. Eliminates redundancy
+    2. Highlights key insights
+    3. Identifies patterns and themes
+    4. Provides actionable recommendations
+    """
+
+    synthesis_agent = Agent(
+        name="Synthesis Agent",
+        model=OpenAIChat(id="gpt-4o"),
+        role="Synthesize and aggregate team results"
+    )
+
+    return synthesis_agent.run(aggregation_prompt).content
+```
+
+## Team Performance Optimization
+
+### Team Member Selection Strategies
+
+```python
+def create_optimal_research_team(topic: str, complexity: str = "medium") -> Team:
+    """Create optimally configured team based on task requirements"""
+
+    if complexity == "high":
+        # High complexity - more specialized agents
+        members = [
+            create_specialist_agent("domain_expert", topic),
+            create_specialist_agent("data_analyst", topic),
+            create_specialist_agent("strategic_analyst", topic),
+            create_specialist_agent("technical_analyst", topic)
+        ]
+        mode = "coordinate"  # Full context sharing for complex tasks
+
+    elif complexity == "medium":
+        # Medium complexity - balanced team
+        members = [
+            create_general_agent("researcher", topic),
+            create_general_agent("analyst", topic),
+            create_general_agent("synthesizer", topic)
+        ]
+        mode = "sequential"
+
+    else:  # low complexity
+        # Low complexity - minimal team
+        members = [
+            create_general_agent("researcher", topic),
+            create_general_agent("writer", topic)
+        ]
+        mode = "sequential"
+
+    return Team(
+        name=f"Optimized {complexity.title()} Team",
+        mode=mode,
+        members=members,
+        instructions=f"Execute {complexity} complexity research for {topic}"
+    )
+```
+
+### Team Monitoring and Metrics
+
+```python
+class TeamWorkflowMonitor:
+    """Monitor team performance in workflows"""
+
+    def __init__(self):
+        self.team_metrics = {}
+
+    def monitor_team_step(self, team: Team, step_input: StepInput) -> StepOutput:
+        """Monitor team execution with performance metrics"""
+        start_time = time.time()
+
+        try:
+            result = team.run(step_input.message)
+            execution_time = time.time() - start_time
+
+            # Track team performance
+            team_name = team.name
+            if team_name not in self.team_metrics:
+                self.team_metrics[team_name] = {
+                    "executions": 0,
+                    "total_time": 0,
+                    "success_rate": 0,
+                    "avg_response_length": 0
+                }
+
+            metrics = self.team_metrics[team_name]
+            metrics["executions"] += 1
+            metrics["total_time"] += execution_time
+            metrics["success_rate"] = metrics.get("successes", 0) / metrics["executions"]
+            metrics["avg_response_length"] = (
+                metrics.get("total_response_length", 0) + len(result.content)
+            ) / metrics["executions"]
+
+            return StepOutput(
+                content=result.content,
+                response=result,
+                metadata={
+                    "execution_time": execution_time,
+                    "team_size": len(team.members),
+                    "coordination_mode": team.mode
+                }
+            )
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            return StepOutput(
+                content=f"Team execution failed: {e}",
+                success=False,
+                metadata={"execution_time": execution_time, "error": str(e)}
+            )
+
+    def get_team_performance_report(self) -> str:
+        """Generate team performance report"""
+        if not self.team_metrics:
+            return "No team metrics available"
+
+        report = "# Team Performance Report\n\n"
+        for team_name, metrics in self.team_metrics.items():
+            report += f"## {team_name}\n"
+            report += f"- Executions: {metrics['executions']}\n"
+            report += f"- Avg Execution Time: {metrics['total_time'] / metrics['executions']:.2f}s\n"
+            report += f"- Success Rate: {metrics['success_rate']:.2%}\n"
+            report += f"- Avg Response Length: {metrics['avg_response_length']:.0f} chars\n\n"
+
+        return report
+```
+
+## Speed Tips
+
+### Team Optimization Strategies
+
+- **Right-size teams**: Use 2-3 agents for most tasks, 4+ only for complex analysis
+- **Mode selection**: Sequential for linear tasks, coordinate for complex synthesis
+- **Agent specialization**: Define clear, distinct roles to minimize overlap
+- **Context management**: Use coordinate mode sparingly due to higher token usage
+- **Parallel teams**: Execute independent teams in parallel using custom functions
+
+### Common Team Patterns
+
+```python
+# Pattern 1: Research + Analysis Team
+research_analysis_team = Team(
+    name="Research Analysis",
+    mode="sequential",
+    members=[researcher, analyst],
+    instructions="Research then analyze findings"
+)
+
+# Pattern 2: Multi-perspective Analysis
+perspective_team = Team(
+    name="Multi-perspective Analysis",
+    mode="coordinate",
+    members=[business_analyst, technical_analyst, user_analyst],
+    instructions="Analyze from multiple perspectives simultaneously"
+)
+
+# Pattern 3: Review and Refinement
+review_team = Team(
+    name="Review Team",
+    mode="debate",
+    members=[reviewer1, reviewer2, editor],
+    instructions="Iteratively review and refine content"
+)
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Team Configuration Issues
+
+```python
+# ❌ WRONG - Too many agents without clear roles
+oversized_team = Team(
+    name="Big Team",
+    members=[agent1, agent2, agent3, agent4, agent5, agent6],  # Too many!
+    instructions="Do everything"  # Vague instructions
+)
+
+# ✅ CORRECT - Right-sized with clear roles
+efficient_team = Team(
+    name="Efficient Team",
+    members=[researcher, analyzer, synthesizer],  # 3 agents with distinct roles
+    instructions="Research, analyze, and synthesize findings sequentially"
+)
+
+# ❌ WRONG - Wrong coordination mode
+complex_team = Team(
+    name="Simple Task Team",
+    mode="coordinate",  # Overkill for simple tasks
+    members=[agent1, agent2],
+    instructions="Simple sequential task"
+)
+
+# ✅ CORRECT - Appropriate coordination mode
+simple_team = Team(
+    name="Simple Task Team",
+    mode="sequential",  # Appropriate for linear tasks
+    members=[agent1, agent2],
+    instructions="Execute simple sequential workflow"
+)
+```
+
+### Team Integration Anti-patterns
+
+```python
+# ❌ WRONG - No error handling in team functions
+def bad_team_function(step_input: StepInput) -> StepOutput:
+    result = team.run(step_input.message)  # No try/catch!
+    return StepOutput(content=result.content)
+
+# ✅ CORRECT - Proper error handling
+def good_team_function(step_input: StepInput) -> StepOutput:
+    try:
+        result = team.run(step_input.message)
+        return StepOutput(
+            content=result.content,
+            response=result,
+            metadata={"team_size": len(team.members)}
+        )
+    except Exception as e:
+        return StepOutput(
+            content=f"Team execution failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+# ❌ WRONG - Team context overload
+def context_heavy_function(step_input: StepInput) -> StepOutput:
+    massive_prompt = step_input.previous_step_content * 10  # Too much context!
+    return team.run(massive_prompt)
+
+# ✅ CORRECT - Context management
+def context_managed_function(step_input: StepInput) -> StepOutput:
+    # Summarize or truncate context appropriately
+    context = step_input.previous_step_content[:1000] if step_input.previous_step_content else ""
+    focused_prompt = f"Key context: {context}\n\nTask: {step_input.message}"
+    return team.run(focused_prompt)
+```
+
+## Best Practices Summary
+
+- **Team Size**: Use 2-3 agents for most workflows, 4+ only for complex multi-dimensional analysis
+- **Coordination Modes**: Sequential for linear tasks, coordinate for synthesis, debate for refinement
+- **Agent Specialization**: Define distinct, non-overlapping roles for each team member
+- **Error Handling**: Always wrap team execution in try/catch blocks with proper fallbacks
+- **Context Management**: Limit context size and focus on relevant information for team execution
+- **Performance Monitoring**: Track team execution time, success rates, and result quality
+- **Team Reusability**: Design teams as reusable components across multiple workflows
+- **Mixed Execution**: Combine team steps with individual agent steps for optimal workflow design

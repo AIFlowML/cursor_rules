@@ -1,0 +1,720 @@
+---
+description: Production Architecture - Enterprise-grade DSPy application architecture patterns for scalable production deployment
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 production architecture for enterprise deployment.
+
+## Production Architecture Flow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Load Balancer │    │   API Gateway   │    │   Auth Service  │
+│   (nginx/ALB)   │ => │  (Kong/Envoy)   │ => │  (OAuth/JWT)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                      DSPy Application Layer                     │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   FastAPI App   │   Async Queue   │     MLflow Serving          │
+│   + dspy.asyncify│   (Celery/RQ)   │     (Model Registry)        │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│   LM Providers  │   Vector DBs    │     Caching Layer           │
+│   (OpenAI/etc)  │   (Pinecone)    │     (Redis/Memcached)       │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│              Observability & Monitoring Stack                  │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   MLflow UI     │   Prometheus    │     Grafana Dashboards      │
+│   (Experiments) │   (Metrics)     │     (Visualization)         │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Production Patterns
+
+### Quick Start
+
+```python
+# production_app.py - Minimal production setup
+import dspy
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import asyncio
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="DSPy Production API",
+    description="Enterprise DSPy application",
+    version="1.0.0"
+)
+
+class QueryRequest(BaseModel):
+    question: str
+    context: str = ""
+
+# Configure DSPy with production settings
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(
+    lm=lm,
+    async_max_workers=8,  # Production worker pool
+    experimental=True     # Enable latest features
+)
+
+# Create and asyncify your DSPy program
+program = dspy.ChainOfThought("question -> answer")
+async_program = dspy.asyncify(program)
+
+@app.post("/predict")
+async def predict(request: QueryRequest):
+    try:
+        result = await async_program(question=request.question)
+        logger.info(f"Processed request: {request.question[:50]}...")
+        return {"status": "success", "data": result.toDict()}
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Prediction failed")
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "dspy-production"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, workers=4)
+```
+
+### Enterprise Configuration
+
+```python
+# enterprise_app.py - Full production setup with monitoring, security, scaling
+import dspy
+import uvicorn
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+import mlflow
+import redis
+import json
+import hashlib
+from typing import Optional
+import structlog
+from prometheus_client import Counter, Histogram, generate_latest
+import asyncio
+from contextlib import asynccontextmanager
+
+# Structured logging
+logger = structlog.get_logger()
+
+# Metrics
+REQUEST_COUNT = Counter('dspy_requests_total', 'Total requests', ['method', 'endpoint'])
+REQUEST_LATENCY = Histogram('dspy_request_duration_seconds', 'Request latency')
+
+# Security
+security = HTTPBearer()
+
+class ProductionDSPyApp:
+    def __init__(self):
+        self.redis_client = None
+        self.async_program = None
+
+    async def startup(self):
+        # Initialize Redis for caching
+        self.redis_client = redis.Redis(
+            host='redis',
+            port=6379,
+            decode_responses=True,
+            max_connections=20
+        )
+
+        # Configure MLflow for experiment tracking
+        mlflow.set_tracking_uri("http://mlflow:5000")
+        mlflow.set_experiment("production_dspy")
+        mlflow.dspy.autolog()
+
+        # Initialize DSPy with production config
+        lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=4000,
+            temperature=0.1,  # Lower temperature for production
+        )
+
+        dspy.configure(
+            lm=lm,
+            async_max_workers=16,
+            experimental=True
+        )
+
+        # Load optimized program from MLflow if available
+        try:
+            model_uri = "runs:/latest/model"
+            self.program = mlflow.dspy.load_model(model_uri)
+        except:
+            # Fallback to basic program
+            self.program = dspy.ChainOfThought("question -> answer")
+
+        self.async_program = dspy.asyncify(self.program)
+        logger.info("DSPy application initialized")
+
+# Global app instance
+app_instance = ProductionDSPyApp()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await app_instance.startup()
+    yield
+
+app = FastAPI(
+    title="Enterprise DSPy API",
+    description="Production-grade DSPy application with full observability",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# Security middleware
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*.yourdomain.com", "localhost"]
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://yourdomain.com"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Implement your token verification logic
+    # For demo, we'll just check if token exists
+    if not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return credentials.credentials
+
+def get_cache_key(question: str) -> str:
+    return f"dspy:prediction:{hashlib.md5(question.encode()).hexdigest()}"
+
+@app.post("/predict")
+@REQUEST_LATENCY.time()
+async def predict(
+    request: QueryRequest,
+    token: str = Depends(verify_token)
+):
+    REQUEST_COUNT.labels(method="POST", endpoint="/predict").inc()
+
+    try:
+        # Check cache first
+        cache_key = get_cache_key(request.question)
+        cached_result = app_instance.redis_client.get(cache_key)
+
+        if cached_result:
+            logger.info("Cache hit", question=request.question[:50])
+            return json.loads(cached_result)
+
+        # Process with DSPy
+        with mlflow.start_run():
+            result = await app_instance.async_program(question=request.question)
+
+            response = {
+                "status": "success",
+                "data": result.toDict(),
+                "model_version": getattr(app_instance.program, 'version', '1.0'),
+                "cached": False
+            }
+
+            # Cache the result (expire in 1 hour)
+            app_instance.redis_client.setex(
+                cache_key,
+                3600,
+                json.dumps(response)
+            )
+
+            logger.info("Prediction completed",
+                       question=request.question[:50],
+                       answer_length=len(result.answer))
+
+            return response
+
+    except Exception as e:
+        logger.error("Prediction failed", error=str(e), question=request.question[:50])
+        raise HTTPException(status_code=500, detail="Prediction service unavailable")
+
+@app.get("/health")
+async def health():
+    health_status = {"status": "healthy", "service": "dspy-enterprise"}
+
+    # Check Redis connection
+    try:
+        app_instance.redis_client.ping()
+        health_status["redis"] = "connected"
+    except:
+        health_status["redis"] = "disconnected"
+        health_status["status"] = "degraded"
+
+    # Check MLflow connection
+    try:
+        mlflow.get_experiment_by_name("production_dspy")
+        health_status["mlflow"] = "connected"
+    except:
+        health_status["mlflow"] = "disconnected"
+        health_status["status"] = "degraded"
+
+    return health_status
+
+@app.get("/metrics")
+async def metrics():
+    return generate_latest()
+
+@app.get("/info")
+async def info():
+    return {
+        "service": "dspy-enterprise",
+        "version": "2.0.0",
+        "dspy_version": dspy.__version__,
+        "model_info": {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "async_workers": 16
+        }
+    }
+
+# Production server configuration
+if __name__ == "__main__":
+    uvicorn.run(
+        "enterprise_app:app",
+        host="0.0.0.0",
+        port=8000,
+        workers=4,
+        reload=False,  # Disable in production
+        access_log=True,
+        log_config={
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                },
+            },
+            "handlers": {
+                "default": {
+                    "formatter": "default",
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stdout",
+                },
+            },
+            "root": {
+                "level": "INFO",
+                "handlers": ["default"],
+            },
+        }
+    )
+```
+
+## Core Production Patterns
+
+### Basic Implementation
+
+```python
+# Basic production pattern with essential components
+import dspy
+from fastapi import FastAPI
+import asyncio
+import logging
+
+class ProductionDSPy:
+    def __init__(self):
+        # Production LM configuration
+        self.lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=2000,
+            temperature=0.0,  # Deterministic for production
+            timeout=30.0      # Prevent hanging requests
+        )
+
+        dspy.configure(
+            lm=self.lm,
+            async_max_workers=8
+        )
+
+        # Initialize your DSPy program
+        self.program = dspy.ChainOfThought("question -> answer")
+        self.async_program = dspy.asyncify(self.program)
+
+    async def predict(self, question: str) -> dict:
+        try:
+            result = await self.async_program(question=question)
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, 'reasoning', ''),
+                "status": "success"
+            }
+        except Exception as e:
+            logging.error(f"Prediction error: {e}")
+            return {"error": str(e), "status": "error"}
+
+# Usage
+app = FastAPI()
+dspy_service = ProductionDSPy()
+
+@app.post("/predict")
+async def predict(data: dict):
+    return await dspy_service.predict(data["question"])
+```
+
+### Advanced Configuration
+
+```python
+# Advanced production pattern with full enterprise features
+import dspy
+from fastapi import FastAPI, BackgroundTasks
+import mlflow
+import redis
+from prometheus_client import Counter, Histogram
+import structlog
+from typing import Dict, Any
+import asyncio
+from contextlib import asynccontextmanager
+
+logger = structlog.get_logger()
+
+class EnterpriseDSPyService:
+    def __init__(self):
+        self.redis_client = None
+        self.metrics = {
+            'requests': Counter('dspy_requests_total', 'Total requests'),
+            'latency': Histogram('dspy_latency_seconds', 'Request latency'),
+            'errors': Counter('dspy_errors_total', 'Total errors')
+        }
+
+    async def initialize(self):
+        # Redis for caching and rate limiting
+        self.redis_client = redis.Redis(
+            host='localhost',
+            port=6379,
+            decode_responses=True
+        )
+
+        # MLflow for experiment tracking
+        mlflow.set_tracking_uri("sqlite:///mlflow.db")
+        mlflow.set_experiment("production")
+        mlflow.dspy.autolog()
+
+        # DSPy configuration with production settings
+        lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=4000,
+            temperature=0.1,
+            timeout=60.0,
+            max_retries=3
+        )
+
+        dspy.configure(
+            lm=lm,
+            async_max_workers=16,
+            experimental=True
+        )
+
+        # Load optimized program
+        try:
+            self.program = self.load_optimized_program()
+        except:
+            self.program = dspy.ChainOfThought("question -> answer")
+
+        self.async_program = dspy.asyncify(self.program)
+        logger.info("Enterprise DSPy service initialized")
+
+    def load_optimized_program(self):
+        # Load from MLflow model registry
+        model_name = "dspy_production_model"
+        stage = "Production"
+        return mlflow.dspy.load_model(f"models:/{model_name}/{stage}")
+
+    async def predict_with_monitoring(self, question: str) -> Dict[str, Any]:
+        start_time = asyncio.get_event_loop().time()
+
+        try:
+            # Check rate limiting
+            user_key = f"rate_limit:{question[:10]}"
+            requests_count = self.redis_client.incr(user_key)
+            self.redis_client.expire(user_key, 60)  # 1 minute window
+
+            if requests_count > 100:  # Rate limit
+                raise Exception("Rate limit exceeded")
+
+            # Make prediction with MLflow tracking
+            with mlflow.start_run():
+                result = await self.async_program(question=question)
+
+                # Log metrics
+                mlflow.log_metric("prediction_length", len(result.answer))
+                mlflow.log_param("question_length", len(question))
+
+                response = {
+                    "answer": result.answer,
+                    "reasoning": getattr(result, 'reasoning', ''),
+                    "confidence": self.calculate_confidence(result),
+                    "status": "success"
+                }
+
+                # Update metrics
+                self.metrics['requests'].inc()
+                self.metrics['latency'].observe(
+                    asyncio.get_event_loop().time() - start_time
+                )
+
+                return response
+
+        except Exception as e:
+            self.metrics['errors'].inc()
+            logger.error("Prediction failed", error=str(e))
+            return {"error": str(e), "status": "error"}
+
+    def calculate_confidence(self, result) -> float:
+        # Simple confidence calculation based on answer length and reasoning
+        answer_length = len(result.answer)
+        reasoning_length = len(getattr(result, 'reasoning', ''))
+
+        if reasoning_length > 100 and answer_length > 10:
+            return 0.9
+        elif reasoning_length > 50 and answer_length > 5:
+            return 0.7
+        else:
+            return 0.5
+
+# Enterprise application setup
+service = EnterpriseDSPyService()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await service.initialize()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/predict")
+async def predict(data: dict):
+    return await service.predict_with_monitoring(data["question"])
+```
+
+## Performance Optimization
+
+### Async Configuration
+
+```python
+# Optimize async settings for production workloads
+dspy.configure(
+    lm=dspy.LM("openai/gpt-4o-mini"),
+    async_max_workers=32,  # Scale based on CPU cores
+    experimental=True      # Enable latest optimizations
+)
+
+# Use connection pooling for LM clients
+import aiohttp
+
+async_session = aiohttp.ClientSession(
+    connector=aiohttp.TCPConnector(limit=100),
+    timeout=aiohttp.ClientTimeout(total=60)
+)
+```
+
+### Caching Strategy
+
+```python
+# Multi-level caching for production
+import redis
+import hashlib
+import json
+
+class ProductionCache:
+    def __init__(self):
+        self.redis = redis.Redis(host='localhost', port=6379)
+        self.local_cache = {}  # In-memory cache for hot data
+
+    def get_cache_key(self, question: str) -> str:
+        return f"dspy:{hashlib.sha256(question.encode()).hexdigest()}"
+
+    async def get_cached_prediction(self, question: str):
+        key = self.get_cache_key(question)
+
+        # Check local cache first
+        if key in self.local_cache:
+            return self.local_cache[key]
+
+        # Check Redis cache
+        cached = self.redis.get(key)
+        if cached:
+            result = json.loads(cached)
+            self.local_cache[key] = result  # Populate local cache
+            return result
+
+        return None
+
+    async def cache_prediction(self, question: str, result: dict, ttl: int = 3600):
+        key = self.get_cache_key(question)
+        serialized = json.dumps(result)
+
+        # Cache in both Redis and local
+        self.redis.setex(key, ttl, serialized)
+        self.local_cache[key] = result
+```
+
+## Security and Compliance
+
+### Authentication & Authorization
+
+```python
+# Production authentication patterns
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
+import secrets
+
+security = HTTPBearer()
+
+class SecurityManager:
+    def __init__(self):
+        self.secret_key = secrets.token_urlsafe(32)
+        self.algorithm = "HS256"
+
+    async def verify_token(self, credentials: HTTPAuthorizationCredentials):
+        try:
+            payload = jwt.decode(
+                credentials.credentials,
+                self.secret_key,
+                algorithms=[self.algorithm]
+            )
+            return payload.get("sub")
+        except JWTError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    async def check_permissions(self, user_id: str, resource: str):
+        # Implement your permission logic
+        return True  # Simplified for demo
+
+security_manager = SecurityManager()
+
+@app.post("/predict")
+async def secure_predict(
+    data: dict,
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    user_id = await security_manager.verify_token(credentials)
+
+    if not await security_manager.check_permissions(user_id, "predict"):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    return await dspy_service.predict(data["question"])
+```
+
+### Input Validation
+
+```python
+# Robust input validation for production
+from pydantic import BaseModel, Field, validator
+from typing import Optional
+
+class PredictionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1000)
+    context: Optional[str] = Field(None, max_length=5000)
+    temperature: Optional[float] = Field(0.1, ge=0.0, le=2.0)
+
+    @validator('question')
+    def validate_question(cls, v):
+        # Remove potentially harmful content
+        forbidden_patterns = ['<script', 'javascript:', 'eval(']
+        for pattern in forbidden_patterns:
+            if pattern.lower() in v.lower():
+                raise ValueError('Invalid question content')
+        return v.strip()
+
+@app.post("/predict")
+async def validated_predict(request: PredictionRequest):
+    return await dspy_service.predict(request.question)
+```
+
+## Monitoring and Alerting
+
+### Health Checks
+
+```python
+# Comprehensive health checks for production
+@app.get("/health")
+async def health_check():
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0"
+    }
+
+    checks = []
+
+    # Check DSPy program
+    try:
+        test_result = await dspy_service.async_program(question="test")
+        checks.append({"service": "dspy", "status": "healthy"})
+    except Exception as e:
+        checks.append({"service": "dspy", "status": "unhealthy", "error": str(e)})
+        health_status["status"] = "unhealthy"
+
+    # Check Redis
+    try:
+        dspy_service.redis_client.ping()
+        checks.append({"service": "redis", "status": "healthy"})
+    except:
+        checks.append({"service": "redis", "status": "unhealthy"})
+        health_status["status"] = "degraded"
+
+    health_status["checks"] = checks
+    return health_status
+
+@app.get("/metrics")
+async def get_metrics():
+    # Prometheus metrics endpoint
+    from prometheus_client import generate_latest
+    return Response(generate_latest(), media_type="text/plain")
+```
+
+## Speed Tips
+
+- Use async/await patterns with `dspy.asyncify()` for high-throughput deployment
+- Implement multi-level caching (Redis + in-memory) for frequent queries
+- Configure connection pooling for LM providers to reduce latency
+- Use load balancers with sticky sessions for stateful applications
+- Optimize async worker pool size based on CPU cores and expected load
+- Implement circuit breakers to handle LM provider failures gracefully
+
+## Common Pitfalls
+
+- Not configuring proper timeouts leading to hanging requests in production
+- Missing error handling for LM provider rate limits and failures
+- Insufficient logging making debugging production issues difficult
+- Not implementing proper health checks for container orchestration
+- Overlooking security validation of user inputs to DSPy programs
+- Not monitoring token usage and costs in production environments
+
+## Best Practices Summary
+
+- Always use structured logging with correlation IDs for request tracing
+- Implement comprehensive monitoring and alerting from day one
+- Use environment-based configuration management for different deployment stages
+- Set up automated testing for production deployment pipelines
+- Implement graceful degradation when external services are unavailable
+- Use container orchestration (Kubernetes) with proper resource limits
+- Set up automated scaling based on request volume and response times
+
+## References
+
+- [DSPy Deployment Tutorial](https://dspy-docs.vercel.app/tutorials/deployment/)
+- [FastAPI Production Guide](https://fastapi.tiangolo.com/deployment/)
+- [MLflow Production Deployment](https://mlflow.org/docs/latest/deployment/index.html)
+- [Prometheus Monitoring](https://prometheus.io/docs/guides/basic-auth/)
+- [Redis Caching Strategies](https://redis.io/docs/manual/patterns/)

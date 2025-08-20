@@ -1,0 +1,600 @@
+---
+description: DSPy 3.0.1 ReAct Module - Master tool-enabled reasoning for agentic AI systems
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's ReAct (Reasoning and Acting) module. Master tool-enabled reasoning that combines logical thinking with external actions for powerful agentic AI systems.
+
+## ReAct Development Flow
+
+```
+Define Tools → Create ReAct → Configure → Execute → Tool Actions → Result
+     ↓             ↓          ↓         ↓           ↓             ↓
+Function/API    Module       Max Iters  Forward    External      Structured
+Definitions     Creation     Limits     Method     Calls         Output
+     ↓             ↓          ↓         ↓           ↓             ↓
+Tool Registry   Ready for    Iteration  Reasoning  Real World    Final Answer
+                Use          Control    Cycles     Information   with Trace
+```
+
+## Instant Patterns
+
+### Quick Start - Basic ReAct with Tools
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Define tools
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"The weather in {city} is sunny and 75°F"
+
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Search results for '{query}': Found relevant information..."
+
+# Create ReAct module
+weather_agent = dspy.ReAct(
+    signature="question -> answer",
+    tools=[get_weather, search_web],
+    max_iters=5
+)
+
+# Use with automatic tool selection
+result = weather_agent(question="What's the weather like in Tokyo today?")
+print(f"Answer: {result.answer}")
+
+# Access the reasoning trajectory
+if hasattr(result, 'trajectory'):
+    print(f"Agent's reasoning process: {result.trajectory}")
+```
+
+### Production Ready - Advanced ReAct System
+
+```python
+import dspy
+from typing import List, Dict, Any
+import requests
+import json
+
+class AdvancedResearchSignature(dspy.Signature):
+    """Research complex topics using multiple tools and sources."""
+
+    research_topic: str = dspy.InputField(desc="Topic to research thoroughly")
+    depth_level: str = dspy.InputField(desc="Research depth: surface, detailed, comprehensive")
+    focus_areas: List[str] = dspy.InputField(desc="Specific areas to focus on")
+
+    research_summary: str = dspy.OutputField(desc="Comprehensive research summary")
+    key_findings: List[str] = dspy.OutputField(desc="Most important discoveries")
+    sources_used: List[str] = dspy.OutputField(desc="Sources consulted during research")
+    confidence_level: float = dspy.OutputField(desc="Confidence in findings (0-1)")
+
+# Advanced tool definitions
+class ResearchTools:
+    @staticmethod
+    def web_search(query: str, num_results: int = 5) -> str:
+        """Search the web for current information."""
+        # Simulated web search - replace with actual API
+        return f"Web search for '{query}' returned {num_results} relevant results about the topic"
+
+    @staticmethod
+    def academic_search(topic: str, field: str = "general") -> str:
+        """Search academic databases for scholarly articles."""
+        return f"Academic search in {field} found several peer-reviewed papers on {topic}"
+
+    @staticmethod
+    def fact_check(claim: str) -> str:
+        """Verify factual claims against reliable sources."""
+        return f"Fact-checking '{claim}': Verified as accurate by multiple sources"
+
+    @staticmethod
+    def get_statistics(domain: str, metric: str) -> str:
+        """Retrieve statistical data from official sources."""
+        return f"Statistical data for {metric} in {domain}: Latest figures show significant trends"
+
+    @staticmethod
+    def summarize_document(url: str, focus: str = "main_points") -> str:
+        """Extract and summarize key information from documents."""
+        return f"Document summary focusing on {focus}: Key insights extracted"
+
+# Create advanced research agent
+research_agent = dspy.ReAct(
+    AdvancedResearchSignature,
+    tools=[
+        ResearchTools.web_search,
+        ResearchTools.academic_search,
+        ResearchTools.fact_check,
+        ResearchTools.get_statistics,
+        ResearchTools.summarize_document
+    ],
+    max_iters=10
+)
+
+# Conduct comprehensive research
+result = research_agent(
+    research_topic="Impact of AI on healthcare diagnostics",
+    depth_level="comprehensive",
+    focus_areas=["accuracy improvements", "cost analysis", "ethical considerations"]
+)
+
+print(f"Research Summary: {result.research_summary}")
+print(f"Key Findings: {result.key_findings}")
+print(f"Confidence: {result.confidence_level}")
+```
+
+## Core ReAct Patterns
+
+### Tool Definition Patterns
+
+```python
+# Simple function tools
+def calculate(expression: str) -> str:
+    """Safely evaluate mathematical expressions."""
+    try:
+        result = eval(expression)  # Use safely in production
+        return f"Result: {result}"
+    except:
+        return "Error: Invalid expression"
+
+# Class-based tools
+class DatabaseTool:
+    def __init__(self, connection_string: str):
+        self.connection = connection_string
+
+    def query_data(self, sql_query: str) -> str:
+        """Execute database query and return results."""
+        # Simulated database query
+        return f"Query results for: {sql_query}"
+
+    def update_record(self, table: str, record_id: int, data: dict) -> str:
+        """Update database record."""
+        return f"Updated record {record_id} in {table} with {data}"
+
+# API integration tools
+def call_api(endpoint: str, method: str = "GET", data: dict = None) -> str:
+    """Make HTTP API calls."""
+    try:
+        # Simulated API call
+        return f"API call to {endpoint} returned: Success"
+    except Exception as e:
+        return f"API call failed: {str(e)}"
+```
+
+### Multi-Domain ReAct Systems
+
+```python
+class MultiDomainAgent(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Domain-specific tool sets
+        self.research_tools = [
+            ResearchTools.web_search,
+            ResearchTools.academic_search,
+            ResearchTools.fact_check
+        ]
+
+        self.analysis_tools = [
+            calculate,
+            DatabaseTool("analytics_db").query_data,
+            call_api
+        ]
+
+        # Specialized agents for different domains
+        self.research_agent = dspy.ReAct(
+            "research_query -> findings",
+            tools=self.research_tools,
+            max_iters=8
+        )
+
+        self.analysis_agent = dspy.ReAct(
+            "analysis_task -> results",
+            tools=self.analysis_tools,
+            max_iters=5
+        )
+
+        # Meta-agent for task routing
+        self.task_router = dspy.Predict(
+            "task_description -> domain: str, confidence: float"
+        )
+
+    def forward(self, task):
+        # Route task to appropriate agent
+        routing = self.task_router(task_description=task)
+
+        if "research" in routing.domain.lower():
+            return self.research_agent(research_query=task)
+        elif "analysis" in routing.domain.lower():
+            return self.analysis_agent(analysis_task=task)
+        else:
+            # Fallback to research agent
+            return self.research_agent(research_query=task)
+```
+
+## Advanced ReAct Features
+
+### Tool Context Management
+
+```python
+class ContextAwareReAct(dspy.Module):
+    def __init__(self, signature, tools, max_iters=10):
+        super().__init__()
+
+        # Context-aware tool wrapper
+        self.tool_context = {}
+        self.wrapped_tools = []
+
+        for tool in tools:
+            wrapped_tool = self._wrap_tool_with_context(tool)
+            self.wrapped_tools.append(wrapped_tool)
+
+        self.react = dspy.ReAct(signature, self.wrapped_tools, max_iters)
+
+    def _wrap_tool_with_context(self, tool):
+        """Wrap tools to maintain context between calls."""
+        def context_aware_tool(*args, **kwargs):
+            # Add context to tool execution
+            result = tool(*args, **kwargs)
+
+            # Update context based on tool result
+            self.tool_context[tool.__name__] = {
+                'last_call': str(args) + str(kwargs),
+                'last_result': result,
+                'call_count': self.tool_context.get(tool.__name__, {}).get('call_count', 0) + 1
+            }
+
+            return result
+
+        context_aware_tool.__name__ = tool.__name__
+        context_aware_tool.__doc__ = tool.__doc__
+        return context_aware_tool
+
+    def forward(self, **kwargs):
+        # Reset context for new execution
+        self.tool_context = {}
+
+        result = self.react(**kwargs)
+
+        # Add context information to result
+        if hasattr(result, '__dict__'):
+            result.tool_context = self.tool_context
+
+        return result
+```
+
+### Error Recovery and Fallbacks
+
+```python
+class RobustReAct(dspy.Module):
+    def __init__(self, signature, tools, max_iters=10):
+        super().__init__()
+
+        # Primary ReAct system
+        self.primary_react = dspy.ReAct(signature, tools, max_iters)
+
+        # Fallback reasoning without tools
+        self.fallback_reasoner = dspy.ChainOfThought(signature)
+
+        # Tool health checker
+        self.tool_health = {}
+
+        # Error recovery tools
+        self.recovery_tools = [
+            self._retry_failed_tool,
+            self._use_alternative_approach
+        ]
+
+    def _retry_failed_tool(self, tool_name: str, original_args: str) -> str:
+        """Retry a failed tool call with modified parameters."""
+        return f"Retried {tool_name} with modified parameters: Success"
+
+    def _use_alternative_approach(self, failed_approach: str) -> str:
+        """Suggest alternative approach when tools fail."""
+        return f"Alternative approach for {failed_approach}: Try different strategy"
+
+    def forward(self, **kwargs):
+        try:
+            # Attempt primary ReAct execution
+            result = self.primary_react(**kwargs)
+
+            # Validate result quality
+            if self._validate_result(result):
+                return result
+            else:
+                print("Primary result quality low, trying recovery...")
+                return self._attempt_recovery(kwargs)
+
+        except Exception as e:
+            print(f"Primary ReAct failed: {e}")
+            return self._attempt_recovery(kwargs)
+
+    def _validate_result(self, result) -> bool:
+        """Validate the quality of ReAct results."""
+        # Check if result has required fields
+        required_fields = ['answer']  # Customize based on signature
+        return all(hasattr(result, field) for field in required_fields)
+
+    def _attempt_recovery(self, kwargs):
+        """Attempt recovery using fallback strategies."""
+        try:
+            # Try with recovery tools added
+            enhanced_react = dspy.ReAct(
+                self.primary_react.signature,
+                self.primary_react.tools.values() + self.recovery_tools,
+                max_iters=5
+            )
+            return enhanced_react(**kwargs)
+        except:
+            # Final fallback to pure reasoning
+            return self.fallback_reasoner(**kwargs)
+```
+
+### Streaming and Real-time ReAct
+
+```python
+class StreamingReAct(dspy.Module):
+    def __init__(self, signature, tools, max_iters=10):
+        super().__init__()
+        self.react = dspy.ReAct(signature, tools, max_iters)
+        self.step_callbacks = []
+
+    def add_step_callback(self, callback):
+        """Add callback to monitor each reasoning step."""
+        self.step_callbacks.append(callback)
+
+    def forward_with_streaming(self, **kwargs):
+        """Execute ReAct with real-time step monitoring."""
+        # Override ReAct to add streaming
+        trajectory = {}
+
+        for step in range(self.react.max_iters):
+            # Get next action
+            action_result = self.react.react(**kwargs, trajectory=str(trajectory))
+
+            # Notify callbacks of current step
+            for callback in self.step_callbacks:
+                callback(step, action_result)
+
+            # Execute tool if needed
+            if hasattr(action_result, 'next_tool_name') and action_result.next_tool_name != 'finish':
+                tool_result = self._execute_tool(
+                    action_result.next_tool_name,
+                    action_result.next_tool_args
+                )
+                trajectory[f"step_{step}"] = {
+                    'thought': action_result.next_thought,
+                    'action': action_result.next_tool_name,
+                    'args': action_result.next_tool_args,
+                    'result': tool_result
+                }
+            else:
+                # Task completed
+                break
+
+        # Extract final answer
+        final_result = self.react.extract(**kwargs, trajectory=str(trajectory))
+        return final_result
+
+    def _execute_tool(self, tool_name, args):
+        """Execute tool and return result."""
+        if tool_name in self.react.tools:
+            tool = self.react.tools[tool_name]
+            return tool.func(**args)
+        return "Tool not found"
+
+# Usage with streaming
+def step_monitor(step_num, action):
+    print(f"Step {step_num}: {action.next_thought}")
+    print(f"Action: {action.next_tool_name}")
+
+streaming_agent = StreamingReAct("question -> answer", [get_weather], max_iters=5)
+streaming_agent.add_step_callback(step_monitor)
+```
+
+## Integration Patterns
+
+### Multi-Agent ReAct Systems
+
+```python
+class MultiAgentSystem(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Specialized agents
+        self.researcher = dspy.ReAct(
+            "topic -> research_findings",
+            tools=[ResearchTools.web_search, ResearchTools.academic_search],
+            max_iters=8
+        )
+
+        self.analyzer = dspy.ReAct(
+            "data -> analysis_results",
+            tools=[calculate, DatabaseTool("main_db").query_data],
+            max_iters=5
+        )
+
+        self.synthesizer = dspy.ChainOfThought(
+            "research_findings, analysis_results -> final_report"
+        )
+
+        # Coordinator
+        self.coordinator = dspy.Predict(
+            "task -> agent_assignments: dict, execution_order: list"
+        )
+
+    def forward(self, complex_task):
+        # Plan agent coordination
+        plan = self.coordinator(task=complex_task)
+
+        results = {}
+
+        # Execute agents based on plan
+        if 'research' in plan.agent_assignments:
+            results['research'] = self.researcher(
+                topic=plan.agent_assignments['research']
+            )
+
+        if 'analysis' in plan.agent_assignments:
+            results['analysis'] = self.analyzer(
+                data=plan.agent_assignments['analysis']
+            )
+
+        # Synthesize results
+        final_result = self.synthesizer(
+            research_findings=results.get('research', {}).get('research_findings', ''),
+            analysis_results=results.get('analysis', {}).get('analysis_results', '')
+        )
+
+        return dspy.Prediction(
+            task=complex_task,
+            agent_results=results,
+            final_report=final_result.final_report,
+            execution_plan=plan
+        )
+```
+
+## Speed Tips
+
+### Tool Optimization
+
+```python
+# Cache expensive tool calls
+from functools import lru_cache
+
+class CachedTool:
+    def __init__(self, tool_func, cache_size=1000):
+        self.tool_func = tool_func
+        self._cached_call = lru_cache(maxsize=cache_size)(self._call_tool)
+
+    def _call_tool(self, *args, **kwargs):
+        return self.tool_func(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        # Convert unhashable types for caching
+        cache_key = str(args) + str(sorted(kwargs.items()))
+        return self._cached_call(cache_key)
+
+# Batch tool operations
+def batch_search(queries: List[str]) -> List[str]:
+    """Batch multiple searches for efficiency."""
+    results = []
+    for query in queries:
+        results.append(f"Search result for: {query}")
+    return results
+```
+
+### Performance Monitoring
+
+```python
+class MonitoredReAct(dspy.Module):
+    def __init__(self, signature, tools, max_iters=10):
+        super().__init__()
+        self.react = dspy.ReAct(signature, tools, max_iters)
+        self.metrics = {
+            'total_calls': 0,
+            'tool_usage': {},
+            'avg_iterations': 0,
+            'success_rate': 0
+        }
+
+    def forward(self, **kwargs):
+        import time
+        start_time = time.time()
+
+        try:
+            result = self.react(**kwargs)
+            self._update_metrics(True, time.time() - start_time)
+            return result
+        except Exception as e:
+            self._update_metrics(False, time.time() - start_time)
+            raise
+
+    def _update_metrics(self, success, duration):
+        self.metrics['total_calls'] += 1
+        self.metrics['success_rate'] = (
+            (self.metrics['success_rate'] * (self.metrics['total_calls'] - 1) + int(success))
+            / self.metrics['total_calls']
+        )
+
+    def get_metrics(self):
+        return self.metrics
+```
+
+## Common Pitfalls
+
+### Tool Design Issues
+
+```python
+# ❌ DON'T: Create tools without proper error handling
+def unsafe_tool(query):
+    response = requests.get(f"https://api.example.com/{query}")
+    return response.json()  # Can fail without error handling
+
+# ✅ DO: Include proper error handling in tools
+def safe_tool(query: str) -> str:
+    """Safely call external API with error handling."""
+    try:
+        response = requests.get(f"https://api.example.com/{query}", timeout=10)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.Timeout:
+        return "Error: API request timed out"
+    except requests.exceptions.RequestException as e:
+        return f"Error: API request failed - {str(e)}"
+```
+
+### Iteration Control
+
+```python
+# ❌ DON'T: Set excessive iterations without bounds
+infinite_agent = dspy.ReAct(
+    "question -> answer",
+    tools=[web_search],
+    max_iters=1000  # Too many iterations
+)
+
+# ✅ DO: Use reasonable iteration limits with task complexity
+efficient_agent = dspy.ReAct(
+    "question -> answer",
+    tools=[web_search],
+    max_iters=5  # Appropriate for most tasks
+)
+```
+
+### Tool Context Confusion
+
+```python
+# ❌ DON'T: Mix unrelated tools in same agent
+confused_agent = dspy.ReAct(
+    "weather_question -> answer",
+    tools=[get_weather, database_query, image_generator]  # Unrelated tools
+)
+
+# ✅ DO: Group related tools by domain
+focused_agent = dspy.ReAct(
+    "weather_question -> answer",
+    tools=[get_weather, get_forecast, weather_alerts]  # Related tools
+)
+```
+
+## Best Practices Summary
+
+- **Design focused tools**: Create tools with clear, specific purposes
+- **Handle tool errors**: Implement proper error handling and timeouts
+- **Limit iterations**: Set reasonable max_iters based on task complexity
+- **Monitor performance**: Track tool usage and execution metrics
+- **Cache expensive calls**: Use caching for costly tool operations
+- **Group related tools**: Organize tools by domain or functionality
+- **Provide tool context**: Give tools access to relevant context when needed
+- **Plan agent coordination**: Design clear coordination patterns for multi-agent systems
+
+## References
+
+- [ReAct Module API](/docs/api/modules/ReAct.md)
+- [Tool Integration Guide](/docs/api/tools/Tool.md)
+- [Agent Architecture Tutorial](/docs/tutorials/agents/)
+- [Multi-Agent Systems Examples](/docs/examples/multi_agent/)

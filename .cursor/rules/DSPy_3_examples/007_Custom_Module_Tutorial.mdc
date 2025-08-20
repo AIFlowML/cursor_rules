@@ -1,0 +1,805 @@
+---
+description: DSPY 3 Custom Module Tutorial - Building custom DSPy modules from official tutorial patterns
+alwaysApply: false
+---
+
+> You are an expert in building Custom DSPy Modules using DSPy 3.0.1 based on official tutorial patterns.
+
+## Custom Module Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Input Data    │────│   Custom Module  │────│   Sub-modules   │
+│   (Flexible)    │    │   (__init__ +    │    │   (Query Gen,   │
+└─────────────────┘    │   forward)       │    │   Retrieval,    │
+                       └──────────────────┘    │   Generation)   │
+                              │                └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Structured     │────│   Composable     │────│   Business      │
+│  Output         │    │   Logic          │    │   Logic         │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   Optimization   │
+                    │   Compatible     │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Custom Module (From Official Notebook)
+
+```python
+import dspy
+
+# Tutorial query generator signature (exact from notebook)
+class QueryGenerator(dspy.Signature):
+    """Generate a query based on question to fetch relevant context"""
+    question: str = dspy.InputField()
+    query: str = dspy.OutputField()
+
+def search_wikipedia(query: str) -> list[str]:
+    """Query ColBERT endpoint, which is a knowledge source based on wikipedia data"""
+    results = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')(query, k=1)
+    return [x["text"] for x in results]
+
+# Tutorial custom RAG module (exact implementation)
+class RAG(dspy.Module):
+    def __init__(self):
+        self.query_generator = dspy.Predict(QueryGenerator)
+        self.answer_generator = dspy.ChainOfThought("question,context->answer")
+
+    def forward(self, question, **kwargs):
+        query = self.query_generator(question=question).query
+        context = search_wikipedia(query)[0]
+        return self.answer_generator(question=question, context=context).answer
+
+# Tutorial usage (exact from notebook)
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+rag = RAG()
+result = rag(question="Is Lebron James the basketball GOAT?")
+print(result)  # Tutorial response about subjectivity
+```
+
+### Production Custom Module System
+
+```python
+import logging
+import mlflow
+import time
+import asyncio
+from typing import Dict, List, Optional, Any, Union, Callable, Type
+from pydantic import BaseModel, Field, validator
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+import json
+from collections import defaultdict, deque
+import uuid
+from datetime import datetime
+import inspect
+
+# Production configuration for custom modules
+class CustomModuleConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 3600
+    retry_attempts: int = 3
+    timeout_seconds: int = 120
+    enable_validation: bool = True
+    enable_monitoring: bool = True
+    max_parallel_operations: int = 5
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+class ModuleResult(BaseModel):
+    module_name: str
+    input_data: Dict[str, Any]
+    output_data: Any
+    processing_time_ms: float
+    success: bool
+    error_message: Optional[str] = None
+    sub_module_results: List[Dict[str, Any]] = []
+    metadata: Dict[str, Any] = {}
+
+# Base production module class
+class ProductionModule(dspy.Module, ABC):
+    """Base class for production-ready DSPy modules with monitoring and error handling"""
+
+    def __init__(self, config: CustomModuleConfig, module_name: str):
+        super().__init__()
+        self.config = config
+        self.module_name = module_name
+        self.logger = self._setup_logging()
+
+        # Performance tracking
+        self.stats = {
+            'total_calls': 0,
+            'successful_calls': 0,
+            'avg_processing_time': 0.0,
+            'error_rate': 0.0,
+            'sub_module_stats': defaultdict(lambda: {'calls': 0, 'avg_time': 0.0})
+        }
+
+        # Module registry for sub-modules
+        self.sub_modules = {}
+        self.execution_history = deque(maxlen=100)
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        return logging.getLogger(f"{self.module_name}.{self.config.environment}")
+
+    @abstractmethod
+    def _initialize_sub_modules(self) -> Dict[str, dspy.Module]:
+        """Initialize sub-modules - must be implemented by subclasses"""
+        pass
+
+    @abstractmethod
+    def _forward_implementation(self, **kwargs) -> Any:
+        """Core forward logic - must be implemented by subclasses"""
+        pass
+
+    def _validate_inputs(self, **kwargs) -> bool:
+        """Validate input parameters"""
+        if not self.config.enable_validation:
+            return True
+
+        # Basic validation - can be overridden
+        required_fields = self._get_required_fields()
+        for field in required_fields:
+            if field not in kwargs or kwargs[field] is None:
+                raise ValueError(f"Required field '{field}' is missing or None")
+        return True
+
+    def _get_required_fields(self) -> List[str]:
+        """Get required input fields from signature"""
+        if hasattr(self, '__signature__'):
+            return list(self.__signature__.input_fields.keys())
+        return []
+
+    def _track_sub_module_call(self, sub_module_name: str, execution_time: float):
+        """Track sub-module performance"""
+        stats = self.stats['sub_module_stats'][sub_module_name]
+        stats['calls'] += 1
+
+        # Update running average
+        current_avg = stats['avg_time']
+        stats['avg_time'] = ((current_avg * (stats['calls'] - 1)) + execution_time) / stats['calls']
+
+    def forward(self, **kwargs) -> Any:
+        """Production forward method with monitoring and error handling"""
+        start_time = time.time()
+        session_id = str(uuid.uuid4())
+
+        try:
+            if self.config.enable_monitoring:
+                with mlflow.start_run(nested=True):
+                    mlflow.log_param("module_name", self.module_name)
+                    mlflow.log_param("session_id", session_id)
+                    mlflow.log_params({f"input_{k}": str(v)[:100] for k, v in kwargs.items()})
+
+                    # Validate inputs
+                    self._validate_inputs(**kwargs)
+
+                    # Initialize sub-modules if not done
+                    if not self.sub_modules:
+                        self.sub_modules = self._initialize_sub_modules()
+
+                    # Execute core logic
+                    result = self._forward_implementation(**kwargs)
+
+                    # Calculate metrics
+                    processing_time = (time.time() - start_time) * 1000
+
+                    # Update statistics
+                    self._update_stats(True, processing_time)
+
+                    # Log metrics
+                    mlflow.log_metrics({
+                        'processing_time_ms': processing_time,
+                        'success': 1,
+                        'total_calls': self.stats['total_calls']
+                    })
+
+                    # Create result object
+                    module_result = ModuleResult(
+                        module_name=self.module_name,
+                        input_data=kwargs,
+                        output_data=result,
+                        processing_time_ms=processing_time,
+                        success=True,
+                        metadata={'session_id': session_id}
+                    )
+
+                    # Add to execution history
+                    self.execution_history.append({
+                        'timestamp': datetime.now(),
+                        'session_id': session_id,
+                        'success': True,
+                        'processing_time': processing_time
+                    })
+
+                    self.logger.info(
+                        f"Module {self.module_name} executed successfully in {processing_time:.2f}ms"
+                    )
+
+                    return result
+            else:
+                # Simple execution without monitoring
+                self._validate_inputs(**kwargs)
+                if not self.sub_modules:
+                    self.sub_modules = self._initialize_sub_modules()
+                return self._forward_implementation(**kwargs)
+
+        except Exception as e:
+            processing_time = (time.time() - start_time) * 1000
+            self._update_stats(False, processing_time)
+
+            error_msg = f"Module {self.module_name} failed: {str(e)}"
+            self.logger.error(error_msg)
+
+            if self.config.enable_monitoring:
+                with mlflow.start_run(nested=True):
+                    mlflow.log_params({
+                        'module_name': self.module_name,
+                        'error': str(e),
+                        'processing_time_ms': processing_time
+                    })
+                    mlflow.log_metric('success', 0)
+
+            # Add to execution history
+            self.execution_history.append({
+                'timestamp': datetime.now(),
+                'session_id': session_id,
+                'success': False,
+                'error': str(e),
+                'processing_time': processing_time
+            })
+
+            raise
+
+    def _update_stats(self, success: bool, processing_time: float):
+        """Update module performance statistics"""
+        self.stats['total_calls'] += 1
+        if success:
+            self.stats['successful_calls'] += 1
+
+        # Update average processing time
+        total = self.stats['total_calls']
+        current_avg = self.stats['avg_processing_time']
+        self.stats['avg_processing_time'] = (
+            (current_avg * (total - 1) + processing_time) / total
+        )
+
+        # Update error rate
+        self.stats['error_rate'] = 1 - (self.stats['successful_calls'] / total)
+
+    def get_performance_stats(self) -> Dict:
+        """Get comprehensive performance statistics"""
+        return {
+            'module_name': self.module_name,
+            'stats': dict(self.stats),
+            'recent_executions': list(self.execution_history)[-10:],  # Last 10 executions
+            'sub_modules': list(self.sub_modules.keys()) if self.sub_modules else []
+        }
+
+    async def async_forward(self, **kwargs) -> Any:
+        """Async version of forward method"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.forward, **kwargs)
+
+# Production RAG module example
+class ProductionRAG(ProductionModule):
+    """Production-ready RAG module based on tutorial pattern"""
+
+    def __init__(self, config: CustomModuleConfig):
+        super().__init__(config, "ProductionRAG")
+
+        # Define the signature
+        class RAGSignature(dspy.Signature):
+            """Retrieve relevant context and generate comprehensive answers"""
+            question: str = dspy.InputField(desc="The question to answer")
+            context: str = dspy.OutputField(desc="Retrieved relevant context")
+            answer: str = dspy.OutputField(desc="Comprehensive answer based on context")
+
+        self.signature = RAGSignature
+
+    def _initialize_sub_modules(self) -> Dict[str, dspy.Module]:
+        """Initialize RAG sub-modules"""
+
+        # Query generation signature
+        class QueryGeneration(dspy.Signature):
+            """Generate optimized search query from user question"""
+            question: str = dspy.InputField()
+            query: str = dspy.OutputField()
+
+        # Answer generation signature
+        class AnswerGeneration(dspy.Signature):
+            """Generate comprehensive answer from context and question"""
+            question: str = dspy.InputField()
+            context: str = dspy.InputField()
+            answer: str = dspy.OutputField()
+
+        return {
+            'query_generator': dspy.ChainOfThought(QueryGeneration),
+            'answer_generator': dspy.ChainOfThought(AnswerGeneration)
+        }
+
+    def _search_knowledge_base(self, query: str) -> str:
+        """Search knowledge base with error handling"""
+        try:
+            results = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')(query, k=3)
+            contexts = [x["text"] for x in results]
+            return "\n\n".join(contexts) if contexts else "No relevant information found."
+        except Exception as e:
+            self.logger.warning(f"Knowledge base search failed: {e}")
+            return "Search service temporarily unavailable."
+
+    def _forward_implementation(self, question: str, **kwargs) -> str:
+        """Core RAG implementation"""
+        start_time = time.time()
+
+        # Step 1: Generate optimized query
+        query_result = self.sub_modules['query_generator'](question=question)
+        query = query_result.query
+
+        query_time = (time.time() - start_time) * 1000
+        self._track_sub_module_call('query_generator', query_time)
+
+        # Step 2: Retrieve context
+        retrieval_start = time.time()
+        context = self._search_knowledge_base(query)
+        retrieval_time = (time.time() - retrieval_start) * 1000
+        self._track_sub_module_call('knowledge_retrieval', retrieval_time)
+
+        # Step 3: Generate answer
+        answer_start = time.time()
+        answer_result = self.sub_modules['answer_generator'](
+            question=question,
+            context=context
+        )
+        answer_time = (time.time() - answer_start) * 1000
+        self._track_sub_module_call('answer_generator', answer_time)
+
+        self.logger.info(f"RAG pipeline: query={query_time:.1f}ms, retrieval={retrieval_time:.1f}ms, answer={answer_time:.1f}ms")
+
+        return answer_result.answer
+
+# Multi-modal custom module example
+class ProductionMultiModalProcessor(ProductionModule):
+    """Production multi-modal processing module"""
+
+    def __init__(self, config: CustomModuleConfig):
+        super().__init__(config, "MultiModalProcessor")
+
+    def _initialize_sub_modules(self) -> Dict[str, dspy.Module]:
+        """Initialize multi-modal processing sub-modules"""
+
+        class TextAnalysis(dspy.Signature):
+            """Analyze text content for key information"""
+            text: str = dspy.InputField()
+            key_points: str = dspy.OutputField()
+
+        class ContentSynthesis(dspy.Signature):
+            """Synthesize multi-modal content into coherent response"""
+            text_analysis: str = dspy.InputField()
+            additional_context: str = dspy.InputField()
+            synthesis: str = dspy.OutputField()
+
+        return {
+            'text_analyzer': dspy.ChainOfThought(TextAnalysis),
+            'synthesizer': dspy.ChainOfThought(ContentSynthesis)
+        }
+
+    def _forward_implementation(self, text: str, images: List[str] = None, **kwargs) -> str:
+        """Process multi-modal inputs"""
+
+        # Analyze text content
+        text_analysis = self.sub_modules['text_analyzer'](text=text)
+
+        # Process images if provided (placeholder)
+        image_context = ""
+        if images:
+            image_context = f"Processing {len(images)} images (placeholder)"
+
+        # Synthesize results
+        synthesis = self.sub_modules['synthesizer'](
+            text_analysis=text_analysis.key_points,
+            additional_context=image_context
+        )
+
+        return synthesis.synthesis
+
+# Custom module factory
+class ModuleFactory:
+    """Factory for creating custom DSPy modules"""
+
+    _registered_modules = {}
+
+    @classmethod
+    def register_module(cls, name: str, module_class: Type[ProductionModule]):
+        """Register a custom module type"""
+        cls._registered_modules[name] = module_class
+
+    @classmethod
+    def create_module(cls, name: str, config: CustomModuleConfig) -> ProductionModule:
+        """Create a module instance by name"""
+        if name not in cls._registered_modules:
+            raise ValueError(f"Module '{name}' not registered")
+
+        return cls._registered_modules[name](config)
+
+    @classmethod
+    def list_modules(cls) -> List[str]:
+        """List all registered module types"""
+        return list(cls._registered_modules.keys())
+
+# Register built-in modules
+ModuleFactory.register_module("rag", ProductionRAG)
+ModuleFactory.register_module("multimodal", ProductionMultiModalProcessor)
+
+# Module composition helper
+class ModuleComposer:
+    """Helper for composing multiple modules into workflows"""
+
+    def __init__(self, config: CustomModuleConfig):
+        self.config = config
+        self.modules = {}
+        self.workflows = {}
+
+    def add_module(self, name: str, module: ProductionModule):
+        """Add a module to the composer"""
+        self.modules[name] = module
+
+    def create_workflow(self, name: str, steps: List[Dict[str, Any]]):
+        """Create a workflow from module steps"""
+        self.workflows[name] = steps
+
+    async def execute_workflow(self, workflow_name: str, initial_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a composed workflow"""
+        if workflow_name not in self.workflows:
+            raise ValueError(f"Workflow '{workflow_name}' not found")
+
+        current_data = initial_data.copy()
+        results = {}
+
+        for step in self.workflows[workflow_name]:
+            module_name = step['module']
+            input_mapping = step.get('input_mapping', {})
+            output_key = step.get('output_key', module_name)
+
+            if module_name not in self.modules:
+                raise ValueError(f"Module '{module_name}' not found in composer")
+
+            # Map inputs
+            module_inputs = {}
+            for input_key, source_key in input_mapping.items():
+                if source_key in current_data:
+                    module_inputs[input_key] = current_data[source_key]
+
+            # Execute module
+            module_result = await self.modules[module_name].async_forward(**module_inputs)
+
+            # Store result
+            results[output_key] = module_result
+            current_data[output_key] = module_result
+
+        return results
+```
+
+## Production Enhancements
+
+### Custom Module Management API
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="Custom Module Management API", version="1.0.0")
+
+app.add_middleware(
+    CORSModulesMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ModuleRequest(BaseModel):
+    module_type: str
+    inputs: Dict[str, Any]
+    config_overrides: Optional[Dict[str, Any]] = None
+
+class WorkflowRequest(BaseModel):
+    workflow_name: str
+    initial_data: Dict[str, Any]
+
+# Global module management
+module_factory = ModuleFactory()
+module_composer = None
+active_modules = {}
+
+@app.on_event("startup")
+async def startup_event():
+    global module_composer
+    config = CustomModuleConfig()
+    module_composer = ModuleComposer(config)
+
+    # Pre-load common modules
+    rag_module = module_factory.create_module("rag", config)
+    multimodal_module = module_factory.create_module("multimodal", config)
+
+    module_composer.add_module("rag", rag_module)
+    module_composer.add_module("multimodal", multimodal_module)
+
+    active_modules["rag"] = rag_module
+    active_modules["multimodal"] = multimodal_module
+
+@app.post("/modules/execute")
+async def execute_module(request: ModuleRequest, background_tasks: BackgroundTasks):
+    """Execute a single module"""
+    try:
+        if request.module_type not in active_modules:
+            # Create module on demand
+            config = CustomModuleConfig()
+            if request.config_overrides:
+                config = config.copy(update=request.config_overrides)
+
+            module = module_factory.create_module(request.module_type, config)
+            active_modules[request.module_type] = module
+
+        module = active_modules[request.module_type]
+        result = await module.async_forward(**request.inputs)
+
+        # Log usage in background
+        background_tasks.add_task(log_module_usage, request.module_type, request.inputs)
+
+        return {
+            "result": result,
+            "module_stats": module.get_performance_stats()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/workflows/execute")
+async def execute_workflow(request: WorkflowRequest):
+    """Execute a composed workflow"""
+    try:
+        results = await module_composer.execute_workflow(
+            request.workflow_name,
+            request.initial_data
+        )
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/modules/list")
+async def list_modules():
+    """List available module types"""
+    return {
+        "available_modules": module_factory.list_modules(),
+        "active_modules": list(active_modules.keys())
+    }
+
+@app.get("/modules/{module_name}/stats")
+async def get_module_stats(module_name: str):
+    """Get performance statistics for a module"""
+    if module_name not in active_modules:
+        raise HTTPException(status_code=404, detail="Module not found")
+
+    return active_modules[module_name].get_performance_stats()
+
+@app.post("/workflows/create")
+async def create_workflow(name: str, steps: List[Dict[str, Any]]):
+    """Create a new workflow"""
+    try:
+        module_composer.create_workflow(name, steps)
+        return {"message": f"Workflow '{name}' created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "active_modules": len(active_modules),
+        "available_module_types": len(module_factory.list_modules())
+    }
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Module pooling for high-throughput scenarios
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+class ModulePool:
+    """Pool of module instances for concurrent execution"""
+
+    def __init__(self, module_factory: ModuleFactory, module_type: str,
+                 pool_size: int = 5, config: CustomModuleConfig = None):
+        self.module_type = module_type
+        self.config = config or CustomModuleConfig()
+        self.pool_size = pool_size
+        self.available_modules = deque()
+        self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=pool_size)
+
+        # Pre-populate pool
+        for _ in range(pool_size):
+            module = module_factory.create_module(module_type, self.config)
+            self.available_modules.append(module)
+
+    def get_module(self) -> ProductionModule:
+        """Get an available module from pool"""
+        with self.lock:
+            if self.available_modules:
+                return self.available_modules.popleft()
+            else:
+                # Create new module if pool is empty
+                return module_factory.create_module(self.module_type, self.config)
+
+    def return_module(self, module: ProductionModule):
+        """Return module to pool"""
+        with self.lock:
+            if len(self.available_modules) < self.pool_size:
+                self.available_modules.append(module)
+
+    async def execute(self, **kwargs) -> Any:
+        """Execute using pooled module"""
+        module = self.get_module()
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(self.executor, module.forward, **kwargs)
+            return result
+        finally:
+            self.return_module(module)
+
+# Caching for expensive operations
+from functools import lru_cache
+import hashlib
+
+class CachedProductionModule(ProductionModule):
+    """Base module with result caching"""
+
+    def __init__(self, config: CustomModuleConfig, module_name: str):
+        super().__init__(config, module_name)
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def _generate_cache_key(self, **kwargs) -> str:
+        """Generate cache key from inputs"""
+        key_data = json.dumps(kwargs, sort_keys=True, default=str)
+        return hashlib.md5(key_data.encode()).hexdigest()
+
+    @lru_cache(maxsize=1000)
+    def _cached_forward(self, cache_key: str, **kwargs) -> Any:
+        """Cached version of forward method"""
+        return super().forward(**kwargs)
+
+    def forward(self, **kwargs) -> Any:
+        """Forward with caching"""
+        if not self.config.cache_enabled:
+            return super().forward(**kwargs)
+
+        cache_key = self._generate_cache_key(**kwargs)
+
+        try:
+            result = self._cached_forward(cache_key, **kwargs)
+            self.cache_hits += 1
+            return result
+        except Exception:
+            self.cache_misses += 1
+            return super().forward(**kwargs)
+
+    def get_cache_stats(self) -> Dict:
+        """Get caching statistics"""
+        total = self.cache_hits + self.cache_misses
+        hit_rate = self.cache_hits / total if total > 0 else 0
+        return {
+            'cache_hits': self.cache_hits,
+            'cache_misses': self.cache_misses,
+            'hit_rate': hit_rate
+        }
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Module Initialization**: Always implement proper **init** and forward methods
+2. **Sub-module Management**: Initialize sub-modules in **init** or lazily in forward
+3. **Error Handling**: Implement robust error handling for production use
+4. **State Management**: Be careful with module state in concurrent environments
+
+### Production Solutions
+
+```python
+# Thread-safe module implementation
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+class ThreadSafeModule(ProductionModule):
+    """Thread-safe version of production module"""
+
+    def __init__(self, config: CustomModuleConfig, module_name: str):
+        super().__init__(config, module_name)
+        self._lock = threading.RLock()
+        self._local = threading.local()
+
+    def _get_local_sub_modules(self):
+        """Get thread-local sub-modules"""
+        if not hasattr(self._local, 'sub_modules'):
+            self._local.sub_modules = self._initialize_sub_modules()
+        return self._local.sub_modules
+
+    def forward(self, **kwargs) -> Any:
+        """Thread-safe forward implementation"""
+        with self._lock:
+            # Use thread-local sub-modules
+            original_sub_modules = self.sub_modules
+            self.sub_modules = self._get_local_sub_modules()
+
+            try:
+                return super().forward(**kwargs)
+            finally:
+                self.sub_modules = original_sub_modules
+
+# Resource monitoring for modules
+def monitor_module_resources(module: ProductionModule) -> Dict:
+    """Monitor module resource usage"""
+    import psutil
+    import gc
+
+    process = psutil.Process()
+
+    # Memory usage
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+
+    # CPU usage
+    cpu_percent = process.cpu_percent(interval=0.1)
+
+    # Garbage collection stats
+    gc_stats = gc.get_stats()
+
+    # Module-specific metrics
+    module_stats = module.get_performance_stats()
+
+    return {
+        'memory_usage_mb': memory_mb,
+        'cpu_usage_percent': cpu_percent,
+        'garbage_collections': len(gc_stats),
+        'module_stats': module_stats,
+        'timestamp': datetime.now().isoformat()
+    }
+```
+
+## Best Practices Summary
+
+### Custom Module Guidelines
+
+- Always inherit from dspy.Module and implement **init** and forward methods
+- Use proper error handling and validation for production environments
+- Implement monitoring and logging for observability
+- Design modules to be composable and reusable
+
+### Production Guidelines
+
+- Use module pooling for high-concurrency scenarios
+- Implement proper caching strategies for expensive operations
+- Monitor resource usage and performance metrics
+- Design modules to be thread-safe when needed
+- Use factory patterns for module management and instantiation
+
+## References
+
+- [Official Custom Module Tutorial](https://dspy.ai/tutorials/custom_module/)
+- [DSPy Module Documentation](https://dspy.ai/learn/programming/modules/)
+- [Python Threading Documentation](https://docs.python.org/3/library/threading.html)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

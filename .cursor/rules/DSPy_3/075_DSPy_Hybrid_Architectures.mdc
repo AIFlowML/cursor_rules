@@ -1,0 +1,1796 @@
+# DSPy Hybrid Architecture Patterns
+
+Comprehensive hybrid cloud/local deployment patterns for DSPy 3.0.1 applications bridging cloud services with on-premises infrastructure.
+
+## Quick Start
+
+**Instant Hybrid Load Balancer**
+```python
+# hybrid_load_balancer.py
+import asyncio
+import aiohttp
+import dspy
+from dspy.utils import usage_tracker
+from typing import List, Dict, Optional
+import json
+
+class HybridLMRouter:
+    """Route DSPy requests between local and cloud models"""
+    
+    def __init__(self):
+        self.local_endpoints = [
+            "http://localhost:11434",  # Ollama
+            "http://localhost:8000",   # vLLM
+        ]
+        self.cloud_models = [
+            {"name": "openai/gpt-4o", "priority": 1, "cost": 0.01},
+            {"name": "openai/gpt-4o-mini", "priority": 2, "cost": 0.001},
+        ]
+        self.current_local = 0
+    
+    async def check_local_health(self, endpoint: str) -> bool:
+        """Check if local model endpoint is healthy"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{endpoint}/health", timeout=2) as resp:
+                    return resp.status == 200
+        except:
+            return False
+    
+    async def get_available_model(self, prefer_local: bool = True) -> dict:
+        """Get next available model (local or cloud)"""
+        if prefer_local:
+            # Try local models first
+            for endpoint in self.local_endpoints:
+                if await self.check_local_health(endpoint):
+                    return {
+                        "type": "local",
+                        "endpoint": endpoint,
+                        "cost": 0.0
+                    }
+        
+        # Fallback to cloud
+        return {
+            "type": "cloud", 
+            "model": self.cloud_models[0]["name"],
+            "cost": self.cloud_models[0]["cost"]
+        }
+    
+    async def process_request(self, query: str, context: str = "") -> dict:
+        """Process request with hybrid routing"""
+        model_info = await self.get_available_model()
+        
+        if model_info["type"] == "local":
+            return await self._process_local(query, context, model_info)
+        else:
+            return await self._process_cloud(query, context, model_info)
+    
+    async def _process_local(self, query: str, context: str, model_info: dict) -> dict:
+        """Process with local model"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "model": "llama3.1",
+                    "prompt": f"Context: {context}\nQuery: {query}",
+                    "stream": False
+                }
+                async with session.post(
+                    f"{model_info['endpoint']}/api/generate",
+                    json=payload,
+                    timeout=30
+                ) as resp:
+                    result = await resp.json()
+                    return {
+                        "response": result.get("response", ""),
+                        "model": "local",
+                        "cost": 0.0,
+                        "endpoint": model_info['endpoint']
+                    }
+        except Exception as e:
+            # Fallback to cloud
+            cloud_model = await self.get_available_model(prefer_local=False)
+            return await self._process_cloud(query, context, cloud_model)
+    
+    async def _process_cloud(self, query: str, context: str, model_info: dict) -> dict:
+        """Process with cloud model"""
+        lm = dspy.LM(model_info["model"])
+        dspy.configure(lm=lm)
+        
+        class HybridProcessor(dspy.Signature):
+            """Process query with context awareness"""
+            query: str = dspy.InputField()
+            context: str = dspy.InputField()
+            response: str = dspy.OutputField()
+        
+        processor = dspy.ChainOfThought(HybridProcessor)
+        
+        with usage_tracker.track() as tracker:
+            result = processor(query=query, context=context)
+        
+        return {
+            "response": result.response,
+            "model": model_info["model"],
+            "cost": tracker.cost,
+            "tokens": tracker.total_tokens
+        }
+
+# Usage
+router = HybridLMRouter()
+
+async def hybrid_process(query: str):
+    result = await router.process_request(query)
+    print(f"Response: {result['response']}")
+    print(f"Model: {result['model']}, Cost: ${result.get('cost', 0)}")
+
+# Run
+# asyncio.run(hybrid_process("What is machine learning?"))
+```
+
+**Instant Edge-to-Cloud Sync**
+```python
+# edge_cloud_sync.py
+import asyncio
+import json
+import redis
+from datetime import datetime
+import dspy
+from dspy.utils import usage_tracker
+
+class EdgeCloudSync:
+    """Synchronize DSPy processing between edge and cloud"""
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.redis = redis.from_url(redis_url)
+        self.sync_queue = "dspy:edge_sync"
+        self.cloud_results = "dspy:cloud_results"
+    
+    async def process_with_sync(self, request_data: dict, prefer_edge: bool = True):
+        """Process request with edge-cloud synchronization"""
+        request_id = request_data.get('id', str(datetime.now().timestamp()))
+        
+        if prefer_edge:
+            # Try edge processing first
+            try:
+                result = await self._process_edge(request_data)
+                # Cache result for cloud sync
+                await self._cache_result(request_id, result, source="edge")
+                return result
+            except Exception as e:
+                print(f"Edge processing failed: {e}, falling back to cloud")
+                return await self._process_cloud_with_sync(request_data, request_id)
+        else:
+            return await self._process_cloud_with_sync(request_data, request_id)
+    
+    async def _process_edge(self, request_data: dict) -> dict:
+        """Process on edge device with local models"""
+        # This would use local Ollama/vLLM
+        import httpx
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "llama3.1",
+                    "prompt": request_data['prompt'],
+                    "stream": False
+                },
+                timeout=20
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    "response": result.get("response", ""),
+                    "source": "edge",
+                    "cost": 0.0,
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                raise Exception(f"Edge processing failed: {response.status_code}")
+    
+    async def _process_cloud_with_sync(self, request_data: dict, request_id: str) -> dict:
+        """Process in cloud and sync back to edge"""
+        class CloudProcessor(dspy.Signature):
+            """Process request in cloud with high quality"""
+            prompt: str = dspy.InputField()
+            response: str = dspy.OutputField()
+            confidence: float = dspy.OutputField()
+        
+        lm = dspy.LM('openai/gpt-4o')
+        dspy.configure(lm=lm)
+        processor = dspy.ChainOfThought(CloudProcessor)
+        
+        with usage_tracker.track() as tracker:
+            result = processor(prompt=request_data['prompt'])
+        
+        response_data = {
+            "response": result.response,
+            "confidence": result.confidence,
+            "source": "cloud",
+            "cost": tracker.cost,
+            "tokens": tracker.total_tokens,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Cache for edge sync
+        await self._cache_result(request_id, response_data, source="cloud")
+        
+        # Queue for edge synchronization
+        await self._queue_for_sync(request_id, response_data)
+        
+        return response_data
+    
+    async def _cache_result(self, request_id: str, result: dict, source: str):
+        """Cache result in Redis"""
+        cache_key = f"dspy:cache:{source}:{request_id}"
+        self.redis.setex(cache_key, 3600, json.dumps(result))  # 1 hour cache
+    
+    async def _queue_for_sync(self, request_id: str, result: dict):
+        """Queue result for edge synchronization"""
+        sync_data = {
+            "request_id": request_id,
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.redis.lpush(self.sync_queue, json.dumps(sync_data))
+    
+    async def sync_to_edge(self):
+        """Sync cloud results back to edge devices"""
+        while True:
+            try:
+                # Pop sync item
+                sync_item = self.redis.brpop(self.sync_queue, timeout=1)
+                if sync_item:
+                    sync_data = json.loads(sync_item[1])
+                    
+                    # Send to edge devices (implement your edge communication)
+                    await self._notify_edge_devices(sync_data)
+                    
+                    print(f"Synced result {sync_data['request_id']} to edge")
+                
+            except Exception as e:
+                print(f"Sync error: {e}")
+                await asyncio.sleep(5)
+    
+    async def _notify_edge_devices(self, sync_data: dict):
+        """Notify edge devices of new cloud results"""
+        # Implementation depends on edge communication method
+        # Could be WebSocket, MQTT, HTTP push, etc.
+        pass
+
+# Usage
+syncer = EdgeCloudSync()
+
+async def main():
+    request = {
+        "id": "req_001",
+        "prompt": "Explain quantum computing in simple terms"
+    }
+    
+    result = await syncer.process_with_sync(request, prefer_edge=True)
+    print(json.dumps(result, indent=2))
+    
+    # Start background sync process
+    asyncio.create_task(syncer.sync_to_edge())
+
+# asyncio.run(main())
+```
+
+**Instant Private Cloud Bridge**
+```python
+# private_cloud_bridge.py
+import asyncio
+import ssl
+from typing import Optional
+import httpx
+import dspy
+from dspy.utils import usage_tracker
+
+class PrivateCloudBridge:
+    """Bridge between private cloud and public cloud DSPy services"""
+    
+    def __init__(self, private_endpoint: str, public_fallback: bool = True):
+        self.private_endpoint = private_endpoint
+        self.public_fallback = public_fallback
+        self.ssl_context = self._create_ssl_context()
+    
+    def _create_ssl_context(self) -> ssl.SSLContext:
+        """Create SSL context for secure private cloud communication"""
+        context = ssl.create_default_context()
+        # Add your private cloud certificates
+        # context.load_verify_locations('/path/to/private-ca.crt')
+        return context
+    
+    async def process_secure(self, query: str, classification: str = "internal") -> dict:
+        """Process with data classification awareness"""
+        
+        if classification in ["confidential", "restricted", "internal"]:
+            # Must use private cloud
+            return await self._process_private(query, allow_fallback=False)
+        elif classification == "public":
+            # Can use public cloud
+            return await self._process_public(query)
+        else:
+            # Try private first, fallback to public
+            try:
+                return await self._process_private(query, allow_fallback=True)
+            except Exception as e:
+                if self.public_fallback:
+                    print(f"Private cloud failed: {e}, using public cloud")
+                    return await self._process_public(query)
+                else:
+                    raise
+    
+    async def _process_private(self, query: str, allow_fallback: bool = True) -> dict:
+        """Process using private cloud infrastructure"""
+        try:
+            async with httpx.AsyncClient(verify=self.ssl_context) as client:
+                response = await client.post(
+                    f"{self.private_endpoint}/v1/chat/completions",
+                    json={
+                        "model": "private-llama-70b",
+                        "messages": [{"role": "user", "content": query}],
+                        "max_tokens": 1000,
+                        "temperature": 0.1
+                    },
+                    headers={
+                        "Authorization": f"Bearer {os.environ.get('PRIVATE_CLOUD_TOKEN')}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "response": result["choices"][0]["message"]["content"],
+                        "model": "private-cloud",
+                        "cost": 0.0,  # Internal cost tracking
+                        "classification": "private",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                else:
+                    raise Exception(f"Private cloud returned {response.status_code}")
+                    
+        except Exception as e:
+            if allow_fallback and self.public_fallback:
+                raise Exception(f"Private cloud processing failed: {e}")
+            else:
+                raise
+    
+    async def _process_public(self, query: str) -> dict:
+        """Process using public cloud with data sanitization"""
+        # Sanitize query for public cloud
+        sanitized_query = await self._sanitize_for_public(query)
+        
+        class PublicCloudProcessor(dspy.Signature):
+            """Process sanitized query in public cloud"""
+            query: str = dspy.InputField()
+            response: str = dspy.OutputField()
+        
+        lm = dspy.LM('openai/gpt-4o-mini')  # Cost-effective for public
+        dspy.configure(lm=lm)
+        processor = dspy.ChainOfThought(PublicCloudProcessor)
+        
+        with usage_tracker.track() as tracker:
+            result = processor(query=sanitized_query)
+        
+        return {
+            "response": result.response,
+            "model": "public-cloud",
+            "cost": tracker.cost,
+            "tokens": tracker.total_tokens,
+            "classification": "public",
+            "sanitized": True,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    async def _sanitize_for_public(self, query: str) -> str:
+        """Remove sensitive information before public cloud processing"""
+        import re
+        
+        # Basic sanitization patterns
+        patterns = [
+            (r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]'),  # SSN
+            (r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b', '[CARD]'),  # Credit card
+            (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]'),  # Email
+            (r'\b(?:\+?1[-.]?)?\(?([0-9]{3})\)?[-.]?([0-9]{3})[-.]?([0-9]{4})\b', '[PHONE]'),  # Phone
+        ]
+        
+        sanitized = query
+        for pattern, replacement in patterns:
+            sanitized = re.sub(pattern, replacement, sanitized)
+        
+        return sanitized
+
+# Usage
+bridge = PrivateCloudBridge(
+    private_endpoint="https://private-ai.company.com",
+    public_fallback=True
+)
+
+async def process_query(query: str, data_class: str = "internal"):
+    result = await bridge.process_secure(query, classification=data_class)
+    print(f"Model: {result['model']}")
+    print(f"Classification: {result['classification']}")
+    print(f"Response: {result['response']}")
+    if result.get('cost', 0) > 0:
+        print(f"Cost: ${result['cost']}")
+
+# Example usage
+# asyncio.run(process_query("Analyze customer data", "confidential"))
+# asyncio.run(process_query("What is the weather?", "public"))
+```
+
+## Comprehensive Patterns
+
+### Multi-Region Hybrid Architecture
+
+**Global Hybrid DSPy Deployment**
+```python
+# global_hybrid_dspy.py
+import asyncio
+import json
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
+from enum import Enum
+import httpx
+import dspy
+from dspy.utils import usage_tracker
+
+class RegionType(Enum):
+    EDGE = "edge"
+    PRIVATE_CLOUD = "private_cloud"
+    PUBLIC_CLOUD = "public_cloud"
+    HYBRID_ZONE = "hybrid_zone"
+
+@dataclass
+class RegionConfig:
+    name: str
+    type: RegionType
+    endpoint: str
+    latency_priority: int
+    cost_priority: int
+    security_level: str
+    data_residency: str
+    available_models: List[str]
+
+class GlobalHybridOrchestrator:
+    """Orchestrate DSPy processing across global hybrid infrastructure"""
+    
+    def __init__(self):
+        self.regions = self._initialize_regions()
+        self.latency_cache = {}
+        self.load_balancer = LoadBalancer()
+    
+    def _initialize_regions(self) -> Dict[str, RegionConfig]:
+        """Initialize global region configurations"""
+        return {
+            "edge-us-west": RegionConfig(
+                name="edge-us-west",
+                type=RegionType.EDGE,
+                endpoint="http://edge-usw.company.com:8080",
+                latency_priority=1,
+                cost_priority=1,
+                security_level="high",
+                data_residency="us",
+                available_models=["llama3.1-8b", "phi3-mini"]
+            ),
+            "private-us-east": RegionConfig(
+                name="private-us-east",
+                type=RegionType.PRIVATE_CLOUD,
+                endpoint="https://private-use.company.com",
+                latency_priority=2,
+                cost_priority=2,
+                security_level="maximum",
+                data_residency="us",
+                available_models=["llama3.1-70b", "codellama-34b", "private-gpt-4"]
+            ),
+            "public-aws-us": RegionConfig(
+                name="public-aws-us",
+                type=RegionType.PUBLIC_CLOUD,
+                endpoint="https://api.openai.com",
+                latency_priority=3,
+                cost_priority=4,
+                security_level="standard",
+                data_residency="us",
+                available_models=["gpt-4o", "gpt-4o-mini", "claude-3-sonnet"]
+            ),
+            "hybrid-eu": RegionConfig(
+                name="hybrid-eu",
+                type=RegionType.HYBRID_ZONE,
+                endpoint="https://hybrid-eu.company.com",
+                latency_priority=4,
+                cost_priority=3,
+                security_level="high",
+                data_residency="eu",
+                available_models=["eu-llama-70b", "gpt-4o-eu"]
+            )
+        }
+    
+    async def process_global_request(self, 
+                                   request: dict,
+                                   user_location: str = "us",
+                                   data_classification: str = "internal",
+                                   latency_requirement: str = "standard") -> dict:
+        """Process request using optimal global region"""
+        
+        # Select optimal region based on requirements
+        optimal_region = await self._select_optimal_region(
+            user_location, data_classification, latency_requirement
+        )
+        
+        # Process with selected region
+        result = await self._process_in_region(request, optimal_region)
+        
+        # Add global metadata
+        result.update({
+            "region": optimal_region.name,
+            "region_type": optimal_region.type.value,
+            "data_residency": optimal_region.data_residency,
+            "global_request_id": request.get("id", "unknown")
+        })
+        
+        return result
+    
+    async def _select_optimal_region(self, 
+                                   user_location: str,
+                                   data_classification: str,
+                                   latency_requirement: str) -> RegionConfig:
+        """Select optimal region based on requirements"""
+        
+        # Filter regions by data residency requirements
+        eligible_regions = [
+            region for region in self.regions.values()
+            if self._meets_residency_requirements(region, user_location, data_classification)
+        ]
+        
+        if not eligible_regions:
+            raise Exception("No eligible regions for data residency requirements")
+        
+        # Score regions based on requirements
+        scored_regions = []
+        for region in eligible_regions:
+            score = await self._calculate_region_score(region, latency_requirement, data_classification)
+            scored_regions.append((region, score))
+        
+        # Select highest scoring region
+        best_region = max(scored_regions, key=lambda x: x[1])[0]
+        return best_region
+    
+    def _meets_residency_requirements(self, region: RegionConfig, user_location: str, classification: str) -> bool:
+        """Check if region meets data residency requirements"""
+        if classification in ["confidential", "restricted"]:
+            # Must stay within same region
+            return region.data_residency == user_location and region.security_level == "maximum"
+        elif classification == "internal":
+            # Can use private cloud or same region
+            return (region.data_residency == user_location or 
+                   region.type in [RegionType.PRIVATE_CLOUD, RegionType.EDGE])
+        else:
+            # Public data can go anywhere
+            return True
+    
+    async def _calculate_region_score(self, region: RegionConfig, latency_req: str, classification: str) -> float:
+        """Calculate region suitability score"""
+        score = 0.0
+        
+        # Latency scoring
+        if latency_req == "ultra_low":
+            score += (5 - region.latency_priority) * 3  # Heavily weight latency
+        elif latency_req == "low":
+            score += (5 - region.latency_priority) * 2
+        else:
+            score += (5 - region.latency_priority)
+        
+        # Cost scoring
+        score += (5 - region.cost_priority) * 1.5
+        
+        # Security scoring
+        security_scores = {"maximum": 3, "high": 2, "standard": 1}
+        if classification in ["confidential", "restricted"]:
+            score += security_scores.get(region.security_level, 0) * 2
+        
+        # Availability scoring (check real-time health)
+        health_score = await self._check_region_health(region)
+        score += health_score * 2
+        
+        return score
+    
+    async def _check_region_health(self, region: RegionConfig) -> float:
+        """Check region health and return score 0-1"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{region.endpoint}/health",
+                    timeout=5
+                )
+                return 1.0 if response.status_code == 200 else 0.5
+        except:
+            return 0.0
+    
+    async def _process_in_region(self, request: dict, region: RegionConfig) -> dict:
+        """Process request in specific region"""
+        if region.type == RegionType.EDGE:
+            return await self._process_edge_region(request, region)
+        elif region.type == RegionType.PRIVATE_CLOUD:
+            return await self._process_private_region(request, region)
+        elif region.type == RegionType.PUBLIC_CLOUD:
+            return await self._process_public_region(request, region)
+        elif region.type == RegionType.HYBRID_ZONE:
+            return await self._process_hybrid_region(request, region)
+        else:
+            raise Exception(f"Unknown region type: {region.type}")
+    
+    async def _process_edge_region(self, request: dict, region: RegionConfig) -> dict:
+        """Process in edge region using local models"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{region.endpoint}/v1/completions",
+                    json={
+                        "model": region.available_models[0],  # Use fastest model
+                        "prompt": request["prompt"],
+                        "max_tokens": 500
+                    },
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "response": result["choices"][0]["text"],
+                        "model": region.available_models[0],
+                        "cost": 0.0,
+                        "processing_time": result.get("processing_time", 0),
+                        "source": "edge"
+                    }
+                else:
+                    raise Exception(f"Edge processing failed: {response.status_code}")
+        except Exception as e:
+            # Fallback to next best region
+            raise Exception(f"Edge region processing failed: {e}")
+    
+    async def _process_private_region(self, request: dict, region: RegionConfig) -> dict:
+        """Process in private cloud region"""
+        # Similar implementation but with private cloud authentication
+        pass
+    
+    async def _process_public_region(self, request: dict, region: RegionConfig) -> dict:
+        """Process in public cloud region using DSPy"""
+        class GlobalProcessor(dspy.Signature):
+            """Process request in global public cloud"""
+            prompt: str = dspy.InputField()
+            region: str = dspy.InputField()
+            response: str = dspy.OutputField()
+        
+        # Select best model from region's available models
+        model_name = self._select_best_model(region.available_models, request.get("complexity", "medium"))
+        
+        lm = dspy.LM(model_name)
+        dspy.configure(lm=lm)
+        processor = dspy.ChainOfThought(GlobalProcessor)
+        
+        with usage_tracker.track() as tracker:
+            result = processor(
+                prompt=request["prompt"],
+                region=region.name
+            )
+        
+        return {
+            "response": result.response,
+            "model": model_name,
+            "cost": tracker.cost,
+            "tokens": tracker.total_tokens,
+            "processing_time": tracker.total_time,
+            "source": "public_cloud"
+        }
+    
+    async def _process_hybrid_region(self, request: dict, region: RegionConfig) -> dict:
+        """Process in hybrid zone with smart routing"""
+        # Implement hybrid processing logic
+        # Could involve local preprocessing + cloud enhancement
+        pass
+    
+    def _select_best_model(self, available_models: List[str], complexity: str) -> str:
+        """Select best model based on request complexity"""
+        if complexity == "high":
+            # Prefer larger models
+            for model in ["gpt-4o", "claude-3-sonnet", "llama3.1-70b"]:
+                if model in available_models:
+                    return model
+        elif complexity == "low":
+            # Prefer faster/cheaper models
+            for model in ["gpt-4o-mini", "phi3-mini", "llama3.1-8b"]:
+                if model in available_models:
+                    return model
+        
+        # Default to first available
+        return available_models[0] if available_models else "gpt-4o-mini"
+
+class LoadBalancer:
+    """Distribute load across hybrid regions"""
+    
+    def __init__(self):
+        self.region_loads = {}
+        self.circuit_breakers = {}
+    
+    async def get_load_score(self, region_name: str) -> float:
+        """Get current load score for region"""
+        return self.region_loads.get(region_name, 0.0)
+    
+    async def update_load(self, region_name: str, processing_time: float):
+        """Update load metrics for region"""
+        current_load = self.region_loads.get(region_name, 0.0)
+        # Exponential moving average
+        self.region_loads[region_name] = current_load * 0.8 + processing_time * 0.2
+
+# Usage example
+orchestrator = GlobalHybridOrchestrator()
+
+async def process_global_query():
+    request = {
+        "id": "req_global_001",
+        "prompt": "Analyze quarterly financial data",
+        "complexity": "high"
+    }
+    
+    result = await orchestrator.process_global_request(
+        request=request,
+        user_location="us",
+        data_classification="internal",
+        latency_requirement="low"
+    )
+    
+    print(f"Processed in region: {result['region']}")
+    print(f"Model used: {result['model']}")
+    print(f"Cost: ${result.get('cost', 0)}")
+    print(f"Response: {result['response'][:100]}...")
+
+# asyncio.run(process_global_query())
+```
+
+### Data Synchronization Patterns
+
+**Hybrid Data Sync Manager**
+```python
+# hybrid_data_sync.py
+import asyncio
+import json
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+import hashlib
+import aiofiles
+import aioredis
+import dspy
+
+class HybridDataSyncManager:
+    """Manage data synchronization between hybrid environments"""
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.redis = None
+        self.redis_url = redis_url
+        self.sync_config = {
+            "sync_interval": 300,  # 5 minutes
+            "batch_size": 100,
+            "conflict_resolution": "timestamp",  # or "priority", "manual"
+            "encryption_key": os.environ.get("SYNC_ENCRYPTION_KEY")
+        }
+        
+    async def initialize(self):
+        """Initialize sync manager"""
+        self.redis = await aioredis.from_url(self.redis_url)
+    
+    async def sync_dspy_configurations(self, source_env: str, target_env: str):
+        """Sync DSPy configurations between environments"""
+        # Get configurations from source
+        source_configs = await self._get_environment_configs(source_env)
+        
+        # Apply to target environment
+        for config_name, config_data in source_configs.items():
+            await self._apply_config_to_environment(config_name, config_data, target_env)
+            
+            # Log sync operation
+            await self._log_sync_operation(
+                operation="config_sync",
+                source=source_env,
+                target=target_env,
+                item=config_name,
+                status="completed"
+            )
+    
+    async def sync_model_cache(self, environments: List[str]):
+        """Sync model cache between environments"""
+        for env in environments:
+            cache_data = await self._get_model_cache(env)
+            
+            for other_env in environments:
+                if other_env != env:
+                    await self._push_cache_to_environment(cache_data, other_env)
+    
+    async def sync_usage_analytics(self, source_env: str, central_analytics: str):
+        """Sync usage analytics to central system"""
+        usage_data = await self._collect_usage_data(source_env)
+        
+        # Aggregate and anonymize
+        aggregated_data = self._aggregate_usage_data(usage_data)
+        
+        # Push to central analytics
+        await self._push_to_central_analytics(aggregated_data, central_analytics)
+    
+    async def handle_conflict_resolution(self, conflict_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle data synchronization conflicts"""
+        resolution_strategy = self.sync_config["conflict_resolution"]
+        
+        if resolution_strategy == "timestamp":
+            return self._resolve_by_timestamp(conflict_data)
+        elif resolution_strategy == "priority":
+            return self._resolve_by_priority(conflict_data)
+        elif resolution_strategy == "manual":
+            return await self._resolve_manually(conflict_data)
+        else:
+            raise ValueError(f"Unknown conflict resolution strategy: {resolution_strategy}")
+    
+    async def _get_environment_configs(self, environment: str) -> Dict[str, Any]:
+        """Get DSPy configurations from environment"""
+        config_key = f"dspy:config:{environment}"
+        config_data = await self.redis.hgetall(config_key)
+        
+        return {
+            key.decode(): json.loads(value.decode())
+            for key, value in config_data.items()
+        }
+    
+    async def _apply_config_to_environment(self, config_name: str, config_data: Dict[str, Any], target_env: str):
+        """Apply configuration to target environment"""
+        config_key = f"dspy:config:{target_env}"
+        
+        # Check for conflicts
+        existing_config = await self.redis.hget(config_key, config_name)
+        
+        if existing_config:
+            existing_data = json.loads(existing_config.decode())
+            if existing_data != config_data:
+                # Handle conflict
+                resolved_config = await self.handle_conflict_resolution({
+                    "existing": existing_data,
+                    "new": config_data,
+                    "config_name": config_name,
+                    "target_env": target_env
+                })
+                config_data = resolved_config
+        
+        # Apply configuration
+        await self.redis.hset(config_key, config_name, json.dumps(config_data))
+    
+    async def _get_model_cache(self, environment: str) -> Dict[str, Any]:
+        """Get model cache from environment"""
+        cache_key = f"dspy:cache:models:{environment}"
+        cache_data = await self.redis.hgetall(cache_key)
+        
+        return {
+            key.decode(): json.loads(value.decode())
+            for key, value in cache_data.items()
+        }
+    
+    async def _push_cache_to_environment(self, cache_data: Dict[str, Any], target_env: str):
+        """Push cache data to target environment"""
+        cache_key = f"dspy:cache:models:{target_env}"
+        
+        for cache_item_key, cache_item_data in cache_data.items():
+            # Check cache age and relevance
+            if self._is_cache_relevant(cache_item_data):
+                await self.redis.hset(cache_key, cache_item_key, json.dumps(cache_item_data))
+    
+    def _is_cache_relevant(self, cache_item: Dict[str, Any]) -> bool:
+        """Check if cache item is still relevant"""
+        created_at = datetime.fromisoformat(cache_item.get("created_at", "1970-01-01"))
+        max_age = timedelta(hours=24)  # Cache valid for 24 hours
+        
+        return datetime.now() - created_at < max_age
+    
+    async def _collect_usage_data(self, environment: str) -> List[Dict[str, Any]]:
+        """Collect usage analytics from environment"""
+        usage_key = f"dspy:usage:{environment}"
+        usage_data = await self.redis.lrange(usage_key, 0, -1)
+        
+        return [json.loads(item.decode()) for item in usage_data]
+    
+    def _aggregate_usage_data(self, usage_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Aggregate and anonymize usage data"""
+        aggregated = {
+            "total_requests": len(usage_data),
+            "total_cost": sum(item.get("cost", 0) for item in usage_data),
+            "total_tokens": sum(item.get("tokens", 0) for item in usage_data),
+            "models_used": {},
+            "hourly_distribution": {},
+            "error_count": 0
+        }
+        
+        for item in usage_data:
+            # Model usage
+            model = item.get("model", "unknown")
+            if model not in aggregated["models_used"]:
+                aggregated["models_used"][model] = {"count": 0, "cost": 0, "tokens": 0}
+            
+            aggregated["models_used"][model]["count"] += 1
+            aggregated["models_used"][model]["cost"] += item.get("cost", 0)
+            aggregated["models_used"][model]["tokens"] += item.get("tokens", 0)
+            
+            # Hourly distribution
+            timestamp = item.get("timestamp", "")
+            if timestamp:
+                hour = datetime.fromisoformat(timestamp).hour
+                aggregated["hourly_distribution"][str(hour)] = aggregated["hourly_distribution"].get(str(hour), 0) + 1
+            
+            # Errors
+            if item.get("status") == "error":
+                aggregated["error_count"] += 1
+        
+        return aggregated
+    
+    async def _push_to_central_analytics(self, data: Dict[str, Any], central_system: str):
+        """Push aggregated data to central analytics system"""
+        analytics_key = f"dspy:central_analytics:{central_system}"
+        timestamp = datetime.now().isoformat()
+        
+        analytics_record = {
+            "timestamp": timestamp,
+            "data": data,
+            "source": "hybrid_sync"
+        }
+        
+        await self.redis.lpush(analytics_key, json.dumps(analytics_record))
+        
+        # Keep only last 1000 records
+        await self.redis.ltrim(analytics_key, 0, 999)
+    
+    def _resolve_by_timestamp(self, conflict_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve conflict by choosing most recent"""
+        existing = conflict_data["existing"]
+        new = conflict_data["new"]
+        
+        existing_time = existing.get("updated_at", "1970-01-01")
+        new_time = new.get("updated_at", "1970-01-01")
+        
+        return new if new_time > existing_time else existing
+    
+    def _resolve_by_priority(self, conflict_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve conflict by priority (e.g., production > staging)"""
+        existing = conflict_data["existing"]
+        new = conflict_data["new"]
+        
+        priority_order = ["production", "staging", "development", "test"]
+        
+        existing_priority = existing.get("environment_priority", "development")
+        new_priority = new.get("environment_priority", "development")
+        
+        existing_index = priority_order.index(existing_priority) if existing_priority in priority_order else len(priority_order)
+        new_index = priority_order.index(new_priority) if new_priority in priority_order else len(priority_order)
+        
+        return new if new_index < existing_index else existing
+    
+    async def _resolve_manually(self, conflict_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Queue conflict for manual resolution"""
+        conflict_id = hashlib.md5(json.dumps(conflict_data, sort_keys=True).encode()).hexdigest()
+        conflict_key = f"dspy:conflicts:manual:{conflict_id}"
+        
+        conflict_record = {
+            "id": conflict_id,
+            "conflict_data": conflict_data,
+            "created_at": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        
+        await self.redis.set(conflict_key, json.dumps(conflict_record))
+        
+        # For now, return existing (conservative choice)
+        return conflict_data["existing"]
+    
+    async def _log_sync_operation(self, **kwargs):
+        """Log synchronization operation"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            **kwargs
+        }
+        
+        await self.redis.lpush("dspy:sync:log", json.dumps(log_entry))
+        # Keep only last 10000 log entries
+        await self.redis.ltrim("dspy:sync:log", 0, 9999)
+
+# Automated sync scheduler
+class HybridSyncScheduler:
+    """Schedule automatic synchronization between environments"""
+    
+    def __init__(self, sync_manager: HybridDataSyncManager):
+        self.sync_manager = sync_manager
+        self.running = False
+    
+    async def start_scheduler(self):
+        """Start the synchronization scheduler"""
+        self.running = True
+        
+        while self.running:
+            try:
+                # Sync configurations every 5 minutes
+                await self.sync_manager.sync_dspy_configurations("edge", "private_cloud")
+                await self.sync_manager.sync_dspy_configurations("private_cloud", "public_cloud")
+                
+                # Sync model caches every 15 minutes
+                if datetime.now().minute % 15 == 0:
+                    await self.sync_manager.sync_model_cache(["edge", "private_cloud"])
+                
+                # Sync analytics every hour
+                if datetime.now().minute == 0:
+                    await self.sync_manager.sync_usage_analytics("edge", "central_analytics")
+                    await self.sync_manager.sync_usage_analytics("private_cloud", "central_analytics")
+                
+                await asyncio.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                print(f"Sync scheduler error: {e}")
+                await asyncio.sleep(300)  # Wait 5 minutes on error
+    
+    def stop_scheduler(self):
+        """Stop the synchronization scheduler"""
+        self.running = False
+
+# Usage
+async def setup_hybrid_sync():
+    sync_manager = HybridDataSyncManager()
+    await sync_manager.initialize()
+    
+    scheduler = HybridSyncScheduler(sync_manager)
+    
+    # Start background sync
+    asyncio.create_task(scheduler.start_scheduler())
+    
+    return sync_manager
+
+# Example usage
+# sync_manager = await setup_hybrid_sync()
+```
+
+## Core Implementation Patterns
+
+### Hybrid Security Model
+
+**Zero-Trust Hybrid Security**
+```python
+# hybrid_security.py
+import asyncio
+import jwt
+import hashlib
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+import httpx
+import dspy
+from dspy.utils import usage_tracker
+
+class HybridSecurityManager:
+    """Implement zero-trust security across hybrid DSPy deployments"""
+    
+    def __init__(self):
+        self.trust_boundaries = {
+            "edge": {"security_level": 3, "requires_cert": True, "data_encryption": True},
+            "private_cloud": {"security_level": 4, "requires_cert": True, "data_encryption": True},
+            "public_cloud": {"security_level": 2, "requires_cert": False, "data_encryption": True},
+            "hybrid_zone": {"security_level": 3, "requires_cert": True, "data_encryption": True}
+        }
+        self.token_cache = {}
+        self.audit_log = []
+    
+    async def authenticate_request(self, request: Dict[str, Any], source_zone: str, target_zone: str) -> bool:
+        """Authenticate cross-zone request"""
+        # Extract authentication token
+        token = request.get("auth_token")
+        if not token:
+            await self._log_security_event("authentication_failed", "missing_token", source_zone, target_zone)
+            return False
+        
+        # Validate token
+        try:
+            payload = jwt.decode(token, self._get_zone_secret(source_zone), algorithms=["HS256"])
+            
+            # Check token expiry
+            if datetime.fromtimestamp(payload["exp"]) < datetime.now():
+                await self._log_security_event("authentication_failed", "token_expired", source_zone, target_zone)
+                return False
+            
+            # Check zone permissions
+            if not self._has_zone_permission(payload, source_zone, target_zone):
+                await self._log_security_event("authorization_failed", "insufficient_permissions", source_zone, target_zone)
+                return False
+            
+            # Cache valid token
+            self.token_cache[token] = {
+                "payload": payload,
+                "validated_at": datetime.now(),
+                "source_zone": source_zone
+            }
+            
+            await self._log_security_event("authentication_success", "valid_token", source_zone, target_zone)
+            return True
+            
+        except jwt.InvalidTokenError as e:
+            await self._log_security_event("authentication_failed", f"invalid_token: {e}", source_zone, target_zone)
+            return False
+    
+    async def encrypt_data_for_zone(self, data: Dict[str, Any], target_zone: str) -> Dict[str, Any]:
+        """Encrypt data based on target zone requirements"""
+        zone_config = self.trust_boundaries.get(target_zone)
+        
+        if not zone_config or not zone_config.get("data_encryption", False):
+            return data
+        
+        # Implement zone-specific encryption
+        encrypted_data = await self._encrypt_with_zone_key(data, target_zone)
+        
+        return {
+            "encrypted": True,
+            "target_zone": target_zone,
+            "data": encrypted_data,
+            "encryption_method": "AES-256-GCM",
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    async def decrypt_data_from_zone(self, encrypted_data: Dict[str, Any], source_zone: str) -> Dict[str, Any]:
+        """Decrypt data from source zone"""
+        if not encrypted_data.get("encrypted", False):
+            return encrypted_data
+        
+        try:
+            decrypted_data = await self._decrypt_with_zone_key(encrypted_data["data"], source_zone)
+            return decrypted_data
+        except Exception as e:
+            await self._log_security_event("decryption_failed", str(e), source_zone, "local")
+            raise SecurityError(f"Failed to decrypt data from {source_zone}: {e}")
+    
+    async def validate_data_classification(self, data: Dict[str, Any], source_zone: str, target_zone: str) -> bool:
+        """Validate data can be processed in target zone based on classification"""
+        data_classification = data.get("classification", "internal")
+        
+        # Define zone data handling capabilities
+        zone_capabilities = {
+            "edge": ["public", "internal"],
+            "private_cloud": ["public", "internal", "confidential", "restricted"],
+            "public_cloud": ["public"],
+            "hybrid_zone": ["public", "internal", "confidential"]
+        }
+        
+        target_capabilities = zone_capabilities.get(target_zone, [])
+        
+        if data_classification not in target_capabilities:
+            await self._log_security_event(
+                "data_classification_violation",
+                f"Cannot process {data_classification} data in {target_zone}",
+                source_zone,
+                target_zone
+            )
+            return False
+        
+        return True
+    
+    async def create_secure_dspy_processor(self, zone: str, classification: str) -> Any:
+        """Create DSPy processor with zone-appropriate security"""
+        zone_config = self.trust_boundaries.get(zone)
+        
+        if not zone_config:
+            raise SecurityError(f"Unknown security zone: {zone}")
+        
+        # Select appropriate model based on security level
+        if zone_config["security_level"] >= 4:
+            # High security - use private models
+            model = await self._get_private_model(zone)
+        elif zone_config["security_level"] >= 3:
+            # Medium security - can use hybrid models
+            model = await self._get_hybrid_model(zone, classification)
+        else:
+            # Standard security - can use public models
+            model = await self._get_public_model(classification)
+        
+        class SecureProcessor(dspy.Signature):
+            """Secure processor with audit logging"""
+            query: str = dspy.InputField()
+            zone: str = dspy.InputField()
+            classification: str = dspy.InputField()
+            response: str = dspy.OutputField()
+            security_score: float = dspy.OutputField()
+        
+        processor = dspy.ChainOfThought(SecureProcessor)
+        
+        # Wrap processor with security monitoring
+        return SecureProcessorWrapper(processor, zone, self)
+    
+    def _get_zone_secret(self, zone: str) -> str:
+        """Get zone-specific JWT secret"""
+        return os.environ.get(f"ZONE_SECRET_{zone.upper()}", "default_secret")
+    
+    def _has_zone_permission(self, token_payload: Dict[str, Any], source_zone: str, target_zone: str) -> bool:
+        """Check if token has permission for zone transition"""
+        permissions = token_payload.get("permissions", [])
+        required_permission = f"{source_zone}:{target_zone}"
+        
+        return required_permission in permissions or "all:all" in permissions
+    
+    async def _encrypt_with_zone_key(self, data: Dict[str, Any], zone: str) -> str:
+        """Encrypt data with zone-specific key"""
+        # Implement AES encryption with zone key
+        import base64
+        from cryptography.fernet import Fernet
+        
+        zone_key = os.environ.get(f"ZONE_KEY_{zone.upper()}")
+        if not zone_key:
+            raise SecurityError(f"No encryption key found for zone: {zone}")
+        
+        fernet = Fernet(zone_key.encode())
+        encrypted_bytes = fernet.encrypt(json.dumps(data).encode())
+        
+        return base64.b64encode(encrypted_bytes).decode()
+    
+    async def _decrypt_with_zone_key(self, encrypted_data: str, zone: str) -> Dict[str, Any]:
+        """Decrypt data with zone-specific key"""
+        import base64
+        from cryptography.fernet import Fernet
+        
+        zone_key = os.environ.get(f"ZONE_KEY_{zone.upper()}")
+        if not zone_key:
+            raise SecurityError(f"No decryption key found for zone: {zone}")
+        
+        fernet = Fernet(zone_key.encode())
+        encrypted_bytes = base64.b64decode(encrypted_data.encode())
+        decrypted_bytes = fernet.decrypt(encrypted_bytes)
+        
+        return json.loads(decrypted_bytes.decode())
+    
+    async def _get_private_model(self, zone: str) -> str:
+        """Get private model for high-security zone"""
+        private_models = {
+            "private_cloud": "private-gpt-4",
+            "hybrid_zone": "hybrid-claude-3"
+        }
+        return private_models.get(zone, "private-llama-70b")
+    
+    async def _get_hybrid_model(self, zone: str, classification: str) -> str:
+        """Get hybrid model for medium-security zone"""
+        if classification == "confidential":
+            return "private-llama-70b"
+        else:
+            return "openai/gpt-4o"
+    
+    async def _get_public_model(self, classification: str) -> str:
+        """Get public model for standard security"""
+        return "openai/gpt-4o-mini" if classification == "public" else "openai/gpt-4o"
+    
+    async def _log_security_event(self, event_type: str, details: str, source_zone: str, target_zone: str):
+        """Log security event for audit"""
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "details": details,
+            "source_zone": source_zone,
+            "target_zone": target_zone,
+            "severity": self._get_event_severity(event_type)
+        }
+        
+        self.audit_log.append(event)
+        
+        # Keep only last 10000 events
+        if len(self.audit_log) > 10000:
+            self.audit_log = self.audit_log[-10000:]
+        
+        # Alert on high-severity events
+        if event["severity"] == "high":
+            await self._send_security_alert(event)
+    
+    def _get_event_severity(self, event_type: str) -> str:
+        """Get severity level for event type"""
+        high_severity = ["authentication_failed", "authorization_failed", "data_classification_violation"]
+        medium_severity = ["decryption_failed", "token_expired"]
+        
+        if event_type in high_severity:
+            return "high"
+        elif event_type in medium_severity:
+            return "medium"
+        else:
+            return "low"
+    
+    async def _send_security_alert(self, event: Dict[str, Any]):
+        """Send security alert for high-severity events"""
+        # Implement alerting mechanism (email, Slack, PagerDuty, etc.)
+        print(f"SECURITY ALERT: {event}")
+
+class SecureProcessorWrapper:
+    """Wrapper for DSPy processor with security monitoring"""
+    
+    def __init__(self, processor, zone: str, security_manager: HybridSecurityManager):
+        self.processor = processor
+        self.zone = zone
+        self.security_manager = security_manager
+    
+    async def __call__(self, **kwargs):
+        """Secure processing with audit logging"""
+        start_time = datetime.now()
+        
+        try:
+            # Log processing start
+            await self.security_manager._log_security_event(
+                "processing_start", 
+                f"Started processing in {self.zone}",
+                self.zone,
+                self.zone
+            )
+            
+            # Process with usage tracking
+            with usage_tracker.track() as tracker:
+                result = self.processor(**kwargs)
+            
+            # Add security metadata
+            result.security_score = self._calculate_security_score(kwargs, result)
+            
+            # Log successful processing
+            await self.security_manager._log_security_event(
+                "processing_success",
+                f"Completed processing in {self.zone}",
+                self.zone,
+                self.zone
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Log processing error
+            await self.security_manager._log_security_event(
+                "processing_error",
+                f"Processing failed in {self.zone}: {e}",
+                self.zone,
+                self.zone
+            )
+            raise
+    
+    def _calculate_security_score(self, inputs: Dict[str, Any], result: Any) -> float:
+        """Calculate security score for processing"""
+        score = 1.0
+        
+        # Adjust based on data sensitivity
+        classification = inputs.get("classification", "internal")
+        if classification == "restricted":
+            score *= 0.8
+        elif classification == "confidential":
+            score *= 0.9
+        
+        # Adjust based on zone security level
+        zone_config = self.security_manager.trust_boundaries.get(self.zone, {})
+        security_level = zone_config.get("security_level", 1)
+        score *= min(1.0, security_level / 4.0)
+        
+        return score
+
+class SecurityError(Exception):
+    """Security-related error"""
+    pass
+
+# Usage
+async def secure_hybrid_processing():
+    security_manager = HybridSecurityManager()
+    
+    # Create secure processor for private cloud
+    processor = await security_manager.create_secure_dspy_processor(
+        zone="private_cloud",
+        classification="confidential"
+    )
+    
+    # Process request securely
+    result = await processor(
+        query="Analyze sensitive customer data",
+        zone="private_cloud",
+        classification="confidential"
+    )
+    
+    print(f"Response: {result.response}")
+    print(f"Security Score: {result.security_score}")
+
+# asyncio.run(secure_hybrid_processing())
+```
+
+## Optimization Strategies
+
+### Intelligent Workload Distribution
+
+**Smart Hybrid Workload Router**
+```python
+# smart_workload_router.py
+import asyncio
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+import numpy as np
+from dataclasses import dataclass
+import dspy
+from dspy.utils import usage_tracker
+
+@dataclass
+class WorkloadMetrics:
+    latency: float
+    cost: float
+    accuracy: float
+    availability: float
+    security_score: float
+    timestamp: datetime
+
+class IntelligentWorkloadRouter:
+    """Route DSPy workloads intelligently across hybrid infrastructure"""
+    
+    def __init__(self):
+        self.zone_metrics = {
+            "edge": [],
+            "private_cloud": [],
+            "public_cloud": [],
+            "hybrid_zone": []
+        }
+        self.learned_patterns = {}
+        self.routing_model = None
+        self._initialize_routing_intelligence()
+    
+    def _initialize_routing_intelligence(self):
+        """Initialize ML-based routing intelligence"""
+        # Simple decision tree for routing (could be replaced with more sophisticated ML)
+        self.routing_rules = {
+            "ultra_low_latency": {"priority": "edge", "fallback": ["hybrid_zone", "private_cloud"]},
+            "high_security": {"priority": "private_cloud", "fallback": ["hybrid_zone"]},
+            "cost_optimal": {"priority": "public_cloud", "fallback": ["edge", "hybrid_zone"]},
+            "high_accuracy": {"priority": "private_cloud", "fallback": ["public_cloud", "hybrid_zone"]},
+            "balanced": {"priority": "hybrid_zone", "fallback": ["private_cloud", "public_cloud", "edge"]}
+        }
+    
+    async def route_workload(self, request: Dict[str, Any]) -> str:
+        """Intelligently route workload to optimal zone"""
+        
+        # Extract workload characteristics
+        workload_profile = self._analyze_workload(request)
+        
+        # Get current zone performance
+        zone_performance = await self._get_zone_performance()
+        
+        # Calculate optimal routing
+        optimal_zone = self._calculate_optimal_zone(workload_profile, zone_performance)
+        
+        # Update routing patterns
+        await self._update_routing_patterns(request, optimal_zone)
+        
+        return optimal_zone
+    
+    def _analyze_workload(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze workload characteristics"""
+        profile = {
+            "complexity": self._assess_complexity(request.get("prompt", "")),
+            "security_requirement": request.get("classification", "internal"),
+            "latency_requirement": request.get("latency_sla", "standard"),
+            "cost_constraint": request.get("cost_limit", 1.0),
+            "accuracy_requirement": request.get("accuracy_sla", "standard"),
+            "data_size": len(str(request.get("prompt", ""))),
+            "user_location": request.get("user_location", "us"),
+            "time_of_day": datetime.now().hour
+        }
+        
+        return profile
+    
+    def _assess_complexity(self, prompt: str) -> str:
+        """Assess computational complexity of prompt"""
+        word_count = len(prompt.split())
+        
+        # Simple heuristics (could be ML-based)
+        if word_count < 10:
+            return "low"
+        elif word_count < 100:
+            return "medium"
+        elif word_count < 500:
+            return "high"
+        else:
+            return "ultra_high"
+    
+    async def _get_zone_performance(self) -> Dict[str, Dict[str, float]]:
+        """Get current performance metrics for all zones"""
+        performance = {}
+        
+        for zone in self.zone_metrics:
+            recent_metrics = [
+                m for m in self.zone_metrics[zone]
+                if datetime.now() - m.timestamp < timedelta(minutes=15)
+            ]
+            
+            if recent_metrics:
+                performance[zone] = {
+                    "latency": np.mean([m.latency for m in recent_metrics]),
+                    "cost": np.mean([m.cost for m in recent_metrics]),
+                    "accuracy": np.mean([m.accuracy for m in recent_metrics]),
+                    "availability": np.mean([m.availability for m in recent_metrics]),
+                    "security_score": np.mean([m.security_score for m in recent_metrics])
+                }
+            else:
+                # Default values if no recent metrics
+                performance[zone] = {
+                    "latency": self._get_default_latency(zone),
+                    "cost": self._get_default_cost(zone),
+                    "accuracy": self._get_default_accuracy(zone),
+                    "availability": 0.99,
+                    "security_score": self._get_default_security(zone)
+                }
+        
+        return performance
+    
+    def _calculate_optimal_zone(self, workload_profile: Dict[str, Any], zone_performance: Dict[str, Dict[str, float]]) -> str:
+        """Calculate optimal zone using multi-criteria decision making"""
+        
+        # Define weights based on workload requirements
+        weights = self._calculate_weights(workload_profile)
+        
+        # Score each zone
+        zone_scores = {}
+        for zone, performance in zone_performance.items():
+            if not self._meets_constraints(zone, workload_profile):
+                continue  # Skip zones that don't meet hard constraints
+            
+            score = (
+                weights["latency"] * self._normalize_latency_score(performance["latency"]) +
+                weights["cost"] * self._normalize_cost_score(performance["cost"]) +
+                weights["accuracy"] * performance["accuracy"] +
+                weights["availability"] * performance["availability"] +
+                weights["security"] * performance["security_score"]
+            )
+            
+            zone_scores[zone] = score
+        
+        # Return highest scoring zone
+        if zone_scores:
+            optimal_zone = max(zone_scores, key=zone_scores.get)
+            return optimal_zone
+        else:
+            # Fallback to default zone if no zone meets constraints
+            return "hybrid_zone"
+    
+    def _calculate_weights(self, workload_profile: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate decision weights based on workload profile"""
+        
+        # Base weights
+        weights = {
+            "latency": 0.2,
+            "cost": 0.2,
+            "accuracy": 0.2,
+            "availability": 0.2,
+            "security": 0.2
+        }
+        
+        # Adjust based on requirements
+        if workload_profile["latency_requirement"] == "ultra_low":
+            weights["latency"] = 0.5
+            weights["cost"] = 0.1
+            weights["accuracy"] = 0.2
+            weights["availability"] = 0.1
+            weights["security"] = 0.1
+        elif workload_profile["security_requirement"] in ["confidential", "restricted"]:
+            weights["security"] = 0.5
+            weights["latency"] = 0.1
+            weights["cost"] = 0.1
+            weights["accuracy"] = 0.2
+            weights["availability"] = 0.1
+        elif workload_profile["cost_constraint"] < 0.01:  # Very low cost requirement
+            weights["cost"] = 0.5
+            weights["latency"] = 0.1
+            weights["accuracy"] = 0.2
+            weights["availability"] = 0.1
+            weights["security"] = 0.1
+        
+        return weights
+    
+    def _meets_constraints(self, zone: str, workload_profile: Dict[str, Any]) -> bool:
+        """Check if zone meets hard constraints"""
+        
+        # Security constraints
+        security_req = workload_profile["security_requirement"]
+        zone_security_levels = {
+            "edge": ["public", "internal"],
+            "private_cloud": ["public", "internal", "confidential", "restricted"],
+            "public_cloud": ["public"],
+            "hybrid_zone": ["public", "internal", "confidential"]
+        }
+        
+        if security_req not in zone_security_levels.get(zone, []):
+            return False
+        
+        # Complexity constraints (some zones can't handle ultra-high complexity)
+        complexity = workload_profile["complexity"]
+        if complexity == "ultra_high" and zone == "edge":
+            return False
+        
+        return True
+    
+    def _normalize_latency_score(self, latency: float) -> float:
+        """Normalize latency to 0-1 score (lower latency = higher score)"""
+        # Assume max acceptable latency is 30 seconds
+        return max(0, 1 - latency / 30.0)
+    
+    def _normalize_cost_score(self, cost: float) -> float:
+        """Normalize cost to 0-1 score (lower cost = higher score)"""
+        # Assume max acceptable cost is $1 per request
+        return max(0, 1 - cost / 1.0)
+    
+    async def _update_routing_patterns(self, request: Dict[str, Any], chosen_zone: str):
+        """Update learned routing patterns"""
+        pattern_key = self._generate_pattern_key(request)
+        
+        if pattern_key not in self.learned_patterns:
+            self.learned_patterns[pattern_key] = {
+                "zones_tried": [],
+                "success_rates": {},
+                "avg_performance": {}
+            }
+        
+        self.learned_patterns[pattern_key]["zones_tried"].append({
+            "zone": chosen_zone,
+            "timestamp": datetime.now()
+        })
+    
+    def _generate_pattern_key(self, request: Dict[str, Any]) -> str:
+        """Generate key for pattern matching"""
+        profile = self._analyze_workload(request)
+        return f"{profile['complexity']}_{profile['security_requirement']}_{profile['latency_requirement']}"
+    
+    async def record_performance(self, zone: str, latency: float, cost: float, 
+                               accuracy: float, availability: float, security_score: float):
+        """Record performance metrics for a zone"""
+        metrics = WorkloadMetrics(
+            latency=latency,
+            cost=cost,
+            accuracy=accuracy,
+            availability=availability,
+            security_score=security_score,
+            timestamp=datetime.now()
+        )
+        
+        self.zone_metrics[zone].append(metrics)
+        
+        # Keep only last 1000 measurements per zone
+        if len(self.zone_metrics[zone]) > 1000:
+            self.zone_metrics[zone] = self.zone_metrics[zone][-1000:]
+    
+    def _get_default_latency(self, zone: str) -> float:
+        """Get default latency estimate for zone"""
+        defaults = {
+            "edge": 0.1,
+            "private_cloud": 2.0,
+            "public_cloud": 5.0,
+            "hybrid_zone": 3.0
+        }
+        return defaults.get(zone, 5.0)
+    
+    def _get_default_cost(self, zone: str) -> float:
+        """Get default cost estimate for zone"""
+        defaults = {
+            "edge": 0.0,
+            "private_cloud": 0.001,
+            "public_cloud": 0.01,
+            "hybrid_zone": 0.005
+        }
+        return defaults.get(zone, 0.01)
+    
+    def _get_default_accuracy(self, zone: str) -> float:
+        """Get default accuracy estimate for zone"""
+        defaults = {
+            "edge": 0.8,
+            "private_cloud": 0.95,
+            "public_cloud": 0.9,
+            "hybrid_zone": 0.85
+        }
+        return defaults.get(zone, 0.8)
+    
+    def _get_default_security(self, zone: str) -> float:
+        """Get default security score for zone"""
+        defaults = {
+            "edge": 0.8,
+            "private_cloud": 1.0,
+            "public_cloud": 0.6,
+            "hybrid_zone": 0.9
+        }
+        return defaults.get(zone, 0.7)
+    
+    async def get_routing_analytics(self) -> Dict[str, Any]:
+        """Get analytics on routing decisions"""
+        analytics = {
+            "total_requests": sum(len(patterns["zones_tried"]) for patterns in self.learned_patterns.values()),
+            "zone_usage": {},
+            "pattern_analysis": {},
+            "performance_trends": {}
+        }
+        
+        # Calculate zone usage
+        for pattern, data in self.learned_patterns.items():
+            for zone_attempt in data["zones_tried"]:
+                zone = zone_attempt["zone"]
+                analytics["zone_usage"][zone] = analytics["zone_usage"].get(zone, 0) + 1
+        
+        # Pattern analysis
+        for pattern, data in self.learned_patterns.items():
+            analytics["pattern_analysis"][pattern] = {
+                "total_attempts": len(data["zones_tried"]),
+                "most_used_zone": max(
+                    set(attempt["zone"] for attempt in data["zones_tried"]),
+                    key=lambda z: sum(1 for attempt in data["zones_tried"] if attempt["zone"] == z)
+                ) if data["zones_tried"] else None
+            }
+        
+        return analytics
+
+# Usage example
+async def intelligent_hybrid_routing():
+    router = IntelligentWorkloadRouter()
+    
+    # Example workload
+    request = {
+        "prompt": "Analyze this complex financial dataset and provide investment recommendations",
+        "classification": "confidential",
+        "latency_sla": "standard",
+        "cost_limit": 0.1,
+        "user_location": "us"
+    }
+    
+    # Route workload
+    optimal_zone = await router.route_workload(request)
+    print(f"Optimal zone for workload: {optimal_zone}")
+    
+    # Simulate processing and record performance
+    await router.record_performance(
+        zone=optimal_zone,
+        latency=2.5,
+        cost=0.05,
+        accuracy=0.92,
+        availability=0.99,
+        security_score=0.95
+    )
+    
+    # Get routing analytics
+    analytics = await router.get_routing_analytics()
+    print("Routing Analytics:", analytics)
+
+# asyncio.run(intelligent_hybrid_routing())
+```
+
+## Speed Tips
+
+1. **Cache routing decisions** - Store optimal zone selections for similar workloads
+2. **Precompute zone metrics** - Continuously monitor zone performance
+3. **Use connection pooling** - Maintain persistent connections across zones
+4. **Implement circuit breakers** - Quickly fail over when zones become unavailable
+5. **Batch similar requests** - Process similar workloads together for efficiency
+6. **Use CDN for edge caching** - Cache results closer to users
+7. **Optimize data serialization** - Use efficient formats for cross-zone communication
+8. **Monitor network latency** - Continuously measure inter-zone communication times
+
+## Common Pitfalls
+
+1. **Ignoring data residency** - Not considering legal/regulatory requirements for data location
+2. **Over-complex routing logic** - Making routing decisions too complicated and slow
+3. **Insufficient fallback strategies** - Not planning for zone failures
+4. **Poor secret management** - Not properly securing inter-zone authentication
+5. **Inadequate monitoring** - Not tracking performance across all zones
+6. **Security boundary confusion** - Not clearly defining trust boundaries between zones
+7. **Cost optimization myopia** - Optimizing only for cost without considering other factors
+8. **Synchronization conflicts** - Not properly handling data consistency across zones
+
+## Best Practices
+
+1. **Define clear zone boundaries** - Establish explicit trust and security boundaries
+2. **Implement comprehensive monitoring** - Track performance, cost, and security across all zones
+3. **Use intelligent routing** - Make data-driven decisions about workload placement
+4. **Plan for disaster recovery** - Design for zone failures and data recovery
+5. **Automate synchronization** - Keep configurations and data consistent across zones
+6. **Regular security audits** - Continuously assess and improve security posture
+7. **Cost-aware architecture** - Balance performance needs with cost constraints
+8. **Compliance by design** - Build in data residency and privacy requirements from the start
+
+## References
+
+- [Hybrid Cloud Architecture Patterns](https://docs.microsoft.com/en-us/azure/architecture/hybrid/)
+- [AWS Hybrid Cloud Guide](https://aws.amazon.com/hybrid/)
+- [Google Cloud Hybrid and Multi-cloud](https://cloud.google.com/solutions/hybrid-and-multi-cloud)
+- [Zero Trust Architecture](https://www.nist.gov/publications/zero-trust-architecture)
+- [DSPy Documentation](https://dspy-docs.vercel.app/)

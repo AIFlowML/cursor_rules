@@ -1,0 +1,776 @@
+---
+description: Complete Classification System - End-to-end classification with finetuning and production deployment
+alwaysApply: false
+---
+
+> You are an expert in building complete DSPy 3.0.1 classification systems with finetuning for production deployment.
+
+## Complete Classification Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Data          │    │   Feature       │    │   Model         │
+│   Preprocessing │───▶│   Engineering   │───▶│   Training      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Label         │    │   Teacher-      │    │   Student       │
+│   Generation    │───▶│   Student       │───▶│   Finetuning    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Evaluation    │    │   Production    │    │   Monitoring    │
+│   & Validation  │◀───│   Deployment    │◀───│   & Analytics   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant Classification Templates
+
+### Quick Start Classification
+
+```python
+import dspy
+from typing import Literal
+
+# Configure DSPy with your LM
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Simple classification with enumerated choices
+CLASSES = ["positive", "negative", "neutral"]
+classify = dspy.ChainOfThought(f"text -> label: Literal{CLASSES}")
+
+# Use the classifier
+result = classify(text="I love this product!")
+print(result.label)  # "positive"
+print(result.reasoning)  # Shows step-by-step reasoning
+```
+
+### Production Classification System
+
+```python
+import dspy
+import random
+import logging
+from typing import List, Dict, Literal, Optional, Union
+from dspy.datasets import DataLoader
+from pydantic import BaseModel, Field
+from pathlib import Path
+
+class ClassificationResult(BaseModel):
+    """Structured classification result"""
+    text: str
+    predicted_label: str
+    confidence: float
+    reasoning: str
+    processing_time: float
+
+class ProductionClassifier(dspy.Module):
+    """Production-ready classification system with finetuning support"""
+
+    def __init__(self,
+                 classes: List[str],
+                 model_name: str = "openai/gpt-4o-mini",
+                 use_reasoning: bool = True,
+                 cache_dir: Optional[str] = None):
+
+        self.classes = classes
+        self.model_name = model_name
+        self.use_reasoning = use_reasoning
+
+        # Create signature with class constraints
+        signature_str = f"text -> label: Literal{classes}"
+        if use_reasoning:
+            signature_str = f"text -> reasoning: str, label: Literal{classes}"
+            self.predictor = dspy.ChainOfThought(signature_str)
+        else:
+            self.predictor = dspy.Predict(signature_str)
+
+        # Setup caching if specified
+        if cache_dir:
+            dspy.settings.configure(cache_turn_on=True, cache_dir=cache_dir)
+
+        # Metrics tracking
+        self.query_count = 0
+        self.setup_logging()
+
+    def setup_logging(self):
+        """Configure logging for production monitoring"""
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+
+    def forward(self, text: str) -> dspy.Prediction:
+        """Classify input text"""
+        self.query_count += 1
+        self.logger.info(f"Processing classification #{self.query_count}")
+
+        try:
+            result = self.predictor(text=text)
+
+            # Validate that prediction is in allowed classes
+            if hasattr(result, 'label') and result.label not in self.classes:
+                self.logger.warning(f"Invalid label '{result.label}' not in {self.classes}")
+                # Default to first class if invalid
+                result.label = self.classes[0]
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Classification failed: {str(e)}")
+            # Return default prediction
+            return dspy.Prediction(
+                label=self.classes[0],
+                reasoning="Classification failed, returning default"
+            )
+
+    def batch_classify(self, texts: List[str]) -> List[dspy.Prediction]:
+        """Efficiently classify multiple texts"""
+        return [self.forward(text) for text in texts]
+
+    def get_class_distribution(self, texts: List[str]) -> Dict[str, float]:
+        """Get distribution of predicted classes"""
+        predictions = self.batch_classify(texts)
+        counts = {cls: 0 for cls in self.classes}
+
+        for pred in predictions:
+            if hasattr(pred, 'label'):
+                counts[pred.label] += 1
+
+        total = len(predictions)
+        return {cls: count/total for cls, count in counts.items()}
+
+# Example: Sentiment Analysis System
+class SentimentClassifier(ProductionClassifier):
+    """Specialized sentiment analysis classifier"""
+
+    def __init__(self, **kwargs):
+        classes = ["positive", "negative", "neutral"]
+        super().__init__(classes=classes, **kwargs)
+
+    def analyze_sentiment(self, text: str) -> ClassificationResult:
+        """Analyze sentiment with detailed results"""
+        import time
+        start_time = time.time()
+
+        prediction = self.forward(text)
+        processing_time = time.time() - start_time
+
+        # Calculate confidence based on reasoning quality
+        confidence = self._calculate_confidence(prediction)
+
+        return ClassificationResult(
+            text=text,
+            predicted_label=prediction.label,
+            confidence=confidence,
+            reasoning=getattr(prediction, 'reasoning', 'No reasoning provided'),
+            processing_time=processing_time
+        )
+
+    def _calculate_confidence(self, prediction) -> float:
+        """Simple confidence calculation based on reasoning"""
+        if not hasattr(prediction, 'reasoning'):
+            return 0.5
+
+        reasoning = prediction.reasoning.lower()
+
+        # Higher confidence for longer, more detailed reasoning
+        base_confidence = min(len(reasoning) / 200, 1.0)
+
+        # Boost confidence for certain keywords
+        confidence_keywords = ['clearly', 'obviously', 'definitely', 'strongly']
+        if any(keyword in reasoning for keyword in confidence_keywords):
+            base_confidence *= 1.2
+
+        return min(base_confidence, 1.0)
+```
+
+## Core Implementation Patterns
+
+### Finetuning with Teacher-Student Setup
+
+```python
+from dspy.clients.lm_local import LocalProvider
+
+class FinetunedClassifier:
+    """Classification system with teacher-student finetuning"""
+
+    def __init__(self,
+                 classes: List[str],
+                 student_model: str = "meta-llama/Llama-3.2-1B-Instruct",
+                 teacher_model: str = "openai/gpt-4o-mini"):
+
+        self.classes = classes
+        self.student_model = student_model
+        self.teacher_model = teacher_model
+
+        # Setup models
+        self.student_lm = dspy.LM(
+            model=f"openai/local:{student_model}",
+            provider=LocalProvider(),
+            max_tokens=2000
+        )
+        self.teacher_lm = dspy.LM(teacher_model, max_tokens=3000)
+
+        # Create classifiers
+        signature = f"text -> reasoning: str, label: Literal{classes}"
+
+        self.student_classify = dspy.ChainOfThought(signature)
+        self.student_classify.set_lm(self.student_lm)
+
+        self.teacher_classify = dspy.ChainOfThought(signature)
+        self.teacher_classify.set_lm(self.teacher_lm)
+
+    def finetune(self,
+                 unlabeled_data: List[str],
+                 labeled_data: Optional[List[dspy.Example]] = None,
+                 num_threads: int = 16) -> dspy.Module:
+        """Finetune student model using teacher model"""
+
+        # Enable experimental finetuning features
+        dspy.settings.experimental = True
+
+        # Prepare training data
+        if labeled_data is None:
+            # Create unlabeled examples
+            trainset = [dspy.Example(text=text).with_inputs("text") for text in unlabeled_data]
+
+            # Bootstrap finetuning without labels
+            optimizer = dspy.BootstrapFinetune(num_threads=num_threads)
+            finetuned_classifier = optimizer.compile(
+                self.student_classify,
+                teacher=self.teacher_classify,
+                trainset=trainset
+            )
+        else:
+            # Bootstrap finetuning with labels
+            metric = self._create_accuracy_metric()
+            optimizer = dspy.BootstrapFinetune(num_threads=num_threads, metric=metric)
+            finetuned_classifier = optimizer.compile(
+                self.student_classify,
+                teacher=self.teacher_classify,
+                trainset=labeled_data
+            )
+
+        return finetuned_classifier
+
+    def _create_accuracy_metric(self):
+        """Create accuracy metric for classification"""
+        def accuracy_metric(example, prediction, trace=None):
+            return example.label == prediction.label
+        return accuracy_metric
+
+    def evaluate_model(self, model: dspy.Module, test_data: List[dspy.Example]) -> float:
+        """Evaluate model accuracy on test data"""
+        correct = 0
+        total = len(test_data)
+
+        for example in test_data:
+            try:
+                prediction = model(**example.inputs())
+                if hasattr(prediction, 'label') and prediction.label == example.label:
+                    correct += 1
+            except Exception as e:
+                print(f"Error evaluating example: {e}")
+
+        return correct / total if total > 0 else 0.0
+
+# Multi-class classification with advanced optimization
+class MultiClassClassifier(dspy.Module):
+    """Advanced multi-class classification with optimization"""
+
+    def __init__(self,
+                 dataset_name: str,
+                 num_classes: int,
+                 optimization_strategy: str = "bootstrap"):
+
+        self.dataset_name = dataset_name
+        self.num_classes = num_classes
+        self.optimization_strategy = optimization_strategy
+
+        # Load dataset
+        self.trainset, self.devset = self._load_dataset()
+        self.classes = self._extract_classes()
+
+        # Create classifier
+        signature = f"text -> label: Literal{self.classes}"
+        self.classifier = dspy.ChainOfThought(signature)
+
+    def _load_dataset(self):
+        """Load and split dataset"""
+        kwargs = dict(
+            fields=("text", "label"),
+            input_keys=("text",),
+            split="train"
+        )
+
+        raw_data = DataLoader().from_huggingface(
+            dataset_name=self.dataset_name,
+            **kwargs
+        )
+
+        # Convert to DSPy examples
+        examples = [
+            dspy.Example(text=x.text, label=str(x.label)).with_inputs("text")
+            for x in raw_data[:1000]  # Limit for demo
+        ]
+
+        # Split data
+        random.Random(0).shuffle(examples)
+        split_point = int(0.8 * len(examples))
+        return examples[:split_point], examples[split_point:]
+
+    def _extract_classes(self):
+        """Extract unique classes from dataset"""
+        all_labels = set()
+        for example in self.trainset + self.devset:
+            all_labels.add(example.label)
+        return sorted(list(all_labels))
+
+    def optimize(self, metric_name: str = "accuracy") -> dspy.Module:
+        """Optimize classifier using specified strategy"""
+
+        # Create evaluation metric
+        if metric_name == "accuracy":
+            metric = lambda x, y, trace=None: x.label == y.label
+        else:
+            # Default to accuracy
+            metric = lambda x, y, trace=None: x.label == y.label
+
+        # Choose optimization strategy
+        if self.optimization_strategy == "bootstrap":
+            optimizer = dspy.BootstrapFewShot(metric=metric)
+            optimized = optimizer.compile(
+                self.classifier,
+                trainset=self.trainset[:50],  # Use subset for faster optimization
+                max_bootstrapped_demos=4
+            )
+
+        elif self.optimization_strategy == "mipro":
+            optimizer = dspy.MIPROv2(metric=metric, auto="medium", num_threads=16)
+            optimized = optimizer.compile(
+                self.classifier,
+                trainset=self.trainset[:100],
+                max_bootstrapped_demos=4,
+                max_labeled_demos=4
+            )
+
+        else:
+            # Return unoptimized classifier
+            return self.classifier
+
+        return optimized
+
+    def evaluate(self, model: dspy.Module) -> Dict[str, float]:
+        """Comprehensive evaluation of the model"""
+        evaluator = dspy.Evaluate(
+            devset=self.devset[:100],  # Use subset for faster evaluation
+            metric=lambda x, y, trace=None: x.label == y.label,
+            display_progress=True,
+            display_table=5
+        )
+
+        accuracy = evaluator(model)
+
+        # Additional metrics
+        predictions = [model(**ex.inputs()) for ex in self.devset[:100]]
+
+        # Calculate per-class metrics
+        class_metrics = self._calculate_class_metrics(predictions)
+
+        return {
+            "accuracy": accuracy,
+            "class_metrics": class_metrics
+        }
+
+    def _calculate_class_metrics(self, predictions) -> Dict[str, Dict[str, float]]:
+        """Calculate precision, recall, F1 for each class"""
+        from collections import defaultdict
+
+        # Count true positives, false positives, false negatives
+        tp = defaultdict(int)
+        fp = defaultdict(int)
+        fn = defaultdict(int)
+
+        for i, pred in enumerate(predictions):
+            true_label = self.devset[i].label
+            pred_label = getattr(pred, 'label', self.classes[0])
+
+            if pred_label == true_label:
+                tp[true_label] += 1
+            else:
+                fp[pred_label] += 1
+                fn[true_label] += 1
+
+        # Calculate metrics for each class
+        class_metrics = {}
+        for cls in self.classes:
+            precision = tp[cls] / (tp[cls] + fp[cls]) if (tp[cls] + fp[cls]) > 0 else 0
+            recall = tp[cls] / (tp[cls] + fn[cls]) if (tp[cls] + fn[cls]) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+            class_metrics[cls] = {
+                "precision": precision,
+                "recall": recall,
+                "f1": f1
+            }
+
+        return class_metrics
+```
+
+## Advanced Classification Patterns
+
+### Hierarchical Classification
+
+```python
+class HierarchicalClassifier(dspy.Module):
+    """Multi-level hierarchical classification"""
+
+    def __init__(self, class_hierarchy: Dict[str, List[str]]):
+        """
+        class_hierarchy: Dict mapping top-level classes to sub-classes
+        Example: {"technology": ["ai", "blockchain"], "science": ["biology", "physics"]}
+        """
+        self.class_hierarchy = class_hierarchy
+        self.top_level_classes = list(class_hierarchy.keys())
+
+        # Create classifiers for each level
+        self.top_level_classifier = dspy.ChainOfThought(
+            f"text -> category: Literal{self.top_level_classes}"
+        )
+
+        # Sub-classifiers for each top-level class
+        self.sub_classifiers = {}
+        for top_class, sub_classes in class_hierarchy.items():
+            if sub_classes:  # Only create if there are sub-classes
+                self.sub_classifiers[top_class] = dspy.ChainOfThought(
+                    f"text -> subcategory: Literal{sub_classes}"
+                )
+
+    def forward(self, text: str):
+        """Perform hierarchical classification"""
+        # First level classification
+        top_prediction = self.top_level_classifier(text=text)
+        top_category = top_prediction.category
+
+        # Second level classification if sub-classifier exists
+        if top_category in self.sub_classifiers:
+            sub_prediction = self.sub_classifiers[top_category](text=text)
+            subcategory = sub_prediction.subcategory
+
+            return dspy.Prediction(
+                top_category=top_category,
+                subcategory=subcategory,
+                full_classification=f"{top_category}/{subcategory}"
+            )
+        else:
+            return dspy.Prediction(
+                top_category=top_category,
+                subcategory=None,
+                full_classification=top_category
+            )
+
+# Multi-label classification
+class MultiLabelClassifier(dspy.Module):
+    """Classification system that can assign multiple labels"""
+
+    def __init__(self, all_labels: List[str], min_confidence: float = 0.3):
+        self.all_labels = all_labels
+        self.min_confidence = min_confidence
+
+        # Create individual binary classifiers for each label
+        self.label_classifiers = {}
+        for label in all_labels:
+            self.label_classifiers[label] = dspy.ChainOfThought(
+                f"text -> is_{label}: bool, confidence: float"
+            )
+
+    def forward(self, text: str):
+        """Predict multiple applicable labels"""
+        predictions = {}
+        applicable_labels = []
+
+        for label in self.all_labels:
+            try:
+                result = self.label_classifiers[label](text=text)
+                is_applicable = getattr(result, f'is_{label}', False)
+                confidence = getattr(result, 'confidence', 0.0)
+
+                predictions[label] = {
+                    'applicable': is_applicable,
+                    'confidence': confidence
+                }
+
+                if is_applicable and confidence >= self.min_confidence:
+                    applicable_labels.append(label)
+
+            except Exception as e:
+                predictions[label] = {'applicable': False, 'confidence': 0.0}
+
+        return dspy.Prediction(
+            labels=applicable_labels,
+            all_predictions=predictions,
+            label_count=len(applicable_labels)
+        )
+```
+
+## Production Deployment
+
+### FastAPI Integration
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+from typing import List, Dict, Any
+
+class ClassificationRequest(BaseModel):
+    text: str
+    include_reasoning: bool = False
+
+class ClassificationResponse(BaseModel):
+    predicted_label: str
+    confidence: float
+    reasoning: Optional[str] = None
+    processing_time: float
+
+class BatchClassificationRequest(BaseModel):
+    texts: List[str]
+    include_reasoning: bool = False
+
+app = FastAPI(title="DSPy Classification API", version="1.0.0")
+
+# Initialize classifier (global variable for demo)
+classifier = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the classification model on startup"""
+    global classifier
+
+    # Load your trained classifier
+    classes = ["positive", "negative", "neutral"]  # Example classes
+    classifier = ProductionClassifier(classes=classes)
+
+    # Optionally load a finetuned model
+    # classifier.load("path/to/optimized_classifier.json")
+
+@app.post("/classify", response_model=ClassificationResponse)
+async def classify_text(request: ClassificationRequest):
+    """Classify a single text"""
+    if classifier is None:
+        raise HTTPException(status_code=503, detail="Classifier not initialized")
+
+    try:
+        import time
+        start_time = time.time()
+
+        prediction = classifier.forward(request.text)
+        processing_time = time.time() - start_time
+
+        response = ClassificationResponse(
+            predicted_label=prediction.label,
+            confidence=getattr(prediction, 'confidence', 0.5),
+            reasoning=getattr(prediction, 'reasoning') if request.include_reasoning else None,
+            processing_time=processing_time
+        )
+
+        return response
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
+
+@app.post("/classify/batch")
+async def classify_batch(request: BatchClassificationRequest):
+    """Classify multiple texts"""
+    if classifier is None:
+        raise HTTPException(status_code=503, detail="Classifier not initialized")
+
+    try:
+        results = []
+
+        for text in request.texts:
+            import time
+            start_time = time.time()
+
+            prediction = classifier.forward(text)
+            processing_time = time.time() - start_time
+
+            result = {
+                "text": text,
+                "predicted_label": prediction.label,
+                "confidence": getattr(prediction, 'confidence', 0.5),
+                "processing_time": processing_time
+            }
+
+            if request.include_reasoning:
+                result["reasoning"] = getattr(prediction, 'reasoning', None)
+
+            results.append(result)
+
+        return {"results": results, "total_processed": len(results)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch classification failed: {str(e)}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy" if classifier is not None else "unhealthy",
+        "model_loaded": classifier is not None,
+        "supported_classes": classifier.classes if classifier else None
+    }
+
+# Run the API
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Model Versioning and A/B Testing
+
+```python
+import hashlib
+import json
+from typing import Dict, Any
+
+class ModelRegistry:
+    """Manage multiple model versions for A/B testing"""
+
+    def __init__(self):
+        self.models: Dict[str, dspy.Module] = {}
+        self.model_metadata: Dict[str, Dict[str, Any]] = {}
+        self.active_model = None
+        self.ab_test_config = {}
+
+    def register_model(self,
+                      model: dspy.Module,
+                      version: str,
+                      metadata: Dict[str, Any] = None):
+        """Register a new model version"""
+        self.models[version] = model
+        self.model_metadata[version] = metadata or {}
+
+        if self.active_model is None:
+            self.active_model = version
+
+        print(f"Registered model version: {version}")
+
+    def set_active_model(self, version: str):
+        """Set the active model version"""
+        if version not in self.models:
+            raise ValueError(f"Model version {version} not found")
+
+        self.active_model = version
+        print(f"Active model set to: {version}")
+
+    def setup_ab_test(self,
+                     version_a: str,
+                     version_b: str,
+                     traffic_split: float = 0.5):
+        """Setup A/B test between two model versions"""
+        if version_a not in self.models or version_b not in self.models:
+            raise ValueError("Both versions must be registered")
+
+        self.ab_test_config = {
+            "version_a": version_a,
+            "version_b": version_b,
+            "traffic_split": traffic_split,
+            "enabled": True
+        }
+
+        print(f"A/B test setup: {version_a} vs {version_b} (split: {traffic_split})")
+
+    def get_model_for_request(self, request_id: str = None) -> tuple[dspy.Module, str]:
+        """Get model based on A/B test configuration"""
+        if not self.ab_test_config.get("enabled", False):
+            return self.models[self.active_model], self.active_model
+
+        # Determine which model to use based on request hash
+        if request_id:
+            hash_value = int(hashlib.md5(request_id.encode()).hexdigest()[:8], 16)
+            use_version_a = (hash_value % 100) < (self.ab_test_config["traffic_split"] * 100)
+        else:
+            import random
+            use_version_a = random.random() < self.ab_test_config["traffic_split"]
+
+        if use_version_a:
+            version = self.ab_test_config["version_a"]
+        else:
+            version = self.ab_test_config["version_b"]
+
+        return self.models[version], version
+
+    def get_model_stats(self) -> Dict[str, Any]:
+        """Get statistics about registered models"""
+        return {
+            "total_models": len(self.models),
+            "active_model": self.active_model,
+            "available_versions": list(self.models.keys()),
+            "ab_test_active": self.ab_test_config.get("enabled", False),
+            "model_metadata": self.model_metadata
+        }
+
+# Usage example
+registry = ModelRegistry()
+
+# Register models
+base_classifier = ProductionClassifier(classes=["pos", "neg", "neutral"])
+registry.register_model(
+    base_classifier,
+    "v1.0",
+    {"description": "Base classifier", "accuracy": 0.85}
+)
+
+optimized_classifier = ProductionClassifier(classes=["pos", "neg", "neutral"])
+registry.register_model(
+    optimized_classifier,
+    "v2.0",
+    {"description": "Optimized classifier", "accuracy": 0.92}
+)
+
+# Setup A/B test
+registry.setup_ab_test("v1.0", "v2.0", traffic_split=0.3)
+```
+
+## Speed Tips
+
+- **Model Caching**: Cache model instances and predictions for repeated queries
+- **Batch Processing**: Process multiple examples together for better throughput
+- **Quantization**: Use quantized models for faster inference with minimal quality loss
+- **Parallel Processing**: Use threading/async for I/O-bound operations
+- **Preprocessing Pipeline**: Optimize text preprocessing and feature extraction
+- **Model Selection**: Choose appropriately sized models for your accuracy/speed requirements
+- **Hardware Optimization**: Leverage GPUs for large model inference
+- **Response Streaming**: Stream classification results for real-time applications
+
+## Common Pitfalls
+
+- **Class Imbalance**: Address uneven class distributions in training data
+- **Overfitting**: Monitor validation performance during optimization
+- **Label Inconsistency**: Ensure consistent labeling across training data
+- **Context Length**: Monitor input length limits for your chosen model
+- **Memory Management**: Watch memory usage with large models and batch sizes
+- **Error Handling**: Implement robust error handling for production deployment
+- **Model Drift**: Monitor performance degradation over time
+- **Version Control**: Track model versions and their performance metrics
+
+## Best Practices Summary
+
+- **Data Quality**: Invest in high-quality, representative training data
+- **Evaluation Strategy**: Use comprehensive evaluation with multiple metrics
+- **Optimization Pipeline**: Leverage DSPy's optimization tools effectively
+- **Production Monitoring**: Implement comprehensive logging and metrics
+- **Model Management**: Use proper versioning and deployment strategies
+- **A/B Testing**: Test new models against existing ones in production
+- **Scalability**: Design for horizontal scaling and load distribution
+- **Documentation**: Maintain clear documentation for models and APIs
+
+## References
+
+- [DSPy Classification Tutorial](https://github.com/stanfordnlp/dspy/blob/main/docs/tutorials/classification_finetuning/index.ipynb)
+- [BootstrapFinetune Optimizer](https://dspy.ai/api/optimizers/BootstrapFinetune)
+- [MIPROv2 Optimization](https://dspy.ai/api/optimizers/MIPROv2)
+- [ChainOfThought Module](https://dspy.ai/api/modules/ChainOfThought)
+- [Production Deployment Best Practices](https://dspy.ai/docs/tutorials/deployment/)

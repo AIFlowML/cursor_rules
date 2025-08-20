@@ -1,0 +1,883 @@
+---
+description: DSPy 3.0.1 CodeAct Module - Master code execution with Python interpreter for computational problem solving
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's CodeAct module. Master computational reasoning through executable Python code generation, tool integration, and iterative code refinement.
+
+## CodeAct Architecture Flow
+
+```
+Define Problem → Generate Code → Execute Code → Extract Results → Return Answer
+      ↓               ↓             ↓             ↓               ↓
+Task Signature   Python Code    Interpreter   Output Parsing   Final Solution
+Tools Available  Code Analysis  Error Handle  Result Extract   Production Ready
+      ↓               ↓             ↓             ↓               ↓
+ReAct + PoT      Iterative      Safe Exec     Smart Extract    Computational AI
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Code Execution
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Define helper functions available to CodeAct
+def factorial(n):
+    """Calculate factorial of n."""
+    if n <= 1:
+        return 1
+    return n * factorial(n-1)
+
+def is_prime(n):
+    """Check if number is prime."""
+    if n < 2:
+        return False
+    for i in range(2, int(n**0.5) + 1):
+        if n % i == 0:
+            return False
+    return True
+
+# Create CodeAct module with tools
+math_solver = dspy.CodeAct(
+    signature="problem -> answer",
+    tools=[factorial, is_prime],
+    max_iters=3
+)
+
+# Use for computational problems
+result = math_solver(problem="What is the factorial of 5 and is 17 a prime number?")
+print(f"Answer: {result.answer}")
+print(f"Generated code: {result.trajectory}")
+```
+
+### Production Ready - Advanced Computational System
+
+```python
+import dspy
+from typing import List, Dict, Any
+import numpy as np
+import statistics
+
+class ComputationalAnalysisSignature(dspy.Signature):
+    """Perform computational analysis with data processing and statistical calculations."""
+    
+    data_description: str = dspy.InputField(desc="Description of the data to analyze")
+    analysis_requirements: List[str] = dspy.InputField(desc="Specific analysis requirements")
+    constraints: str = dspy.InputField(desc="Any constraints or limitations")
+    
+    analysis_steps: str = dspy.OutputField(desc="Step-by-step analysis methodology")
+    computational_results: Dict[str, Any] = dspy.OutputField(desc="Computed results and metrics")
+    insights: str = dspy.OutputField(desc="Key insights from the analysis")
+    code_summary: str = dspy.OutputField(desc="Summary of the computational approach")
+
+# Define advanced computational tools
+def statistical_analysis(data):
+    """Perform comprehensive statistical analysis on numerical data."""
+    if not data or not all(isinstance(x, (int, float)) for x in data):
+        return {"error": "Invalid numerical data"}
+    
+    return {
+        "mean": statistics.mean(data),
+        "median": statistics.median(data),
+        "std_dev": statistics.stdev(data) if len(data) > 1 else 0,
+        "min": min(data),
+        "max": max(data),
+        "count": len(data)
+    }
+
+def correlation_analysis(x_data, y_data):
+    """Calculate correlation between two data series."""
+    if len(x_data) != len(y_data) or len(x_data) < 2:
+        return {"error": "Invalid data for correlation"}
+    
+    try:
+        correlation = np.corrcoef(x_data, y_data)[0, 1]
+        return {"correlation": correlation, "strength": "strong" if abs(correlation) > 0.7 else "moderate" if abs(correlation) > 0.3 else "weak"}
+    except:
+        return {"error": "Correlation calculation failed"}
+
+def data_transformation(data, operation="normalize"):
+    """Transform data using various operations."""
+    if not data:
+        return {"error": "No data provided"}
+    
+    try:
+        if operation == "normalize":
+            data_array = np.array(data)
+            min_val, max_val = data_array.min(), data_array.max()
+            if max_val == min_val:
+                return list(data_array)
+            return ((data_array - min_val) / (max_val - min_val)).tolist()
+        elif operation == "standardize":
+            data_array = np.array(data)
+            return ((data_array - data_array.mean()) / data_array.std()).tolist()
+        elif operation == "log":
+            return [np.log(x) for x in data if x > 0]
+        else:
+            return data
+    except Exception as e:
+        return {"error": f"Transformation failed: {str(e)}"}
+
+def regression_analysis(x_data, y_data):
+    """Perform simple linear regression analysis."""
+    try:
+        x_array, y_array = np.array(x_data), np.array(y_data)
+        coefficients = np.polyfit(x_array, y_array, 1)
+        slope, intercept = coefficients[0], coefficients[1]
+        
+        # Calculate R-squared
+        y_pred = slope * x_array + intercept
+        ss_res = np.sum((y_array - y_pred) ** 2)
+        ss_tot = np.sum((y_array - np.mean(y_array)) ** 2)
+        r_squared = 1 - (ss_res / ss_tot)
+        
+        return {
+            "slope": slope,
+            "intercept": intercept,
+            "r_squared": r_squared,
+            "equation": f"y = {slope:.3f}x + {intercept:.3f}"
+        }
+    except Exception as e:
+        return {"error": f"Regression analysis failed: {str(e)}"}
+
+# Create advanced computational analyst
+computational_analyst = dspy.CodeAct(
+    signature=ComputationalAnalysisSignature,
+    tools=[statistical_analysis, correlation_analysis, data_transformation, regression_analysis],
+    max_iters=5
+)
+
+# Use for complex analysis
+result = computational_analyst(
+    data_description="Sales data for 12 months: [100, 120, 115, 140, 160, 155, 180, 175, 200, 195, 220, 210]",
+    analysis_requirements=["Calculate growth trends", "Identify seasonal patterns", "Predict next quarter"],
+    constraints="Use only statistical methods, avoid external APIs"
+)
+
+print("Analysis Steps:")
+print(result.analysis_steps)
+print("\nComputational Results:")
+print(result.computational_results)
+print("\nInsights:")
+print(result.insights)
+```
+
+## Core CodeAct Patterns
+
+### Mathematical Problem Solving
+
+```python
+# Mathematical computation tools
+def solve_quadratic(a, b, c):
+    """Solve quadratic equation ax² + bx + c = 0."""
+    discriminant = b**2 - 4*a*c
+    if discriminant < 0:
+        return "No real solutions"
+    elif discriminant == 0:
+        return [-b / (2*a)]
+    else:
+        import math
+        sqrt_disc = math.sqrt(discriminant)
+        return [(-b + sqrt_disc) / (2*a), (-b - sqrt_disc) / (2*a)]
+
+def matrix_operations(matrix_a, matrix_b, operation="multiply"):
+    """Perform matrix operations."""
+    import numpy as np
+    try:
+        a, b = np.array(matrix_a), np.array(matrix_b)
+        if operation == "multiply":
+            return np.dot(a, b).tolist()
+        elif operation == "add":
+            return (a + b).tolist()
+        elif operation == "subtract":
+            return (a - b).tolist()
+        else:
+            return "Unsupported operation"
+    except Exception as e:
+        return f"Matrix operation failed: {str(e)}"
+
+def calculus_operations(expression, variable="x", operation="derivative"):
+    """Perform symbolic calculus operations."""
+    # Note: This would require sympy in a real implementation
+    try:
+        import sympy as sp
+        var = sp.Symbol(variable)
+        expr = sp.sympify(expression)
+        
+        if operation == "derivative":
+            result = sp.diff(expr, var)
+        elif operation == "integral":
+            result = sp.integrate(expr, var)
+        elif operation == "limit":
+            result = sp.limit(expr, var, 0)  # limit as x approaches 0
+        else:
+            return "Unsupported calculus operation"
+        
+        return str(result)
+    except Exception as e:
+        return f"Calculus operation failed: {str(e)}"
+
+math_solver = dspy.CodeAct(
+    signature="math_problem -> step_by_step_solution, final_answer",
+    tools=[solve_quadratic, matrix_operations, calculus_operations],
+    max_iters=4
+)
+```
+
+### Data Analysis and Visualization
+
+```python
+# Data analysis tools
+def data_cleaning(data, method="remove_outliers"):
+    """Clean data using various methods."""
+    try:
+        import numpy as np
+        data_array = np.array([x for x in data if x is not None])
+        
+        if method == "remove_outliers":
+            Q1, Q3 = np.percentile(data_array, [25, 75])
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            return data_array[(data_array >= lower_bound) & (data_array <= upper_bound)].tolist()
+        elif method == "fill_missing":
+            mean_val = np.mean(data_array)
+            return [x if x is not None else mean_val for x in data]
+        else:
+            return data_array.tolist()
+    except Exception as e:
+        return f"Data cleaning failed: {str(e)}"
+
+def time_series_analysis(data, timestamps=None):
+    """Analyze time series data for trends and patterns."""
+    try:
+        import numpy as np
+        if not timestamps:
+            timestamps = list(range(len(data)))
+        
+        # Simple trend analysis
+        x = np.array(timestamps)
+        y = np.array(data)
+        trend_coef = np.polyfit(x, y, 1)[0]
+        
+        # Seasonality detection (simplified)
+        if len(data) >= 12:
+            seasonal_diff = []
+            for i in range(12, len(data)):
+                seasonal_diff.append(abs(data[i] - data[i-12]))
+            avg_seasonal_diff = sum(seasonal_diff) / len(seasonal_diff)
+        else:
+            avg_seasonal_diff = 0
+        
+        return {
+            "trend": "increasing" if trend_coef > 0 else "decreasing" if trend_coef < 0 else "stable",
+            "trend_coefficient": trend_coef,
+            "seasonality_strength": avg_seasonal_diff,
+            "data_points": len(data)
+        }
+    except Exception as e:
+        return f"Time series analysis failed: {str(e)}"
+
+def generate_summary_stats(datasets):
+    """Generate comprehensive summary statistics for multiple datasets."""
+    try:
+        import numpy as np
+        summaries = {}
+        
+        for name, data in datasets.items():
+            data_array = np.array(data)
+            summaries[name] = {
+                "count": len(data_array),
+                "mean": np.mean(data_array),
+                "std": np.std(data_array),
+                "min": np.min(data_array),
+                "max": np.max(data_array),
+                "median": np.median(data_array),
+                "q25": np.percentile(data_array, 25),
+                "q75": np.percentile(data_array, 75)
+            }
+        
+        return summaries
+    except Exception as e:
+        return f"Summary statistics failed: {str(e)}"
+
+data_analyst = dspy.CodeAct(
+    signature="dataset, analysis_type -> analysis_result, recommendations",
+    tools=[data_cleaning, time_series_analysis, generate_summary_stats],
+    max_iters=3
+)
+```
+
+### Scientific Computing
+
+```python
+# Scientific computation tools
+def physics_calculations(formula_type, **kwargs):
+    """Perform various physics calculations."""
+    try:
+        import math
+        
+        if formula_type == "projectile_motion":
+            v0, angle, g = kwargs.get('v0', 0), kwargs.get('angle', 0), kwargs.get('g', 9.81)
+            angle_rad = math.radians(angle)
+            time_flight = 2 * v0 * math.sin(angle_rad) / g
+            max_height = (v0 * math.sin(angle_rad))**2 / (2 * g)
+            range_distance = v0**2 * math.sin(2 * angle_rad) / g
+            
+            return {
+                "time_of_flight": time_flight,
+                "maximum_height": max_height,
+                "range": range_distance
+            }
+        elif formula_type == "wave_properties":
+            frequency = kwargs.get('frequency', 0)
+            wavelength = kwargs.get('wavelength', 0)
+            speed = kwargs.get('speed', 3e8)  # Speed of light default
+            
+            if frequency and wavelength:
+                calculated_speed = frequency * wavelength
+                return {"calculated_speed": calculated_speed}
+            elif frequency:
+                calculated_wavelength = speed / frequency
+                return {"wavelength": calculated_wavelength}
+            elif wavelength:
+                calculated_frequency = speed / wavelength
+                return {"frequency": calculated_frequency}
+        
+        return "Unsupported physics calculation"
+    except Exception as e:
+        return f"Physics calculation failed: {str(e)}"
+
+def chemistry_calculations(calculation_type, **kwargs):
+    """Perform chemistry calculations."""
+    try:
+        if calculation_type == "ideal_gas":
+            # PV = nRT
+            P = kwargs.get('pressure')
+            V = kwargs.get('volume')  
+            n = kwargs.get('moles')
+            T = kwargs.get('temperature')
+            R = 8.314  # J/(mol·K)
+            
+            if P and V and n:
+                calculated_T = (P * V) / (n * R)
+                return {"temperature": calculated_T}
+            elif P and V and T:
+                calculated_n = (P * V) / (R * T)
+                return {"moles": calculated_n}
+            elif V and n and T:
+                calculated_P = (n * R * T) / V
+                return {"pressure": calculated_P}
+        elif calculation_type == "molarity":
+            moles = kwargs.get('moles')
+            volume_L = kwargs.get('volume_liters')
+            if moles and volume_L:
+                molarity = moles / volume_L
+                return {"molarity": molarity}
+        
+        return "Unsupported chemistry calculation"
+    except Exception as e:
+        return f"Chemistry calculation failed: {str(e)}"
+
+def numerical_methods(method_type, **kwargs):
+    """Implement various numerical methods."""
+    try:
+        import numpy as np
+        
+        if method_type == "newton_raphson":
+            # Simple implementation for x^2 - a = 0 (finding sqrt(a))
+            a = kwargs.get('number', 4)
+            x0 = kwargs.get('initial_guess', 1.0)
+            tolerance = kwargs.get('tolerance', 1e-6)
+            max_iterations = kwargs.get('max_iterations', 100)
+            
+            x = x0
+            for i in range(max_iterations):
+                f_x = x**2 - a
+                f_prime_x = 2*x
+                if abs(f_prime_x) < tolerance:
+                    return {"error": "Derivative too small"}
+                x_new = x - f_x / f_prime_x
+                if abs(x_new - x) < tolerance:
+                    return {"result": x_new, "iterations": i+1}
+                x = x_new
+            
+            return {"result": x, "iterations": max_iterations, "converged": False}
+        
+        elif method_type == "numerical_integration":
+            # Simple trapezoidal rule for x^2 from a to b
+            a = kwargs.get('lower_bound', 0)
+            b = kwargs.get('upper_bound', 1)
+            n = kwargs.get('intervals', 1000)
+            
+            h = (b - a) / n
+            integral = 0.5 * (a**2 + b**2)  # f(a) + f(b)
+            
+            for i in range(1, n):
+                x = a + i * h
+                integral += x**2
+            
+            integral *= h
+            return {"integral": integral, "intervals": n}
+        
+        return "Unsupported numerical method"
+    except Exception as e:
+        return f"Numerical method failed: {str(e)}"
+
+scientific_computer = dspy.CodeAct(
+    signature="scientific_problem, parameters -> computation_steps, scientific_result",
+    tools=[physics_calculations, chemistry_calculations, numerical_methods],
+    max_iters=4
+)
+```
+
+## Advanced CodeAct Patterns
+
+### Custom Interpreter Configuration
+
+```python
+from dspy.primitives.python_interpreter import PythonInterpreter
+
+# Create custom interpreter with specific configuration
+class CustomCodeAct(dspy.Module):
+    def __init__(self, signature, tools, interpreter_config=None):
+        super().__init__()
+        
+        # Custom interpreter configuration
+        self.interpreter = PythonInterpreter()
+        
+        # Pre-load common libraries in interpreter
+        startup_code = """
+import math
+import statistics
+import json
+import re
+from datetime import datetime, timedelta
+import itertools
+from collections import defaultdict, Counter
+
+# Custom utility functions
+def safe_divide(a, b):
+    return a / b if b != 0 else float('inf')
+
+def list_stats(data):
+    if not data:
+        return {}
+    return {
+        'count': len(data),
+        'sum': sum(data),
+        'avg': sum(data) / len(data),
+        'min': min(data),
+        'max': max(data)
+    }
+"""
+        self.interpreter(startup_code)
+        
+        # Create the CodeAct module with custom interpreter
+        self.codeact = dspy.CodeAct(
+            signature=signature,
+            tools=tools,
+            interpreter=self.interpreter,
+            max_iters=5
+        )
+    
+    def forward(self, **kwargs):
+        return self.codeact(**kwargs)
+
+# Usage
+enhanced_solver = CustomCodeAct(
+    signature="complex_problem -> detailed_solution",
+    tools=[statistical_analysis, data_transformation]
+)
+```
+
+### Error-Resilient Code Generation
+
+```python
+class RobustCodeAct(dspy.Module):
+    def __init__(self, signature, tools, max_retries=3):
+        super().__init__()
+        self.max_retries = max_retries
+        self.base_codeact = dspy.CodeAct(signature, tools, max_iters=2)
+        
+        # Error analysis and recovery
+        self.error_analyzer = dspy.ChainOfThought(
+            "code, error_message -> error_type, suggested_fix, recovery_strategy"
+        )
+        
+        self.code_fixer = dspy.ChainOfThought(
+            "original_code, error_analysis, problem -> fixed_code, explanation"
+        )
+    
+    def forward(self, **kwargs):
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                result = self.base_codeact(**kwargs)
+                
+                # Check if result contains error indicators
+                trajectory = getattr(result, 'trajectory', {})
+                has_errors = any('Failed to execute' in str(v) for v in trajectory.values())
+                
+                if not has_errors:
+                    return result
+                else:
+                    last_error = "Code execution errors in trajectory"
+                    
+            except Exception as e:
+                last_error = str(e)
+            
+            # If we have an error and haven't reached max retries, try to fix
+            if attempt < self.max_retries - 1 and last_error:
+                # Analyze the error and generate a fix
+                error_analysis = self.error_analyzer(
+                    code="Previous attempt failed",
+                    error_message=last_error
+                )
+                
+                # Modify approach based on error analysis
+                if "timeout" in last_error.lower():
+                    kwargs["approach_hint"] = "Use simpler, more efficient algorithms"
+                elif "import" in last_error.lower():
+                    kwargs["approach_hint"] = "Use only standard library functions"
+                elif "syntax" in last_error.lower():
+                    kwargs["approach_hint"] = "Focus on correct Python syntax"
+        
+        # If all retries failed, return error result
+        return dspy.Prediction(
+            error=f"All {self.max_retries} attempts failed. Last error: {last_error}",
+            success=False
+        )
+```
+
+### Multi-Stage Computational Pipeline
+
+```python
+class ComputationalPipeline(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        
+        # Stage 1: Data preprocessing
+        self.preprocessor = dspy.CodeAct(
+            signature="raw_data, preprocessing_requirements -> cleaned_data, preprocessing_report",
+            tools=[data_cleaning, data_transformation],
+            max_iters=3
+        )
+        
+        # Stage 2: Analysis
+        self.analyzer = dspy.CodeAct(
+            signature="cleaned_data, analysis_type -> analysis_results, intermediate_findings",
+            tools=[statistical_analysis, correlation_analysis, time_series_analysis],
+            max_iters=4
+        )
+        
+        # Stage 3: Results synthesis
+        self.synthesizer = dspy.CodeAct(
+            signature="analysis_results, findings -> final_insights, recommendations, confidence",
+            tools=[generate_summary_stats],
+            max_iters=2
+        )
+    
+    def forward(self, raw_data, analysis_requirements, preprocessing_requirements="standard"):
+        # Stage 1: Preprocess data
+        preprocessing_result = self.preprocessor(
+            raw_data=raw_data,
+            preprocessing_requirements=preprocessing_requirements
+        )
+        
+        if hasattr(preprocessing_result, 'error'):
+            return preprocessing_result
+        
+        # Stage 2: Analyze processed data
+        analysis_result = self.analyzer(
+            cleaned_data=preprocessing_result.cleaned_data,
+            analysis_type=analysis_requirements
+        )
+        
+        if hasattr(analysis_result, 'error'):
+            return analysis_result
+        
+        # Stage 3: Synthesize results
+        final_result = self.synthesizer(
+            analysis_results=analysis_result.analysis_results,
+            findings=analysis_result.intermediate_findings
+        )
+        
+        # Combine all stages
+        return dspy.Prediction(
+            preprocessing_report=preprocessing_result.preprocessing_report,
+            analysis_results=analysis_result.analysis_results,
+            final_insights=final_result.final_insights,
+            recommendations=final_result.recommendations,
+            confidence=final_result.confidence,
+            pipeline_success=True
+        )
+
+# Usage
+pipeline = ComputationalPipeline()
+result = pipeline(
+    raw_data="[1, 2, None, 4, 100, 5, 6, 7, 8, 9, 10]",  # Data with outlier and missing value
+    analysis_requirements="trend analysis and outlier detection"
+)
+```
+
+## Integration with ReAct and ProgramOfThought
+
+### Hybrid Reasoning System
+
+```python
+class HybridReasoningSystem(dspy.Module):
+    def __init__(self, computational_tools, reasoning_tools):
+        super().__init__()
+        
+        # CodeAct for computational tasks
+        self.computational_reasoner = dspy.CodeAct(
+            signature="computational_problem -> code_solution, computed_result",
+            tools=computational_tools,
+            max_iters=4
+        )
+        
+        # ReAct for general reasoning with tools
+        self.general_reasoner = dspy.ReAct(
+            signature="general_problem -> reasoning_steps, solution",
+            tools=reasoning_tools,
+            max_iters=3
+        )
+        
+        # Task classifier
+        self.task_classifier = dspy.Predict(
+            "problem_description -> task_type: str, requires_computation: bool, complexity: str"
+        )
+        
+        # Result synthesizer
+        self.synthesizer = dspy.ChainOfThought(
+            "problem, computational_result, reasoning_result -> integrated_solution, confidence"
+        )
+    
+    def forward(self, problem_description):
+        # Classify the problem
+        classification = self.task_classifier(problem_description=problem_description)
+        
+        results = {}
+        
+        # Use computational reasoning if needed
+        if classification.requires_computation:
+            comp_result = self.computational_reasoner(computational_problem=problem_description)
+            results['computational'] = comp_result
+        
+        # Use general reasoning
+        general_result = self.general_reasoner(general_problem=problem_description)
+        results['reasoning'] = general_result
+        
+        # Synthesize results if both are available
+        if 'computational' in results and 'reasoning' in results:
+            synthesis = self.synthesizer(
+                problem=problem_description,
+                computational_result=str(results['computational']),
+                reasoning_result=str(results['reasoning'])
+            )
+            return synthesis
+        elif 'computational' in results:
+            return results['computational']
+        else:
+            return results['reasoning']
+```
+
+## Speed Tips
+
+### Optimized Tool Selection
+
+```python
+# Efficient tool organization
+class OptimizedCodeAct:
+    def __init__(self):
+        # Group tools by domain for faster selection
+        self.math_tools = [solve_quadratic, matrix_operations]
+        self.stats_tools = [statistical_analysis, correlation_analysis]
+        self.data_tools = [data_cleaning, data_transformation]
+        
+        # Create domain-specific CodeAct instances
+        self.math_solver = dspy.CodeAct(
+            "math_problem -> solution",
+            tools=self.math_tools,
+            max_iters=2  # Fewer iterations for focused tasks
+        )
+        
+        self.stats_analyzer = dspy.CodeAct(
+            "data_analysis_problem -> analysis",
+            tools=self.stats_tools,
+            max_iters=3
+        )
+        
+        self.data_processor = dspy.CodeAct(
+            "data_processing_problem -> processed_data",
+            tools=self.data_tools,
+            max_iters=2
+        )
+    
+    def solve(self, problem, domain="auto"):
+        domain_map = {
+            "math": self.math_solver,
+            "statistics": self.stats_analyzer,
+            "data": self.data_processor
+        }
+        
+        if domain in domain_map:
+            return domain_map[domain](problem=problem)
+        else:
+            # Auto-detect domain (simplified)
+            if any(word in problem.lower() for word in ['equation', 'solve', 'calculate']):
+                return self.math_solver(problem=problem)
+            elif any(word in problem.lower() for word in ['analyze', 'correlation', 'statistics']):
+                return self.stats_analyzer(problem=problem)
+            else:
+                return self.data_processor(problem=problem)
+
+# Pre-compiled tool sets
+MATH_TOOLS = [solve_quadratic, matrix_operations, calculus_operations]
+DATA_TOOLS = [data_cleaning, statistical_analysis, time_series_analysis]
+SCIENCE_TOOLS = [physics_calculations, chemistry_calculations, numerical_methods]
+
+# Quick constructors
+def quick_math_solver():
+    return dspy.CodeAct("problem -> solution", tools=MATH_TOOLS, max_iters=3)
+
+def quick_data_analyzer():
+    return dspy.CodeAct("data -> analysis", tools=DATA_TOOLS, max_iters=3)
+```
+
+### Code Generation Optimization
+
+```python
+# Optimized code generation with hints
+class OptimizedCodeGeneration(dspy.Module):
+    def __init__(self, signature, tools):
+        super().__init__()
+        
+        # Use focused signatures for better code generation
+        focused_signature = dspy.Signature(
+            signature,
+            f"""Generate efficient, well-commented Python code.
+            
+            Guidelines:
+            - Use only standard library when possible
+            - Optimize for readability and performance
+            - Include error handling
+            - Print results clearly
+            - Use provided tools when appropriate
+            
+            Available tools: {[tool.__name__ for tool in tools]}"""
+        )
+        
+        self.codeact = dspy.CodeAct(
+            signature=focused_signature,
+            tools=tools,
+            max_iters=3
+        )
+    
+    def forward(self, **kwargs):
+        # Add optimization hints to input
+        enhanced_kwargs = {
+            **kwargs,
+            "optimization_hint": "Focus on clean, efficient code with clear outputs"
+        }
+        return self.codeact(**enhanced_kwargs)
+```
+
+## Common Pitfalls
+
+### Tool Function Design
+
+```python
+# ❌ DON'T: Use complex objects as tool parameters
+def bad_tool(complex_object):
+    return complex_object.some_method()  # Hard for LM to use
+
+# ✅ DO: Use simple, clear function signatures
+def good_tool(data_list, operation_type="sum"):
+    """Perform operation on data list.
+    
+    Args:
+        data_list: List of numbers
+        operation_type: 'sum', 'average', 'max', 'min'
+    
+    Returns:
+        Computed result
+    """
+    if operation_type == "sum":
+        return sum(data_list)
+    elif operation_type == "average":
+        return sum(data_list) / len(data_list)
+    # ... etc
+```
+
+### Error Handling in Tools
+
+```python
+# ❌ DON'T: Let tools crash without helpful messages
+def bad_division_tool(a, b):
+    return a / b  # Will crash on division by zero
+
+# ✅ DO: Provide robust error handling
+def good_division_tool(a, b):
+    """Safely divide two numbers."""
+    try:
+        if b == 0:
+            return {"error": "Cannot divide by zero", "result": None}
+        result = a / b
+        return {"result": result, "success": True}
+    except Exception as e:
+        return {"error": f"Division failed: {str(e)}", "result": None}
+```
+
+### Excessive Tool Complexity
+
+```python
+# ❌ DON'T: Create overly complex tools
+def overcomplicated_tool(data, analysis_type, normalization_method, 
+                        outlier_detection, missing_value_strategy, 
+                        correlation_method, significance_level):
+    # Too many parameters for LM to handle effectively
+    pass
+
+# ✅ DO: Break complex tools into simpler components
+def prepare_data(data, method="standard"):
+    """Simple data preparation."""
+    # Handle one thing well
+    pass
+
+def analyze_correlation(x_data, y_data):
+    """Simple correlation analysis."""
+    # Single focused purpose
+    pass
+
+def detect_outliers(data, method="iqr"):
+    """Simple outlier detection."""
+    # Clear, single responsibility
+    pass
+```
+
+## Best Practices Summary
+
+- **Clear tool design**: Create simple, well-documented tools with clear inputs/outputs
+- **Error resilience**: Build robust error handling into tools and overall system
+- **Domain focus**: Use domain-specific tool sets for better performance
+- **Iterative refinement**: Leverage max_iters for complex computational problems
+- **Code quality**: Generate clean, readable, and well-commented code
+- **Performance optimization**: Use appropriate data structures and algorithms
+- **Safe execution**: Validate inputs and handle edge cases in tools
+- **Result extraction**: Ensure computational results are clearly printed/returned
+
+## References
+
+- [CodeAct Module API Documentation](/docs/api/modules/CodeAct.md)
+- [ProgramOfThought Module Guide](/docs/guides/program_of_thought.md)
+- [Python Interpreter Configuration](/docs/tutorials/interpreters/)
+- [Computational Reasoning Examples](/docs/examples/computational/)

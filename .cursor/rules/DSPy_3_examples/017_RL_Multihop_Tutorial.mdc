@@ -1,0 +1,739 @@
+---
+description:
+  DSPY 3 reinforcement learning (RL) optimization for complex multi-hop research tasks using GRPO (Generalized Relative Policy Optimization) and Arbor infrastructure
+  - "src/**/*.py"
+  - "examples/**/*.py"
+  - "notebooks/**/*.ipynb"
+  - "research/**/*.py"
+  - "experiments/**/*.py"
+  - "rl_training/**/*.py"
+  - "multihop/**/*.py"
+  - "retrieval/**/*.py"
+---
+
+# DSPy Example: RL Multi-Hop Research with GRPO
+
+## Overview
+
+This example demonstrates how to use DSPy's experimental GRPO (Generalized Relative Policy Optimization) for multi-hop research tasks. The system learns to intelligently decompose complex claims into targeted search queries, achieving improved recall through reinforcement learning.
+
+**Performance Results from Tutorial:**
+
+- Baseline Multi-hop Recall: 61.8%
+- GRPO-Optimized Recall: 66.2% (7.1% relative improvement)
+- Training Duration: 18 hours on 6 GPUs
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    RL Multi-Hop Research System                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐  │
+│  │  Query Generator│    │  Note Appender  │    │ Reward Function │  │
+│  │                 │    │                 │    │                 │  │
+│  │ • Generate next │    │ • Extract new   │    │ • Recall metric │  │
+│  │   search query  │    │   key facts     │    │ • Title matching│  │
+│  │ • Sequential    │────▶• Accumulate     │────▶• Performance    │  │
+│  │   reasoning     │    │   knowledge     │    │   tracking     │  │
+│  │ • Context aware │    │ • Learning      │    │ • Reward signal│  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘  │
+│           │                        │                        │       │
+│           ▼                        ▼                        ▼       │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐  │
+│  │ BM25 Retrieval  │    │ Document Store  │    │  GRPO Trainer   │  │
+│  │                 │    │                 │    │                 │  │
+│  │ • 5M Wikipedia  │    │ • Retrieved     │    │ • LoRA fine-    │  │
+│  │   abstracts     │    │   documents     │    │   tuning        │  │
+│  │ • Stemming      │    │ • Key facts     │    │ • Multi-GPU     │  │
+│  │ • Scoring       │    │ • Query history │    │ • Batch training│  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘  │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                         Production Features                         │
+│ • MLflow experiment tracking  • Distributed GPU training           │
+│ • Performance monitoring      • Checkpoint management              │
+│ • Batch evaluation           • Error handling & recovery           │
+│ • A/B testing framework      • Resource optimization               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### 1. Core Multi-Hop Research Module
+
+```python
+import dspy
+import bm25s
+import Stemmer
+import ujson
+from dspy.clients.lm_local_arbor import ArborProvider
+from dspy.teleprompt.grpo import GRPO
+import mlflow
+import logging
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+import json
+import time
+
+@dataclass
+class ResearchConfig:
+    """Configuration for multi-hop research system."""
+    num_docs: int = 4
+    num_hops: int = 2
+    temperature: float = 0.7
+    beta: float = 0.04
+    learning_rate: float = 2e-5
+    max_train_steps: int = 500
+    batch_size: int = 2
+    gradient_accumulation_steps: int = 4
+
+class ProductionResearchHop(dspy.Module):
+    """Production-ready multi-hop research system with RL optimization."""
+
+    def __init__(self, config: ResearchConfig):
+        super().__init__()
+        self.config = config
+
+        # Define instruction prompts
+        self.query_instruction = """
+        Given a claim and some key facts, generate a follow-up search query to find
+        the next most essential clue towards verifying or refuting the claim.
+        The goal ultimately is to find all documents implicated by the claim.
+        """.strip()
+
+        self.notes_instruction = """
+        Given a claim, some key facts, and new search results, identify any new
+        learnings from the new search results, which will extend the key facts
+        known so far about whether the claim is true or false. The goal is to
+        ultimately collect all facts that would help us find all documents
+        implicated by the claim.
+        """.strip()
+
+        # Initialize DSPy modules
+        self.generate_query = dspy.ChainOfThought(
+            dspy.Signature("claim, key_facts -> followup_search_query", self.query_instruction)
+        )
+        self.append_notes = dspy.ChainOfThought(
+            dspy.Signature("claim, key_facts, new_search_results -> new_key_facts", self.notes_instruction)
+        )
+
+        self.retriever = None
+        self.corpus = []
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up logging for the research system."""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        return logger
+
+    def setup_retrieval(self, corpus_path: str = "wiki.abstracts.2017.jsonl"):
+        """Set up BM25 retrieval system with Wikipedia corpus."""
+        try:
+            self.logger.info("Loading Wikipedia corpus...")
+            corpus = []
+
+            with open(corpus_path) as f:
+                for line in f:
+                    line = ujson.loads(line)
+                    corpus.append(f"{line['title']} | {' '.join(line['text'])}")
+
+            self.corpus = corpus
+            self.logger.info(f"Loaded {len(corpus)} documents")
+
+            # Tokenize and index
+            self.logger.info("Building BM25 index...")
+            stemmer = Stemmer.Stemmer("english")
+            corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=stemmer)
+
+            self.retriever = bm25s.BM25(k1=0.9, b=0.4)
+            self.retriever.index(corpus_tokens)
+            self.stemmer = stemmer
+
+            self.logger.info("BM25 index ready")
+
+        except Exception as e:
+            self.logger.error(f"Failed to setup retrieval: {e}")
+            raise
+
+    def search(self, query: str, k: int) -> List[str]:
+        """Perform BM25 search over Wikipedia corpus."""
+        if not self.retriever:
+            raise ValueError("Retrieval system not initialized. Call setup_retrieval() first.")
+
+        try:
+            tokens = bm25s.tokenize(query, stopwords="en", stemmer=self.stemmer, show_progress=False)
+            results, scores = self.retriever.retrieve(tokens, k=k, n_threads=1, show_progress=False)
+
+            run = {
+                self.corpus[doc]: float(score)
+                for doc, score in zip(results[0], scores[0])
+            }
+            return list(run.keys())
+
+        except Exception as e:
+            self.logger.error(f"Search failed for query '{query}': {e}")
+            return []
+
+    def forward(self, claim: str) -> dspy.Prediction:
+        """Execute multi-hop research for a given claim."""
+        key_facts = []
+        retrieved_docs = []
+        hop_queries = []
+
+        try:
+            for hop_idx in range(self.config.num_hops):
+                # Generate search query
+                if hop_idx == 0:
+                    query = claim
+                else:
+                    query_result = self.generate_query(claim=claim, key_facts=key_facts)
+                    query = query_result.followup_search_query
+
+                hop_queries.append(query)
+                self.logger.info(f"Hop {hop_idx + 1} query: {query}")
+
+                # Perform search
+                search_results = self.search(query, k=self.config.num_docs)
+                retrieved_docs.extend(search_results)
+
+                # Extract new facts (except for final hop)
+                if hop_idx < self.config.num_hops - 1:
+                    notes_result = self.append_notes(
+                        claim=claim,
+                        key_facts=key_facts,
+                        new_search_results=search_results
+                    )
+                    key_facts.append(notes_result.new_key_facts)
+
+            return dspy.Prediction(
+                key_facts=key_facts,
+                retrieved_docs=retrieved_docs,
+                hop_queries=hop_queries
+            )
+
+        except Exception as e:
+            self.logger.error(f"Forward pass failed for claim '{claim}': {e}")
+            return dspy.Prediction(
+                key_facts=[],
+                retrieved_docs=[],
+                hop_queries=[],
+                error=str(e)
+            )
+```
+
+### 2. GRPO Training System
+
+```python
+class ProductionGRPOTrainer:
+    """Production-ready GRPO trainer for multi-hop research."""
+
+    def __init__(self, config: ResearchConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+
+        # MLflow experiment tracking
+        mlflow.set_experiment("multihop_research_grpo")
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up logging for training."""
+        logger = logging.getLogger(f"{__name__}.trainer")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def setup_arbor_client(self, port: int = 7453, model_name: str = "Qwen/Qwen2.5-7B-Instruct"):
+        """Set up Arbor RL server client."""
+        try:
+            self.local_lm = dspy.LM(
+                model=f"openai/arbor:{model_name}",
+                provider=ArborProvider(),
+                temperature=self.config.temperature,
+                api_base=f"http://localhost:{port}/v1/",
+                api_key="arbor",
+            )
+
+            dspy.configure(lm=self.local_lm)
+            self.logger.info(f"Arbor client configured for model: {model_name}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to setup Arbor client: {e}")
+            raise
+
+    def recall_metric(self, example, pred, trace=None) -> float:
+        """Calculate recall metric for multi-hop research."""
+        if hasattr(pred, 'error'):
+            return 0.0
+
+        try:
+            gold_titles = example.titles
+            retrieved_titles = [doc.split(" | ")[0] for doc in pred.retrieved_docs]
+            recall_score = sum(x in retrieved_titles for x in set(gold_titles)) / len(gold_titles)
+            return recall_score
+
+        except Exception as e:
+            self.logger.error(f"Recall calculation failed: {e}")
+            return 0.0
+
+    def train(self, program: ProductionResearchHop, trainset, valset):
+        """Train the multi-hop research system with GRPO."""
+
+        with mlflow.start_run():
+            # Log configuration
+            mlflow.log_params({
+                "num_docs": self.config.num_docs,
+                "num_hops": self.config.num_hops,
+                "temperature": self.config.temperature,
+                "beta": self.config.beta,
+                "learning_rate": self.config.learning_rate,
+                "max_train_steps": self.config.max_train_steps,
+                "batch_size": self.config.batch_size
+            })
+
+            try:
+                # Set up training parameters
+                train_kwargs = {
+                    "per_device_train_batch_size": self.config.batch_size,
+                    "gradient_accumulation_steps": self.config.gradient_accumulation_steps,
+                    "temperature": self.config.temperature,
+                    "beta": self.config.beta,
+                    "learning_rate": self.config.learning_rate,
+                    "gradient_checkpointing": True,
+                    "gradient_checkpointing_kwargs": {"use_reentrant": False},
+                    "bf16": True,
+                    "lr_scheduler_type": "constant_with_warmup",
+                    "max_prompt_length": None,
+                    "max_completion_length": None,
+                    "scale_rewards": True,
+                    "max_grad_norm": 0.5,
+                    "lora": True,
+                }
+
+                # Initialize GRPO compiler
+                compiler = GRPO(
+                    metric=self.recall_metric,
+                    multitask=True,
+                    num_dspy_examples_per_grpo_step=6,
+                    num_samples_per_input=8,
+                    exclude_demos=True,
+                    num_train_steps=self.config.max_train_steps,
+                    num_threads=24,
+                    use_train_as_val=False,
+                    num_steps_for_val=10,
+                    train_kwargs=train_kwargs,
+                    report_train_scores=False,
+                )
+
+                # Set language model for the program
+                program.set_lm(self.local_lm)
+
+                self.logger.info("Starting GRPO training...")
+                start_time = time.time()
+
+                # Compile with GRPO
+                optimized_program = compiler.compile(
+                    student=program,
+                    trainset=trainset,
+                    valset=valset,
+                )
+
+                training_time = time.time() - start_time
+                self.logger.info(f"Training completed in {training_time:.2f} seconds")
+
+                # Log training metrics
+                mlflow.log_metrics({
+                    "training_time_seconds": training_time,
+                    "training_time_hours": training_time / 3600
+                })
+
+                return optimized_program
+
+            except Exception as e:
+                self.logger.error(f"Training failed: {e}")
+                mlflow.log_param("training_error", str(e))
+                raise
+```
+
+### 3. Complete Production System
+
+```python
+class ProductionMultiHopSystem:
+    """Complete production system for multi-hop research with RL optimization."""
+
+    def __init__(self, config: ResearchConfig):
+        self.config = config
+        self.research_module = ProductionResearchHop(config)
+        self.trainer = ProductionGRPOTrainer(config)
+        self.logger = self._setup_logging()
+
+        # Performance tracking
+        self.metrics_history = []
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up system logging."""
+        logger = logging.getLogger(f"{__name__}.system")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def setup_environment(self, corpus_path: str = "wiki.abstracts.2017.jsonl"):
+        """Set up the complete environment for multi-hop research."""
+        try:
+            # Setup retrieval system
+            self.research_module.setup_retrieval(corpus_path)
+
+            # Setup Arbor client for RL training
+            self.trainer.setup_arbor_client()
+
+            self.logger.info("Environment setup completed successfully")
+
+        except Exception as e:
+            self.logger.error(f"Environment setup failed: {e}")
+            raise
+
+    def prepare_dataset(self, dataset_name: str = "hover-nlp/hover"):
+        """Prepare HoVer dataset for training and evaluation."""
+        try:
+            from dspy.datasets import DataLoader
+            import random
+
+            self.logger.info(f"Loading dataset: {dataset_name}")
+
+            kwargs = dict(
+                fields=("claim", "supporting_facts", "hpqa_id", "num_hops"),
+                input_keys=("claim",)
+            )
+            hover = DataLoader().from_huggingface(
+                dataset_name=dataset_name,
+                split="train",
+                trust_remote_code=True,
+                **kwargs
+            )
+
+            # Filter for 3-hop examples and remove duplicates
+            hpqa_ids = set()
+            hover = [
+                dspy.Example(
+                    claim=x.claim,
+                    titles=list(set([y["key"] for y in x.supporting_facts]))
+                ).with_inputs("claim")
+                for x in hover
+                if x["num_hops"] == 3 and x["hpqa_id"] not in hpqa_ids and not hpqa_ids.add(x["hpqa_id"])
+            ]
+
+            # Split dataset
+            random.Random(0).shuffle(hover)
+            trainset = hover[:600]
+            devset = hover[600:900]
+            testset = hover[900:]
+
+            self.logger.info(f"Dataset prepared: {len(trainset)} train, {len(devset)} dev, {len(testset)} test")
+
+            return trainset, devset, testset
+
+        except Exception as e:
+            self.logger.error(f"Dataset preparation failed: {e}")
+            raise
+
+    def evaluate_performance(self, program, dataset, dataset_name: str = "eval"):
+        """Evaluate program performance on dataset."""
+        try:
+            evaluator = dspy.Evaluate(
+                devset=dataset,
+                metric=self.trainer.recall_metric,
+                num_threads=16,
+                display_progress=True,
+                display_table=5
+            )
+
+            results = evaluator(program)
+
+            # Log metrics
+            with mlflow.start_run():
+                mlflow.log_metrics({
+                    f"{dataset_name}_recall": results,
+                    f"{dataset_name}_samples": len(dataset)
+                })
+
+            self.metrics_history.append({
+                "dataset": dataset_name,
+                "recall": results,
+                "timestamp": time.time()
+            })
+
+            self.logger.info(f"{dataset_name} recall: {results:.3f}")
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Evaluation failed: {e}")
+            return 0.0
+
+    def run_optimization_pipeline(self):
+        """Run the complete optimization pipeline."""
+        try:
+            self.logger.info("Starting multi-hop research optimization pipeline")
+
+            # Prepare dataset
+            trainset, devset, testset = self.prepare_dataset()
+
+            # Evaluate baseline performance
+            baseline_recall = self.evaluate_performance(self.research_module, devset, "baseline")
+
+            # Train with GRPO
+            self.logger.info("Starting GRPO optimization...")
+            optimized_program = self.trainer.train(self.research_module, trainset, devset)
+
+            # Evaluate optimized performance
+            optimized_recall = self.evaluate_performance(optimized_program, devset, "optimized")
+
+            # Final test evaluation
+            test_recall = self.evaluate_performance(optimized_program, testset, "test")
+
+            # Calculate improvement
+            improvement = ((optimized_recall - baseline_recall) / baseline_recall) * 100
+
+            self.logger.info(f"""
+            Optimization Results:
+            - Baseline Recall: {baseline_recall:.3f}
+            - Optimized Recall: {optimized_recall:.3f}
+            - Test Recall: {test_recall:.3f}
+            - Relative Improvement: {improvement:.1f}%
+            """)
+
+            return {
+                "baseline_recall": baseline_recall,
+                "optimized_recall": optimized_recall,
+                "test_recall": test_recall,
+                "improvement_percent": improvement,
+                "optimized_program": optimized_program
+            }
+
+        except Exception as e:
+            self.logger.error(f"Optimization pipeline failed: {e}")
+            raise
+
+# Usage example
+def main():
+    """Main execution function."""
+    config = ResearchConfig(
+        num_docs=4,
+        num_hops=2,
+        temperature=0.7,
+        beta=0.04,
+        learning_rate=2e-5,
+        max_train_steps=500,
+        batch_size=2
+    )
+
+    system = ProductionMultiHopSystem(config)
+
+    # Setup environment
+    system.setup_environment()
+
+    # Run optimization pipeline
+    results = system.run_optimization_pipeline()
+
+    print(f"Multi-hop research system optimized with {results['improvement_percent']:.1f}% improvement")
+
+    return results
+
+if __name__ == "__main__":
+    main()
+```
+
+## Production Enhancements
+
+### 1. MLflow Integration
+
+```python
+import mlflow
+import mlflow.dspy
+
+class MLflowTracker:
+    """MLflow integration for experiment tracking."""
+
+    def __init__(self, experiment_name: str = "multihop_research"):
+        mlflow.set_experiment(experiment_name)
+
+    def log_training_run(self, config: ResearchConfig, results: Dict[str, Any]):
+        """Log complete training run with metrics and artifacts."""
+        with mlflow.start_run():
+            # Log parameters
+            mlflow.log_params(config.__dict__)
+
+            # Log metrics
+            mlflow.log_metrics({
+                "baseline_recall": results["baseline_recall"],
+                "optimized_recall": results["optimized_recall"],
+                "improvement_percent": results["improvement_percent"],
+                "training_time_hours": results.get("training_time_hours", 0)
+            })
+
+            # Log model
+            mlflow.dspy.log_model(results["optimized_program"], "optimized_model")
+```
+
+### 2. Distributed Training Configuration
+
+```python
+class DistributedTrainingConfig:
+    """Configuration for distributed GRPO training."""
+
+    def __init__(self):
+        self.arbor_config = {
+            "inference": {"gpu_ids": "0"},
+            "training": {"gpu_ids": "1,2,3,4,5,6"}  # 6 GPUs for training
+        }
+
+        self.training_params = {
+            "per_device_train_batch_size": 2,
+            "gradient_accumulation_steps": 4,
+            "dataloader_num_workers": 8,
+            "ddp_find_unused_parameters": False,
+            "bf16": True,
+            "gradient_checkpointing": True
+        }
+```
+
+### 3. Performance Monitoring
+
+```python
+class PerformanceMonitor:
+    """Monitor system performance and resource usage."""
+
+    def __init__(self):
+        self.metrics = []
+
+    def track_inference(self, claim: str, prediction: dspy.Prediction, latency: float):
+        """Track inference performance."""
+        metric = {
+            "claim_length": len(claim),
+            "num_retrieved_docs": len(prediction.retrieved_docs),
+            "num_hops": len(prediction.hop_queries),
+            "latency_seconds": latency,
+            "timestamp": time.time()
+        }
+        self.metrics.append(metric)
+
+    def get_performance_summary(self) -> Dict[str, float]:
+        """Get performance summary statistics."""
+        if not self.metrics:
+            return {}
+
+        return {
+            "avg_latency": sum(m["latency_seconds"] for m in self.metrics) / len(self.metrics),
+            "avg_retrieved_docs": sum(m["num_retrieved_docs"] for m in self.metrics) / len(self.metrics),
+            "total_inferences": len(self.metrics)
+        }
+```
+
+## Best Practices
+
+### 1. Data Preparation
+
+- **Corpus Quality**: Ensure Wikipedia corpus is up-to-date and properly indexed
+- **Dataset Filtering**: Filter for appropriate hop counts and remove duplicates
+- **Balanced Splits**: Maintain balanced train/dev/test splits for reliable evaluation
+
+### 2. Training Optimization
+
+- **GPU Resources**: Use distributed training with multiple GPUs for faster convergence
+- **Checkpoint Management**: Save regular checkpoints during long training runs
+- **Learning Rate Scheduling**: Use warmup and decay schedules for stable training
+
+### 3. Evaluation Strategy
+
+- **Multiple Metrics**: Track recall, precision, and F1 scores
+- **Cross-Validation**: Use multiple random seeds for robust results
+- **Ablation Studies**: Test different hop counts and document retrieval numbers
+
+### 4. Production Deployment
+
+- **Model Serving**: Use efficient serving infrastructure for real-time inference
+- **Caching**: Cache frequently accessed documents and search results
+- **Monitoring**: Continuously monitor performance and resource usage
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Arbor Server Connection**
+
+   ```python
+   # Check Arbor server status
+   curl http://localhost:7453/health
+
+   # Restart server if needed
+   python -m arbor.cli serve --arbor-config arbor.yaml
+   ```
+
+2. **Memory Issues During Training**
+
+   ```python
+   # Reduce batch size and increase gradient accumulation
+   train_kwargs["per_device_train_batch_size"] = 1
+   train_kwargs["gradient_accumulation_steps"] = 8
+   ```
+
+3. **Poor Retrieval Performance**
+   ```python
+   # Tune BM25 parameters
+   retriever = bm25s.BM25(k1=1.2, b=0.75)  # More aggressive parameters
+   ```
+
+### Performance Optimization
+
+1. **Faster Indexing**
+
+   ```python
+   # Use multiple threads for BM25 indexing
+   corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=stemmer, n_threads=8)
+   ```
+
+2. **Efficient Search**
+
+   ```python
+   # Batch multiple queries
+   def batch_search(queries: List[str], k: int) -> List[List[str]]:
+       results = []
+       for query in queries:
+           results.append(search(query, k))
+       return results
+   ```
+
+3. **Memory Management**
+   ```python
+   # Clear GPU cache periodically
+   import torch
+   torch.cuda.empty_cache()
+   ```
+
+## Tutorial Results Summary
+
+**Baseline Performance:**
+
+- Multi-hop Recall: 61.8%
+- Average retrieval time: ~2.3 seconds per claim
+- Memory usage: ~8GB during inference
+
+**GRPO-Optimized Performance:**
+
+- Multi-hop Recall: 66.2% (7.1% relative improvement)
+- Training time: 18 hours on 6 GPUs
+- Model size: LoRA parameters only (~50MB)
+
+**Key Improvements:**
+
+1. Better query generation through RL feedback
+2. More targeted document retrieval
+3. Improved multi-hop reasoning chains
+4. Enhanced fact extraction accuracy
+
+This tutorial demonstrates experimental RL optimization for complex multi-hop reasoning tasks. While the improvements are modest compared to prompt optimization techniques like MIPROv2 or SIMBA, it provides a foundation for online RL training of arbitrary LM programs using small models and distributed infrastructure.

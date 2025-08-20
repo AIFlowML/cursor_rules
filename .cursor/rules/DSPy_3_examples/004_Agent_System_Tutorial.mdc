@@ -1,0 +1,974 @@
+---
+description: DSPY 3Agent System Tutorial - Production ReAct agent implementation from official DSPy 3.0.1 tutorial with multi-hop search
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready ReAct Agent Systems using DSPy 3.0.1 based on official tutorials.
+
+## Agent Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   User Query    │────│   ReAct Agent    │────│   Tool Search   │
+│   Complex Claim │    │   Reasoning      │    │   (Wikipedia)   │
+└─────────────────┘    │   + Actions      │    │   ColBERTv2     │
+                       └──────────────────┘    └─────────────────┘
+                              │                          │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Answer   │────│   Aggregation    │────│   Tool Results  │
+│  Multi-hop      │    │   & Validation   │    │   Multiple Docs │
+│  Reasoning      │    │   (up to 20      │    │   & Lookups     │
+└─────────────────┘    │   iterations)    │    └─────────────────┘
+                       └──────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   MLflow         │
+                    │   Trajectory     │
+                    │   Tracking       │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial ReAct Agent (From Official Notebook)
+
+```python
+import dspy
+import random
+from dspy.datasets import DataLoader
+
+# Tutorial LM configuration (exact setup)
+llama3b = dspy.LM('<provider>/Llama-3.2-3B-Instruct', temperature=0.7)
+gpt4o = dspy.LM('openai/gpt-4o', temperature=0.7)
+dspy.configure(lm=llama3b)
+
+# Tutorial data loading (exact from notebook)
+kwargs = dict(fields=("claim", "supporting_facts", "hpqa_id", "num_hops"), input_keys=("claim",))
+hover = DataLoader().from_huggingface(dataset_name="hover-nlp/hover", split="train", trust_remote_code=True, **kwargs)
+
+hpqa_ids = set()
+hover = [
+    dspy.Example(claim=x.claim, titles=list(set([y["key"] for y in x.supporting_facts]))).with_inputs("claim")
+    for x in hover
+    if x["num_hops"] == 3 and x["hpqa_id"] not in hpqa_ids and not hpqa_ids.add(x["hpqa_id"])
+]
+
+random.Random(0).shuffle(hover)
+trainset, devset, testset = hover[:100], hover[100:200], hover[650:]
+
+# Tutorial search function (exact implementation)
+DOCS = {}
+
+def search(query: str, k: int) -> list[str]:
+    results = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')(query, k=k)
+    results = [x['text'] for x in results]
+
+    for result in results:
+        title, text = result.split(" | ", 1)
+        DOCS[title] = text
+
+    return results
+
+# Tutorial tools (exact from notebook)
+def search_wikipedia(query: str) -> list[str]:
+    """Returns top-5 results and then the titles of the top-5 to top-30 results."""
+    topK = search(query, 30)
+    titles, topK = [f"`{x.split(' | ')[0]}`" for x in topK[5:30]], topK[:5]
+    return topK + [f"Other retrieved pages have titles: {', '.join(titles)}."]
+
+def lookup_wikipedia(title: str) -> str:
+    """Returns the text of the Wikipedia page, if it exists."""
+    if title in DOCS:
+        return DOCS[title]
+
+    results = [x for x in search(title, 10) if x.startswith(title + " | ")]
+    if not results:
+        return f"No Wikipedia page found for title: {title}"
+    return results[0]
+
+# Tutorial ReAct agent (exact implementation)
+instructions = "Find all Wikipedia titles relevant to verifying (or refuting) the claim."
+signature = dspy.Signature("claim -> titles: list[str]", instructions)
+react = dspy.ReAct(signature, tools=[search_wikipedia, lookup_wikipedia], max_iters=20)
+
+# Tutorial evaluation metric (exact)
+def top5_recall(example, pred, trace=None):
+    gold_titles = example.titles
+    recall = sum(x in pred.titles[:5] for x in gold_titles) / len(gold_titles)
+
+    # If we're "bootstrapping" for optimization, return True if and only if the recall is perfect.
+    if trace is not None:
+        return recall >= 1.0
+
+    # If we're just doing inference, just measure the recall.
+    return recall
+
+evaluate = dspy.Evaluate(devset=devset, metric=top5_recall, num_threads=16, display_progress=True, display_table=5)
+
+# Tutorial safe wrapper (for small models)
+def safe_react(claim: str):
+    try:
+        return react(claim=claim)
+    except Exception as e:
+        return dspy.Prediction(titles=[])
+
+# Tutorial optimization (exact MIPROv2 usage)
+kwargs = dict(teacher_settings=dict(lm=gpt4o), prompt_model=gpt4o, max_errors=999)
+tp = dspy.MIPROv2(metric=top5_recall, auto="medium", num_threads=16, **kwargs)
+optimized_react = tp.compile(react, trainset=trainset, max_bootstrapped_demos=3, max_labeled_demos=0)
+```
+
+### Production Agent System
+
+```python
+import logging
+import mlflow
+import time
+import asyncio
+from typing import Dict, List, Optional, Any, Union, Callable
+from pydantic import BaseModel, Field, validator
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+import json
+from collections import defaultdict, deque
+import uuid
+
+# Production configuration
+class AgentConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    teacher_model: str = "openai/gpt-4o"
+    max_iterations: int = 20
+    temperature: float = 0.7
+    search_k: int = 30
+    top_results: int = 5
+    timeout_seconds: int = 300
+    optimization_auto: str = "medium"
+    optimization_threads: int = 16
+    max_demos: int = 3
+    cache_dir: str = "./cache"
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+    enable_trajectory_logging: bool = True
+
+class ToolResult(BaseModel):
+    tool_name: str
+    args: Dict[str, Any]
+    result: Any
+    execution_time_ms: float
+    success: bool
+    error_message: Optional[str] = None
+
+class AgentStep(BaseModel):
+    step_number: int
+    thought: str
+    action: str
+    tool_name: str
+    tool_args: Dict[str, Any]
+    observation: Any
+    execution_time_ms: float
+    timestamp: str
+
+class AgentResult(BaseModel):
+    claim: str
+    final_answer: Union[List[str], str]
+    trajectory: List[AgentStep]
+    total_steps: int
+    total_time_ms: float
+    success: bool
+    model_version: str
+    tool_calls: int
+    reasoning_depth: int
+
+# Abstract tool interface
+class Tool(ABC):
+    def __init__(self, name: str, description: str):
+        self.name = name
+        self.description = description
+        self.usage_count = 0
+        self.avg_execution_time = 0.0
+
+    @abstractmethod
+    def __call__(self, *args, **kwargs) -> Any:
+        pass
+
+    def get_signature(self) -> str:
+        """Get tool signature for prompt formatting"""
+        return f"{self.name}({self.description})"
+
+    def update_stats(self, execution_time: float):
+        """Update tool usage statistics"""
+        self.usage_count += 1
+        self.avg_execution_time = (
+            (self.avg_execution_time * (self.usage_count - 1) + execution_time) / self.usage_count
+        )
+
+# Production Wikipedia search tool
+class WikipediaSearchTool(Tool):
+    def __init__(self, colbert_url: str = 'http://20.102.90.50:2017/wiki17_abstracts'):
+        super().__init__(
+            "search_wikipedia",
+            "Search Wikipedia for relevant articles. Returns top results and additional titles."
+        )
+        self.colbert_url = colbert_url
+        self.docs_cache = {}
+        self.search_history = deque(maxlen=100)
+        self.logger = logging.getLogger("WikipediaSearchTool")
+
+    def __call__(self, query: str, k: int = 30) -> List[str]:
+        start_time = time.time()
+
+        try:
+            # Log search query
+            self.search_history.append({
+                'query': query,
+                'timestamp': time.time(),
+                'k': k
+            })
+
+            # Perform search
+            results = dspy.ColBERTv2(url=self.colbert_url)(query, k=k)
+            results = [x['text'] for x in results]
+
+            # Cache results
+            for result in results:
+                if " | " in result:
+                    title, text = result.split(" | ", 1)
+                    self.docs_cache[title] = text
+
+            # Format results (tutorial format)
+            titles = [f"`{x.split(' | ')[0]}`" for x in results[5:k] if " | " in x]
+            top_results = results[:5]
+            formatted_results = top_results + [f"Other retrieved pages have titles: {', '.join(titles)}."]
+
+            execution_time = (time.time() - start_time) * 1000
+            self.update_stats(execution_time)
+
+            self.logger.info(f"Search for '{query}' returned {len(formatted_results)} results")
+            return formatted_results
+
+        except Exception as e:
+            self.logger.error(f"Wikipedia search failed for '{query}': {e}")
+            return [f"Search failed for query: {query}"]
+
+class WikipediaLookupTool(Tool):
+    def __init__(self, search_tool: WikipediaSearchTool):
+        super().__init__(
+            "lookup_wikipedia",
+            "Look up specific Wikipedia page by title. Returns the full page content."
+        )
+        self.search_tool = search_tool
+        self.lookup_history = deque(maxlen=100)
+        self.logger = logging.getLogger("WikipediaLookupTool")
+
+    def __call__(self, title: str) -> str:
+        start_time = time.time()
+
+        try:
+            # Log lookup request
+            self.lookup_history.append({
+                'title': title,
+                'timestamp': time.time()
+            })
+
+            # Check cache first
+            if title in self.search_tool.docs_cache:
+                result = self.search_tool.docs_cache[title]
+            else:
+                # Search for the specific title
+                search_results = self.search_tool.search_tool(title, 10) if hasattr(self.search_tool, 'search_tool') else []
+                matching_results = [x for x in search_results if x.startswith(title + " | ")]
+
+                if not matching_results:
+                    result = f"No Wikipedia page found for title: {title}"
+                else:
+                    result = matching_results[0]
+
+            execution_time = (time.time() - start_time) * 1000
+            self.update_stats(execution_time)
+
+            self.logger.info(f"Lookup for '{title}' completed")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Wikipedia lookup failed for '{title}': {e}")
+            return f"Lookup failed for title: {title}"
+
+# Production ReAct agent
+class ProductionReActAgent(dspy.Module):
+    def __init__(self, config: AgentConfig, tools: List[Tool]):
+        self.config = config
+        self.tools = {tool.name: tool for tool in tools}
+        self.logger = self._setup_logging()
+
+        # Enhanced signature with better instructions
+        instructions = (
+            "You are an intelligent research agent. Your goal is to find all relevant Wikipedia titles "
+            "that would be needed to verify or refute the given claim. Use the available tools to search "
+            "and explore Wikipedia systematically. Think step by step and be thorough in your investigation."
+        )
+
+        signature = dspy.Signature("claim -> titles: list[str]", instructions)
+
+        self.react = dspy.ReAct(
+            signature,
+            tools=[tool.__call__ for tool in tools],
+            max_iters=config.max_iterations
+        )
+
+        # Performance tracking
+        self.agent_stats = {
+            'total_queries': 0,
+            'avg_steps': 0.0,
+            'avg_processing_time': 0.0,
+            'success_rate': 0.0,
+            'tool_usage': defaultdict(int)
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"ReActAgent.{self.config.environment}")
+        return logger
+
+    def forward(self, claim: str, **kwargs) -> AgentResult:
+        start_time = time.time()
+        session_id = str(uuid.uuid4())
+
+        try:
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("claim", claim)
+                mlflow.log_param("max_iterations", self.config.max_iterations)
+                mlflow.log_param("session_id", session_id)
+
+                self.logger.info(f"Starting agent session {session_id} for claim: {claim[:100]}...")
+
+                # Execute ReAct agent
+                try:
+                    result = self.react(claim=claim)
+                    titles = result.titles if hasattr(result, 'titles') else []
+                    success = True
+
+                except Exception as e:
+                    self.logger.warning(f"Agent execution failed: {e}, returning empty result")
+                    result = dspy.Prediction(titles=[])
+                    titles = []
+                    success = False
+
+                # Extract trajectory information
+                trajectory = self._extract_trajectory(result, session_id)
+
+                # Calculate metrics
+                total_time = (time.time() - start_time) * 1000
+                total_steps = len(trajectory)
+                tool_calls = sum(1 for step in trajectory if step.tool_name)
+                reasoning_depth = self._calculate_reasoning_depth(trajectory)
+
+                # Update statistics
+                self._update_stats(total_steps, total_time, success, trajectory)
+
+                # Log metrics to MLflow
+                mlflow.log_metrics({
+                    'total_steps': total_steps,
+                    'total_time_ms': total_time,
+                    'tool_calls': tool_calls,
+                    'reasoning_depth': reasoning_depth,
+                    'success': int(success),
+                    'titles_found': len(titles)
+                })
+
+                agent_result = AgentResult(
+                    claim=claim,
+                    final_answer=titles,
+                    trajectory=trajectory,
+                    total_steps=total_steps,
+                    total_time_ms=total_time,
+                    success=success,
+                    model_version="v1.0.0",
+                    tool_calls=tool_calls,
+                    reasoning_depth=reasoning_depth
+                )
+
+                self.logger.info(
+                    f"Agent session {session_id} completed: {total_steps} steps, "
+                    f"{len(titles)} titles found in {total_time:.2f}ms"
+                )
+
+                return dspy.Prediction(
+                    titles=titles,
+                    agent_result=agent_result
+                )
+
+        except Exception as e:
+            self.logger.error(f"Agent execution failed: {e}")
+            total_time = (time.time() - start_time) * 1000
+
+            return dspy.Prediction(
+                titles=[],
+                agent_result=AgentResult(
+                    claim=claim,
+                    final_answer=[],
+                    trajectory=[],
+                    total_steps=0,
+                    total_time_ms=total_time,
+                    success=False,
+                    model_version="v1.0.0",
+                    tool_calls=0,
+                    reasoning_depth=0
+                )
+            )
+
+    def _extract_trajectory(self, result, session_id: str) -> List[AgentStep]:
+        """Extract trajectory information from ReAct result"""
+        trajectory = []
+
+        if hasattr(result, 'trajectory') and result.trajectory:
+            for i, step_data in enumerate(result.trajectory):
+                try:
+                    step = AgentStep(
+                        step_number=i + 1,
+                        thought=step_data.get('reasoning', ''),
+                        action=step_data.get('selected_fn', ''),
+                        tool_name=step_data.get('selected_fn', ''),
+                        tool_args=step_data.get('args', {}),
+                        observation=step_data.get('return_value', ''),
+                        execution_time_ms=0.0,  # Would need to track this separately
+                        timestamp=str(time.time())
+                    )
+                    trajectory.append(step)
+                except Exception as e:
+                    self.logger.warning(f"Error extracting step {i}: {e}")
+
+        return trajectory
+
+    def _calculate_reasoning_depth(self, trajectory: List[AgentStep]) -> int:
+        """Calculate reasoning depth based on trajectory complexity"""
+        if not trajectory:
+            return 0
+
+        unique_tools = set(step.tool_name for step in trajectory if step.tool_name)
+        unique_queries = set(str(step.tool_args) for step in trajectory)
+
+        # Simple heuristic for reasoning depth
+        depth = len(unique_tools) + (len(unique_queries) // 3)
+        return min(depth, 10)  # Cap at 10
+
+    def _update_stats(self, total_steps: int, total_time: float, success: bool, trajectory: List[AgentStep]):
+        """Update agent performance statistics"""
+        self.agent_stats['total_queries'] += 1
+        total = self.agent_stats['total_queries']
+
+        # Update averages
+        current_avg_steps = self.agent_stats['avg_steps']
+        self.agent_stats['avg_steps'] = (
+            (current_avg_steps * (total - 1) + total_steps) / total
+        )
+
+        current_avg_time = self.agent_stats['avg_processing_time']
+        self.agent_stats['avg_processing_time'] = (
+            (current_avg_time * (total - 1) + total_time) / total
+        )
+
+        # Update success rate
+        current_successes = self.agent_stats['success_rate'] * (total - 1)
+        if success:
+            current_successes += 1
+        self.agent_stats['success_rate'] = current_successes / total
+
+        # Update tool usage
+        for step in trajectory:
+            if step.tool_name:
+                self.agent_stats['tool_usage'][step.tool_name] += 1
+
+    async def batch_process(self, claims: List[str]) -> List[AgentResult]:
+        """Process multiple claims in parallel"""
+        tasks = [
+            asyncio.create_task(asyncio.to_thread(self.forward, claim))
+            for claim in claims
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Handle exceptions
+        agent_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                self.logger.error(f"Batch processing failed for claim {i}: {result}")
+                agent_results.append(AgentResult(
+                    claim=claims[i],
+                    final_answer=[],
+                    trajectory=[],
+                    total_steps=0,
+                    total_time_ms=0.0,
+                    success=False,
+                    model_version="v1.0.0",
+                    tool_calls=0,
+                    reasoning_depth=0
+                ))
+            else:
+                agent_results.append(result.agent_result)
+
+        return agent_results
+
+    def get_performance_stats(self) -> Dict:
+        """Get current performance statistics"""
+        stats = dict(self.agent_stats)
+        stats['tool_stats'] = {
+            name: {
+                'usage_count': tool.usage_count,
+                'avg_execution_time': tool.avg_execution_time
+            }
+            for name, tool in self.tools.items()
+        }
+        return stats
+
+# Production training and optimization
+class AgentTrainer:
+    def __init__(self, config: AgentConfig):
+        self.config = config
+        self.logger = logging.getLogger("AgentTrainer")
+
+    def train_and_optimize(
+        self,
+        agent: ProductionReActAgent,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example]
+    ):
+        """Complete training workflow from tutorial"""
+        try:
+            # Tutorial evaluation metric (exact)
+            def top5_recall(example, pred, trace=None):
+                gold_titles = example.titles
+                pred_titles = pred.titles if hasattr(pred, 'titles') and pred.titles else []
+
+                if not gold_titles:
+                    return 1.0 if not pred_titles else 0.0
+
+                recall = sum(x in pred_titles[:5] for x in gold_titles) / len(gold_titles)
+
+                # If we're "bootstrapping" for optimization, return True if and only if the recall is perfect.
+                if trace is not None:
+                    return recall >= 1.0
+
+                # If we're just doing inference, just measure the recall.
+                return recall
+
+            evaluate = dspy.Evaluate(
+                devset=devset,
+                metric=top5_recall,
+                num_threads=self.config.optimization_threads,
+                display_progress=True,
+                display_table=5
+            )
+
+            # Safe wrapper for evaluation (from tutorial)
+            def safe_agent(claim: str):
+                try:
+                    return agent(claim=claim)
+                except Exception as e:
+                    self.logger.warning(f"Agent failed for claim: {e}")
+                    return dspy.Prediction(titles=[])
+
+            # Baseline evaluation
+            baseline_score = evaluate(safe_agent)
+            self.logger.info(f"Baseline recall: {baseline_score:.3f}")
+
+            # Optimization (exact from tutorial)
+            teacher_lm = dspy.LM(self.config.teacher_model, temperature=self.config.temperature)
+            kwargs = dict(
+                teacher_settings=dict(lm=teacher_lm),
+                prompt_model=teacher_lm,
+                max_errors=999
+            )
+
+            tp = dspy.MIPROv2(
+                metric=top5_recall,
+                auto=self.config.optimization_auto,
+                num_threads=self.config.optimization_threads,
+                **kwargs
+            )
+
+            optimized_agent = tp.compile(
+                agent.react,  # Optimize the underlying ReAct module
+                trainset=trainset,
+                max_bootstrapped_demos=self.config.max_demos,
+                max_labeled_demos=0
+            )
+
+            # Create optimized production agent
+            optimized_production_agent = ProductionReActAgent(self.config, list(agent.tools.values()))
+            optimized_production_agent.react = optimized_agent
+
+            # Final evaluation
+            optimized_score = evaluate(lambda claim: optimized_production_agent(claim=claim))
+            improvement = optimized_score - baseline_score
+
+            self.logger.info(
+                f"Optimized recall: {optimized_score:.3f} "
+                f"(improvement: +{improvement:.3f})"
+            )
+
+            return {
+                'baseline_score': baseline_score,
+                'optimized_score': optimized_score,
+                'improvement': improvement,
+                'model': optimized_production_agent
+            }
+
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            raise
+```
+
+## Performance Results (From Tutorial)
+
+- **Baseline Small Model (Llama-3.2-3B)**: 8.0% Top-5 Recall
+- **Optimized Agent (MIPROv2)**: 41.7% Top-5 Recall (+33.7% improvement)
+- **Processing**: ~5x improvement from 8% to 40%+ with proper optimization
+
+## Production Enhancements
+
+### FastAPI Agent Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+import mlflow.dspy
+
+app = FastAPI(title="Production ReAct Agent API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class AgentRequest(BaseModel):
+    claim: str = Field(..., min_length=10, max_length=2000)
+    max_iterations: Optional[int] = Field(None, ge=1, le=50)
+    search_depth: Optional[int] = Field(None, ge=5, le=50)
+
+# Global agent system
+agent = None
+config = None
+
+@app.on_event("startup")
+async def startup_event():
+    global agent, config
+
+    # Load configuration
+    config = AgentConfig()
+
+    # Initialize tools
+    search_tool = WikipediaSearchTool()
+    lookup_tool = WikipediaLookupTool(search_tool)
+    tools = [search_tool, lookup_tool]
+
+    # Try to load optimized model from MLflow
+    try:
+        model_uri = "models:/react-agent/production"
+        optimized_react = mlflow.dspy.load_model(model_uri)
+        agent = ProductionReActAgent(config, tools)
+        agent.react = optimized_react
+        logger.info("Loaded optimized agent from MLflow")
+    except:
+        agent = ProductionReActAgent(config, tools)
+        logger.warning("Using base agent")
+
+@app.post("/research", response_model=AgentResult)
+async def research_claim(
+    request: AgentRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        # Override configuration if provided
+        if request.max_iterations:
+            agent.config.max_iterations = request.max_iterations
+
+        result = agent(claim=request.claim)
+
+        # Log usage metrics in background
+        background_tasks.add_task(
+            log_agent_metrics,
+            request.claim,
+            result.agent_result
+        )
+
+        return result.agent_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/research/batch")
+async def research_batch(claims: List[str]) -> List[AgentResult]:
+    if len(claims) > 10:
+        raise HTTPException(status_code=400, detail="Batch size cannot exceed 10")
+
+    try:
+        results = await agent.batch_process(claims)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/agent/stats")
+async def get_agent_stats():
+    return agent.get_performance_stats()
+
+@app.get("/tools/stats")
+async def get_tool_stats():
+    return {
+        name: {
+            'usage_count': tool.usage_count,
+            'avg_execution_time_ms': tool.avg_execution_time
+        }
+        for name, tool in agent.tools.items()
+    }
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "agent_loaded": agent is not None,
+        "tools_available": list(agent.tools.keys()) if agent else []
+    }
+```
+
+### Monitoring and Analytics
+
+```python
+import mlflow
+from prometheus_client import Counter, Histogram, Gauge
+
+# Prometheus metrics
+AGENT_REQUESTS = Counter(
+    'agent_requests_total',
+    'Total agent research requests',
+    ['success', 'reasoning_depth']
+)
+
+AGENT_DURATION = Histogram(
+    'agent_duration_seconds',
+    'Time spent on agent reasoning'
+)
+
+TOOL_USAGE = Counter(
+    'tool_usage_total',
+    'Tool usage count',
+    ['tool_name', 'success']
+)
+
+ACTIVE_SESSIONS = Gauge(
+    'active_agent_sessions',
+    'Number of active agent sessions'
+)
+
+def log_agent_metrics(claim: str, result: AgentResult):
+    """Log detailed metrics for monitoring"""
+
+    # Prometheus metrics
+    AGENT_REQUESTS.labels(
+        success=str(result.success),
+        reasoning_depth=str(min(result.reasoning_depth, 5))  # Cap for cardinality
+    ).inc()
+
+    AGENT_DURATION.observe(result.total_time_ms / 1000)
+
+    # Tool usage metrics
+    for step in result.trajectory:
+        if step.tool_name:
+            TOOL_USAGE.labels(
+                tool_name=step.tool_name,
+                success='true'  # Assuming success if in trajectory
+            ).inc()
+
+    # MLflow metrics
+    with mlflow.start_run(nested=True):
+        mlflow.log_metrics({
+            'total_steps': result.total_steps,
+            'processing_time_ms': result.total_time_ms,
+            'tool_calls': result.tool_calls,
+            'reasoning_depth': result.reasoning_depth,
+            'titles_found': len(result.final_answer) if isinstance(result.final_answer, list) else 0
+        })
+
+        mlflow.log_params({
+            'claim_length': len(result.claim),
+            'success': result.success,
+            'model_version': result.model_version
+        })
+
+        # Log trajectory as artifact
+        if result.trajectory:
+            trajectory_json = json.dumps([
+                {
+                    'step': step.step_number,
+                    'thought': step.thought,
+                    'action': step.action,
+                    'observation': str(step.observation)[:500]  # Truncate for storage
+                }
+                for step in result.trajectory
+            ], indent=2)
+
+            mlflow.log_text(trajectory_json, f"trajectory_{uuid.uuid4().hex[:8]}.json")
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Parallel tool execution
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+class OptimizedAgent(ProductionReActAgent):
+    def __init__(self, config: AgentConfig, tools: List[Tool]):
+        super().__init__(config, tools)
+        self.executor = ThreadPoolExecutor(max_workers=4)
+
+    async def parallel_tool_calls(self, tool_calls: List[Dict]) -> List[ToolResult]:
+        """Execute multiple tools in parallel"""
+        loop = asyncio.get_event_loop()
+
+        async def execute_tool(tool_call):
+            tool_name = tool_call['tool_name']
+            args = tool_call['args']
+
+            start_time = time.time()
+            try:
+                result = await loop.run_in_executor(
+                    self.executor,
+                    self.tools[tool_name],
+                    **args
+                )
+                execution_time = (time.time() - start_time) * 1000
+
+                return ToolResult(
+                    tool_name=tool_name,
+                    args=args,
+                    result=result,
+                    execution_time_ms=execution_time,
+                    success=True
+                )
+            except Exception as e:
+                execution_time = (time.time() - start_time) * 1000
+                return ToolResult(
+                    tool_name=tool_name,
+                    args=args,
+                    result=None,
+                    execution_time_ms=execution_time,
+                    success=False,
+                    error_message=str(e)
+                )
+
+        tasks = [execute_tool(call) for call in tool_calls]
+        return await asyncio.gather(*tasks)
+
+# Caching for search results
+from functools import lru_cache
+import hashlib
+
+class CachedWikipediaSearchTool(WikipediaSearchTool):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    @lru_cache(maxsize=2000)
+    def _cached_search(self, query_hash: str, query: str, k: int):
+        return super().__call__(query, k)
+
+    def __call__(self, query: str, k: int = 30) -> List[str]:
+        query_hash = hashlib.md5(f"{query}:{k}".encode()).hexdigest()
+
+        try:
+            result = self._cached_search(query_hash, query, k)
+            self.cache_hits += 1
+            return result
+        except:
+            self.cache_misses += 1
+            return super().__call__(query, k)
+
+    def get_cache_stats(self):
+        total = self.cache_hits + self.cache_misses
+        return {
+            'cache_hits': self.cache_hits,
+            'cache_misses': self.cache_misses,
+            'hit_rate': self.cache_hits / total if total > 0 else 0
+        }
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Small Model Failures**: Use safe wrappers and fallbacks for unstable models
+2. **ColBERTv2 Timeouts**: Implement proper timeout and retry mechanisms
+3. **Trajectory Extraction**: Handle missing or malformed trajectory data gracefully
+4. **Memory Management**: Clear tool caches periodically for long-running agents
+
+### Production Solutions
+
+```python
+# Circuit breaker for unreliable tools
+from circuitbreaker import circuit
+
+@circuit(failure_threshold=3, recovery_timeout=60)
+def safe_tool_call(tool, *args, **kwargs):
+    return tool(*args, **kwargs)
+
+# Retry mechanism with exponential backoff
+import tenacity
+
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
+    stop=tenacity.stop_after_attempt(3),
+    retry=tenacity.retry_if_exception_type(Exception)
+)
+def reliable_search(query: str, k: int = 30):
+    return search_tool(query, k)
+
+# Resource monitoring
+def monitor_agent_resources():
+    import psutil
+    memory_percent = psutil.virtual_memory().percent
+    cpu_percent = psutil.cpu_percent()
+
+    if memory_percent > 90:
+        logger.warning(f"High memory usage: {memory_percent}%")
+        return False
+
+    if cpu_percent > 95:
+        logger.warning(f"High CPU usage: {cpu_percent}%")
+        return False
+
+    return True
+```
+
+## Best Practices Summary
+
+### Agent Design Guidelines
+
+- Use safe wrappers for unreliable models or tools
+- Implement proper trajectory logging for debugging and optimization
+- Design tools with clear interfaces and error handling
+- Monitor agent performance and tool usage patterns
+
+### Production Guidelines
+
+- Implement circuit breakers for external tool dependencies
+- Use caching for expensive operations like search queries
+- Monitor resource usage and implement proper scaling
+- Log detailed metrics for performance analysis and optimization
+- Use teacher models (GPT-4o) for optimizing smaller models
+
+## References
+
+- [Official Agents Tutorial](https://dspy.ai/tutorials/agents/)
+- [DSPy ReAct Documentation](https://dspy.ai/api/modules/ReAct/)
+- [HoVer Dataset](https://huggingface.co/datasets/hover-nlp/hover)
+- [ColBERTv2 Wikipedia Search](http://20.102.90.50:2017/wiki17_abstracts)
+- [MIPROv2 Optimization](https://dspy.ai/api/optimizers/MIPROv2/)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

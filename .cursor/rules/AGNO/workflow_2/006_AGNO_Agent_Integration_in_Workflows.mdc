@@ -1,0 +1,736 @@
+---
+description: AGNO Workflows 2.0 - Master agent integration patterns for intelligent workflow execution
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 agent integration. Master agent configuration, optimization, and workflow integration for maximum AI capability.
+
+## Agent Integration Flow
+
+```
+Agent Config → Workflow Integration → Step Assignment → Execution → Output Processing
+     ↓                ↓                   ↓             ↓              ↓
+Model/Tools/      Direct/Step         Named Step      Agent Run      Content/Media
+Instructions      Assignment          Configuration    Processing     Artifacts
+     ↓                ↓                   ↓             ↓              ↓
+Specialized       Ready for           Workflow        AI Response    Structured
+Capability        Workflow            Integration     Generated      Data Flow
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Agent Integration
+```python
+from agno.workflow.v2 import Workflow, Step
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Basic agent creation and integration
+researcher = Agent(
+    name="Research Assistant",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Conduct research and analysis"
+)
+
+# Direct agent integration (simplest)
+workflow = Workflow(
+    name="Agent-Powered Research",
+    steps=[researcher]  # Direct agent usage
+)
+
+# Execute immediately
+workflow.print_response("Research AI trends in healthcare", markdown=True)
+```
+
+### Production Ready - Advanced Agent Configuration
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.storage.sqlite import SqliteStorage
+from pydantic import BaseModel, Field
+from typing import List
+
+# Structured response model for agent
+class ResearchFindings(BaseModel):
+    topic: str
+    key_insights: List[str] = Field(description="Main research insights")
+    sources: List[str] = Field(description="Information sources used")
+    confidence_score: float = Field(ge=0.0, le=1.0, description="Research confidence")
+    methodology: str = Field(description="Research methodology employed")
+
+# Advanced agent configuration
+research_specialist = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o", temperature=0.3),  # Lower temp for factual work
+    tools=[DuckDuckGoTools(), HackerNewsTools()],     # Multiple tools
+    response_model=ResearchFindings,                  # Structured output
+    role="Expert research analyst specializing in technology trends",
+    instructions=[
+        "Conduct comprehensive research using available tools",
+        "Verify information from multiple credible sources",
+        "Provide confidence scores based on source quality",
+        "Structure findings using the ResearchFindings model",
+        "Focus on recent developments and authoritative sources",
+        "Include methodology details for transparency"
+    ],
+    max_iterations=3,  # Allow multiple tool iterations
+    show_tool_calls=True,  # Debug tool usage
+    markdown=True  # Format output as markdown
+)
+
+technical_analyst = Agent(
+    name="Technical Analysis Expert",
+    model=OpenAIChat(id="gpt-4o", temperature=0.2),
+    role="Deep technical analysis and feasibility assessment",
+    instructions=[
+        "Analyze technical feasibility and implementation details",
+        "Assess scalability, performance, and architectural considerations",
+        "Identify potential technical challenges and solutions",
+        "Provide implementation recommendations",
+        "Consider industry best practices and standards"
+    ],
+    response_model=ResearchFindings,
+    markdown=True
+)
+
+market_analyst = Agent(
+    name="Market Intelligence Analyst",
+    model=OpenAIChat(id="gpt-4o", temperature=0.4),
+    tools=[DuckDuckGoTools()],
+    role="Market analysis and business intelligence specialist",
+    instructions=[
+        "Analyze market dynamics, trends, and opportunities",
+        "Assess competitive landscape and positioning",
+        "Evaluate business model implications",
+        "Identify target markets and customer segments",
+        "Provide strategic business recommendations"
+    ],
+    response_model=ResearchFindings,
+    max_iterations=2
+)
+
+# Custom function that leverages multiple agents
+def multi_agent_synthesis(step_input: StepInput) -> StepOutput:
+    """Synthesize insights from multiple specialized agents"""
+    
+    original_query = step_input.message
+    previous_research = step_input.previous_step_content
+    
+    # Run additional specialized analysis
+    try:
+        # Technical perspective
+        tech_analysis = technical_analyst.run(
+            f"Provide technical analysis for: {original_query}\n\n"
+            f"Context from research: {previous_research}"
+        )
+        
+        # Market perspective  
+        market_analysis = market_analyst.run(
+            f"Provide market analysis for: {original_query}\n\n"
+            f"Research context: {previous_research}"
+        )
+        
+        # Synthesize all perspectives
+        comprehensive_report = f"""
+        ## Multi-Agent Analysis Report: {original_query}
+        
+        ### Research Foundation
+        **Primary Research**: {len(str(previous_research))} characters of foundational research
+        
+        ### Technical Analysis Insights
+        **Technical Feasibility**: {tech_analysis.content[:300] if hasattr(tech_analysis, 'content') else str(tech_analysis)[:300]}...
+        **Technical Confidence**: {getattr(tech_analysis, 'confidence_score', 'N/A')}
+        
+        ### Market Intelligence Insights  
+        **Market Dynamics**: {market_analysis.content[:300] if hasattr(market_analysis, 'content') else str(market_analysis)[:300]}...
+        **Market Confidence**: {getattr(market_analysis, 'confidence_score', 'N/A')}
+        
+        ### Synthesized Recommendations
+        - **Technical Viability**: Analysis indicates technical feasibility
+        - **Market Opportunity**: Market analysis reveals strategic positioning
+        - **Implementation Path**: Cross-functional insights provide clear direction
+        
+        **Overall Assessment**: Multi-agent analysis provides comprehensive perspective
+        """
+        
+        return StepOutput(
+            content=comprehensive_report,
+            success=True
+        )
+        
+    except Exception as e:
+        return StepOutput(
+            content=f"Multi-agent synthesis failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+# Production workflow with advanced agent integration
+production_agent_workflow = Workflow(
+    name="Advanced Multi-Agent Research Pipeline", 
+    description="Comprehensive research using specialized agents",
+    steps=[
+        Step(
+            name="primary_research",
+            description="Conduct initial comprehensive research",
+            agent=research_specialist
+        ),
+        Step(
+            name="multi_agent_synthesis", 
+            description="Synthesize insights using multiple agent perspectives",
+            executor=multi_agent_synthesis
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="agent_workflows",
+        db_file="tmp/agent_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True,
+    workflow_session_state={"multi_agent_mode": True}
+)
+
+# Execute with comprehensive agent integration
+response = production_agent_workflow.run(
+    message="Analyze the potential of quantum computing in financial services",
+    additional_data={
+        "analysis_depth": "comprehensive",
+        "perspectives": ["technical", "market", "strategic"],
+        "urgency": "high"
+    }
+)
+
+print(f"Multi-agent analysis: {response.content}")
+```
+
+## Agent Configuration Patterns
+
+### Model and Parameter Optimization
+```python
+# Task-specific model configuration
+creative_agent = Agent(
+    name="Creative Content Generator",
+    model=OpenAIChat(
+        id="gpt-4o",
+        temperature=0.8,    # High creativity
+        max_tokens=2000,    # Extended content
+        top_p=0.9,          # Diverse sampling
+        frequency_penalty=0.2  # Reduce repetition
+    ),
+    role="Creative content generation specialist"
+)
+
+analytical_agent = Agent(
+    name="Data Analyst",
+    model=OpenAIChat(
+        id="gpt-4o",
+        temperature=0.1,    # Low randomness
+        max_tokens=1500,    # Focused content
+        top_p=0.3,          # Precise sampling
+        presence_penalty=0.1  # Maintain focus
+    ),
+    role="Precise data analysis specialist"
+)
+
+# Model selection based on task complexity
+def get_optimized_agent(task_type: str, complexity: str):
+    """Get agent optimized for specific task and complexity"""
+    
+    model_configs = {
+        "simple": {"id": "gpt-4o-mini", "temperature": 0.3},
+        "complex": {"id": "gpt-4o", "temperature": 0.4},
+        "creative": {"id": "gpt-4o", "temperature": 0.8}
+    }
+    
+    config = model_configs.get(complexity, model_configs["simple"])
+    
+    return Agent(
+        name=f"{task_type.title()} Specialist",
+        model=OpenAIChat(**config),
+        role=f"Specialized {task_type} processing with {complexity} complexity"
+    )
+
+# Usage
+simple_agent = get_optimized_agent("analysis", "simple")
+complex_agent = get_optimized_agent("research", "complex")  
+creative_agent = get_optimized_agent("content", "creative")
+```
+
+### Tool Integration Patterns
+```python
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.tools.googlesearch import GoogleSearchTools
+
+# Single tool agent
+web_researcher = Agent(
+    name="Web Research Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Web research and information gathering",
+    instructions=[
+        "Use web search to find recent, credible information",
+        "Verify facts from multiple sources",
+        "Focus on authoritative and official sources"
+    ]
+)
+
+# Multi-tool agent
+comprehensive_researcher = Agent(
+    name="Comprehensive Research Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        DuckDuckGoTools(),      # General web search
+        HackerNewsTools(),      # Tech community insights
+        GoogleSearchTools()     # Enhanced search capabilities
+    ],
+    role="Multi-source research with diverse tool access",
+    instructions=[
+        "Use all available tools to gather comprehensive information",
+        "Start with general web search, then use specialized tools",
+        "Cross-reference findings across different sources",
+        "Prioritize recent and authoritative information"
+    ],
+    max_iterations=5  # Allow extensive tool use
+)
+
+# Custom tool integration
+def custom_research_tool(query: str) -> str:
+    """Custom tool for specialized research"""
+    # Custom logic for specific research needs
+    return f"Custom research results for: {query}"
+
+specialized_agent = Agent(
+    name="Specialized Research Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[custom_research_tool, DuckDuckGoTools()],
+    role="Specialized research with custom tools"
+)
+```
+
+### Response Model Integration
+```python
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+from datetime import datetime
+
+# Comprehensive structured response
+class DetailedAnalysis(BaseModel):
+    """Comprehensive analysis response structure"""
+    
+    # Core analysis content
+    executive_summary: str = Field(description="High-level summary")
+    detailed_findings: List[str] = Field(description="Specific findings")
+    key_insights: List[str] = Field(description="Strategic insights")
+    
+    # Quality and confidence metrics
+    confidence_level: float = Field(ge=0.0, le=1.0, description="Analysis confidence")
+    data_quality: str = Field(regex="^(excellent|good|fair|poor)$")
+    completeness: float = Field(ge=0.0, le=1.0, description="Analysis completeness")
+    
+    # Supporting information
+    sources_consulted: List[str] = Field(description="Information sources")
+    methodology: str = Field(description="Analysis methodology")
+    assumptions: List[str] = Field(default_factory=list)
+    limitations: List[str] = Field(default_factory=list)
+    
+    # Recommendations and next steps
+    recommendations: List[str] = Field(default_factory=list)
+    next_steps: List[str] = Field(default_factory=list)
+    follow_up_questions: List[str] = Field(default_factory=list)
+    
+    # Metadata
+    analysis_timestamp: datetime = Field(default_factory=datetime.now)
+    estimated_accuracy: str = Field(regex="^(low|medium|high|very_high)$")
+
+# Agent with structured response
+structured_analyst = Agent(
+    name="Structured Analysis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    response_model=DetailedAnalysis,
+    role="Provide comprehensive structured analysis",
+    instructions=[
+        "Generate detailed analysis using the DetailedAnalysis structure",
+        "Include confidence scores based on data quality",
+        "Provide comprehensive recommendations and next steps",
+        "Document methodology and limitations transparently",
+        "Ensure all required fields are populated accurately"
+    ]
+)
+
+# Multi-format agent (can handle structured and unstructured)
+flexible_agent = Agent(
+    name="Flexible Response Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Flexible response format based on request type"
+    # No response_model - can return any format
+)
+```
+
+## Agent Workflow Integration
+
+### Named Step Integration
+```python
+# Named steps with agents for better tracking
+named_agent_workflow = Workflow(
+    name="Named Agent Steps Pipeline",
+    steps=[
+        Step(
+            name="initial_research",
+            description="Comprehensive initial research phase",
+            agent=research_specialist
+        ),
+        Step(
+            name="technical_analysis",
+            description="Deep technical feasibility analysis",
+            agent=technical_analyst
+        ),
+        Step(
+            name="market_intelligence",
+            description="Market dynamics and opportunity analysis", 
+            agent=market_analyst
+        ),
+        Step(
+            name="strategic_synthesis",
+            description="Strategic recommendations synthesis",
+            agent=synthesis_agent
+        )
+    ]
+)
+
+# Benefits: Better logging, step-specific outputs, enhanced debugging
+```
+
+### Agent Chain Patterns
+```python
+# Sequential agent chain with data flow
+def create_analysis_chain(topic_complexity: str):
+    """Create agent chain based on topic complexity"""
+    
+    if topic_complexity == "simple":
+        return [
+            basic_researcher,
+            simple_analyst
+        ]
+    elif topic_complexity == "comprehensive":
+        return [
+            research_specialist,
+            technical_analyst,
+            market_analyst,
+            synthesis_agent
+        ]
+    else:
+        return [
+            research_specialist,
+            analytical_agent
+        ]
+
+# Dynamic agent workflow creation
+def create_dynamic_agent_workflow(topic: str, complexity: str):
+    """Create workflow with appropriate agents for topic and complexity"""
+    
+    agent_chain = create_analysis_chain(complexity)
+    
+    return Workflow(
+        name=f"Dynamic {complexity.title()} Analysis",
+        description=f"{complexity.title()} analysis workflow for: {topic}",
+        steps=agent_chain
+    )
+
+# Usage
+simple_workflow = create_dynamic_agent_workflow("Basic market trends", "simple")
+complex_workflow = create_dynamic_agent_workflow("Quantum computing analysis", "comprehensive")
+```
+
+### Agent State and Memory Management
+```python
+# Agent with conversation memory
+memory_enabled_agent = Agent(
+    name="Memory-Enabled Assistant",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Assistant with conversation continuity",
+    add_history_to_messages=True,  # Enable conversation history
+    num_history_responses=5,       # Keep last 5 exchanges
+    save_response_to_history=True  # Save responses for context
+)
+
+# Agent with session state integration
+def session_aware_agent_function(step_input: StepInput) -> StepOutput:
+    """Agent function that integrates with workflow session state"""
+    
+    # Access workflow session state
+    session_data = getattr(step_input, 'workflow_session_state', {})
+    previous_analyses = session_data.get('previous_analyses', [])
+    
+    # Run agent with session context
+    context_prompt = f"""
+    Previous analyses in this session: {len(previous_analyses)}
+    Current query: {step_input.message}
+    
+    Please provide analysis considering previous work done in this session.
+    """
+    
+    response = memory_enabled_agent.run(context_prompt)
+    
+    # Update session state
+    previous_analyses.append({
+        "query": step_input.message,
+        "timestamp": datetime.now().isoformat(),
+        "response_summary": response.content[:100] if hasattr(response, 'content') else str(response)[:100]
+    })
+    
+    return StepOutput(
+        content=response.content if hasattr(response, 'content') else str(response),
+        success=True
+    )
+```
+
+## Advanced Agent Patterns
+
+### Agent Performance Optimization
+```python
+def performance_optimized_agent(task_type: str, performance_level: str):
+    """Create performance-optimized agent based on requirements"""
+    
+    # Performance configurations
+    performance_configs = {
+        "speed": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.3,
+            "max_tokens": 1000,
+            "max_iterations": 2
+        },
+        "quality": {
+            "model": "gpt-4o",
+            "temperature": 0.2,
+            "max_tokens": 2500,
+            "max_iterations": 4
+        },
+        "balanced": {
+            "model": "gpt-4o",
+            "temperature": 0.4,
+            "max_tokens": 1500,
+            "max_iterations": 3
+        }
+    }
+    
+    config = performance_configs.get(performance_level, performance_configs["balanced"])
+    
+    return Agent(
+        name=f"Optimized {task_type.title()} Agent",
+        model=OpenAIChat(
+            id=config["model"],
+            temperature=config["temperature"],
+            max_tokens=config["max_tokens"]
+        ),
+        role=f"Performance-optimized {task_type} specialist",
+        max_iterations=config["max_iterations"],
+        show_tool_calls=performance_level == "quality"  # Show tools for quality mode
+    )
+
+# Usage
+speed_agent = performance_optimized_agent("research", "speed")
+quality_agent = performance_optimized_agent("analysis", "quality")
+balanced_agent = performance_optimized_agent("writing", "balanced")
+```
+
+### Agent Error Handling and Resilience
+```python
+def resilient_agent_wrapper(base_agent: Agent, fallback_agent: Agent = None):
+    """Create resilient agent with fallback capabilities"""
+    
+    def resilient_agent_function(step_input: StepInput) -> StepOutput:
+        """Agent function with error handling and fallback"""
+        
+        try:
+            # Primary agent execution
+            response = base_agent.run(step_input.message)
+            
+            # Validate response quality
+            if hasattr(response, 'content') and len(response.content.strip()) > 50:
+                return StepOutput(
+                    content=response.content,
+                    success=True
+                )
+            else:
+                raise ValueError("Response quality below threshold")
+                
+        except Exception as primary_error:
+            # Fallback to secondary agent if available
+            if fallback_agent:
+                try:
+                    fallback_response = fallback_agent.run(
+                        f"Primary analysis failed. Please provide fallback analysis for: {step_input.message}"
+                    )
+                    
+                    fallback_content = f"""
+                    ## Fallback Analysis (Primary Agent Unavailable)
+                    
+                    **Primary Agent Issue**: {str(primary_error)}
+                    **Fallback Agent Response**: 
+                    
+                    {fallback_response.content if hasattr(fallback_response, 'content') else str(fallback_response)}
+                    
+                    **Note**: This analysis was generated using fallback agent due to primary agent failure.
+                    """
+                    
+                    return StepOutput(
+                        content=fallback_content,
+                        success=True
+                    )
+                    
+                except Exception as fallback_error:
+                    return StepOutput(
+                        content=f"Both primary and fallback agents failed. Primary: {primary_error}, Fallback: {fallback_error}",
+                        success=False,
+                        error=f"Primary: {primary_error}, Fallback: {fallback_error}"
+                    )
+            else:
+                return StepOutput(
+                    content=f"Agent execution failed: {str(primary_error)}",
+                    success=False,
+                    error=str(primary_error)
+                )
+    
+    return resilient_agent_function
+
+# Create resilient agent workflow
+primary_researcher = Agent(name="Primary Researcher", model=OpenAIChat(id="gpt-4o"))
+backup_researcher = Agent(name="Backup Researcher", model=OpenAIChat(id="gpt-4o-mini"))
+
+resilient_research_step = Step(
+    name="resilient_research",
+    description="Research with automatic fallback",
+    executor=resilient_agent_wrapper(primary_researcher, backup_researcher)
+)
+```
+
+## Speed Tips
+
+### Quick Agent Factory
+```python
+def quick_agent(name: str, role: str, model_type: str = "mini"):
+    """Quickly create configured agent"""
+    model_id = "gpt-4o-mini" if model_type == "mini" else "gpt-4o"
+    
+    return Agent(
+        name=name,
+        model=OpenAIChat(id=model_id),
+        role=role
+    )
+
+# Usage
+researcher = quick_agent("Researcher", "Research specialist")
+analyst = quick_agent("Analyst", "Data analysis expert", "full")
+writer = quick_agent("Writer", "Content creation specialist")
+```
+
+### Agent Template Library
+```python
+class AgentTemplates:
+    """Library of pre-configured agent templates"""
+    
+    @staticmethod
+    def researcher(name: str = "Research Specialist"):
+        return Agent(
+            name=name,
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[DuckDuckGoTools()],
+            role="Research and information gathering specialist"
+        )
+    
+    @staticmethod
+    def analyst(name: str = "Data Analyst"):
+        return Agent(
+            name=name,
+            model=OpenAIChat(id="gpt-4o", temperature=0.2),
+            role="Data analysis and insights specialist"
+        )
+    
+    @staticmethod
+    def writer(name: str = "Content Writer"):
+        return Agent(
+            name=name,
+            model=OpenAIChat(id="gpt-4o", temperature=0.6),
+            role="Content creation and writing specialist"
+        )
+
+# Usage
+templates = AgentTemplates()
+workflow = Workflow(
+    name="Template-Based Workflow",
+    steps=[
+        templates.researcher("Market Researcher"),
+        templates.analyst("Market Analyst"),
+        templates.writer("Report Writer")
+    ]
+)
+```
+
+## Common Pitfalls
+
+### Agent Configuration Errors
+```python
+# ❌ DON'T: Create agent without model
+bad_agent = Agent(name="Bad Agent")  # Missing model
+
+# ✅ DO: Always include model configuration
+good_agent = Agent(
+    name="Good Agent",
+    model=OpenAIChat(id="gpt-4o-mini")  # Required
+)
+```
+
+### Tool Integration Issues
+```python
+# ❌ DON'T: Assume tools are always available
+def bad_tool_usage(step_input: StepInput) -> StepOutput:
+    # Directly use tools without agent
+    return DuckDuckGoTools().search("query")  # Wrong pattern
+
+# ✅ DO: Use tools through agent configuration
+tool_agent = Agent(
+    name="Tool User",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],  # Proper tool integration
+    role="Use tools through agent interface"
+)
+```
+
+### Response Model Mismatches
+```python
+# ❌ DON'T: Assume response model fields exist
+def bad_response_handling(agent_response):
+    return agent_response.confidence_score  # May not exist
+
+# ✅ DO: Check response structure safely
+def good_response_handling(agent_response):
+    if hasattr(agent_response, 'confidence_score'):
+        return agent_response.confidence_score
+    else:
+        return "No confidence score available"
+```
+
+## Best Practices Summary
+
+- **Model Selection**: Choose appropriate models based on task complexity and performance needs
+- **Tool Integration**: Configure tools properly within agent definitions
+- **Response Models**: Use structured response models for type safety and consistency
+- **Error Handling**: Implement resilient agent patterns with fallback mechanisms
+- **Performance Optimization**: Optimize model parameters for specific use cases
+- **Memory Management**: Consider conversation history and session state requirements
+- **Naming and Documentation**: Use clear names and roles for better workflow understanding
+- **Testing**: Validate agent configurations before production deployment
+- **Monitoring**: Track agent performance and adjust configurations as needed
+
+## References
+
+- [Agent Configuration](/docs/agents/configuration.md)
+- [Agent Tools Integration](/docs/agents/tools.md)
+- [Response Models](/docs/agents/response_models.md)
+- [Agent Performance](/docs/agents/performance.md)

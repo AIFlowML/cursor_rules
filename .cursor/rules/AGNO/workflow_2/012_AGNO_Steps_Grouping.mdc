@@ -1,0 +1,1103 @@
+---
+description: "AGNO Steps grouping patterns, workflow organization, and modular step composition for scalable workflow architectures"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 Steps grouping and workflow organization. You design modular, scalable workflow architectures using Steps objects, step sequences, and advanced grouping patterns for maintainable and reusable workflow components.
+
+## Steps Grouping Patterns
+
+```
+┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│   Steps Definition  │───▶│  Grouping Strategy   │───▶│  Workflow Composition│
+│                     │    │                      │    │                     │
+│ • Steps Object      │    │ • Logical Grouping   │    │ • Modular Assembly  │
+│ • Step Collections  │    │ • Sequential Flow    │    │ • Reusable Components│
+│ • Group Naming      │    │ • Parallel Groups    │    │ • Dynamic Selection │
+│ • Dependencies      │    │ • Conditional Groups │    │ • Composition Rules │
+└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+```
+
+## Instant Steps Grouping Patterns
+
+### Quick Start - Basic Steps Grouping
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.workflow.v2.step import Step
+from agno.workflow.v2.steps import Steps
+from agno.workflow.v2.workflow import Workflow
+
+# Define agents for different phases
+researcher = Agent(
+    name="Research Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Conduct research and data collection"
+)
+
+analyzer = Agent(
+    name="Analysis Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Analyze and process research data"
+)
+
+writer = Agent(
+    name="Writing Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Create comprehensive reports and documentation"
+)
+
+# Create individual steps
+research_step = Step(
+    name="data_collection",
+    agent=researcher,
+    description="Collect comprehensive research data"
+)
+
+analysis_step = Step(
+    name="data_analysis",
+    agent=analyzer,
+    description="Analyze collected data for insights"
+)
+
+writing_step = Step(
+    name="report_generation",
+    agent=writer,
+    description="Generate comprehensive report from analysis"
+)
+
+# Group steps into logical sequences
+research_phase = Steps(
+    name="research_phase",
+    steps=[research_step]
+)
+
+analysis_phase = Steps(
+    name="analysis_phase",
+    steps=[analysis_step]
+)
+
+output_phase = Steps(
+    name="output_phase",
+    steps=[writing_step]
+)
+
+# Create workflow with step groups
+grouped_workflow = Workflow(
+    name="Grouped Research Workflow",
+    description="Research workflow organized with step grouping",
+    steps=[research_phase, analysis_phase, output_phase]
+)
+
+grouped_workflow.run("AI market analysis for healthcare sector")
+```
+
+### Production Ready - Advanced Steps Organization
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.steps import Steps
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import Dict, List, Any, Optional
+import logging
+from enum import Enum
+
+# Configure logging for steps organization
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Define workflow phases
+class WorkflowPhase(Enum):
+    INITIALIZATION = "initialization"
+    DATA_COLLECTION = "data_collection"
+    PROCESSING = "processing"
+    ANALYSIS = "analysis"
+    SYNTHESIS = "synthesis"
+    VALIDATION = "validation"
+    OUTPUT = "output"
+
+# Define specialized agents for complex workflow
+primary_researcher = Agent(
+    name="Primary Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Lead comprehensive research and data collection",
+    instructions=[
+        "Conduct thorough market and industry research",
+        "Focus on quantitative data and credible sources",
+        "Structure findings for downstream analysis"
+    ]
+)
+
+competitive_analyst = Agent(
+    name="Competitive Intelligence Analyst",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Analyze competitive landscape and market positioning",
+    instructions=[
+        "Identify key competitors and market dynamics",
+        "Assess competitive advantages and market gaps",
+        "Provide strategic competitive insights"
+    ]
+)
+
+financial_analyst = Agent(
+    name="Financial Market Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Analyze financial aspects and market valuations",
+    instructions=[
+        "Assess market size and financial opportunities",
+        "Analyze funding trends and business models",
+        "Provide financial viability assessments"
+    ]
+)
+
+strategic_synthesizer = Agent(
+    name="Strategic Synthesis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Synthesize multi-dimensional analysis into strategic insights",
+    instructions=[
+        "Integrate findings from all research phases",
+        "Generate strategic recommendations and roadmaps",
+        "Create executive-ready strategic insights"
+    ]
+)
+
+quality_validator = Agent(
+    name="Quality Assurance Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Validate analysis quality and completeness",
+    instructions=[
+        "Review analysis for completeness and accuracy",
+        "Identify gaps or inconsistencies in findings",
+        "Ensure analysis meets quality standards"
+    ]
+)
+
+report_generator = Agent(
+    name="Executive Report Generator",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Create comprehensive executive reports",
+    instructions=[
+        "Transform analysis into executive-ready reports",
+        "Create clear, actionable recommendations",
+        "Optimize reports for decision-maker consumption"
+    ]
+)
+
+# Create research team for collaborative analysis
+research_team = Team(
+    name="Market Intelligence Team",
+    mode="coordinate",
+    members=[primary_researcher, competitive_analyst],
+    instructions="Collaborate on comprehensive market intelligence gathering"
+)
+
+class AdvancedStepsOrganizer:
+    """Advanced organizer for creating structured workflow step groups"""
+
+    def __init__(self):
+        self.step_groups = {}
+        self.phase_dependencies = {}
+
+    def create_initialization_phase(self) -> Steps:
+        """Create initialization phase steps"""
+
+        def initialization_function(step_input: StepInput) -> StepOutput:
+            """Initialize workflow with comprehensive setup"""
+
+            try:
+                logger.info("Executing workflow initialization phase")
+
+                # Setup workflow context
+                workflow_context = {
+                    "research_topic": step_input.message,
+                    "initialization_time": "2024-01-20T10:00:00Z",
+                    "workflow_scope": "comprehensive_market_analysis",
+                    "quality_requirements": "executive_grade",
+                    "expected_phases": 6
+                }
+
+                initialization_output = f"""
+                # Workflow Initialization Phase Complete
+
+                **Initialization Summary**
+                - Research Topic: {step_input.message}
+                - Workflow Type: Comprehensive Market Analysis
+                - Quality Level: Executive Grade
+                - Expected Phases: 6 (Initialization → Data Collection → Processing → Analysis → Synthesis → Validation → Output)
+
+                ## Setup Configuration
+                - Research Scope: Multi-dimensional market analysis
+                - Agent Coordination: Team-based intelligence gathering
+                - Quality Assurance: Integrated validation checkpoints
+                - Output Format: Executive-ready strategic report
+
+                ## Phase Readiness Status
+                - ✓ Initialization Phase: Complete
+                - → Data Collection Phase: Ready to execute
+                - → Processing Phase: Awaiting data collection
+                - → Analysis Phase: Awaiting processing
+                - → Synthesis Phase: Awaiting analysis
+                - → Validation Phase: Awaiting synthesis
+                - → Output Phase: Awaiting validation
+
+                ## Workflow Ready for Execution
+                All systems initialized and ready for comprehensive market analysis execution.
+                """
+
+                return StepOutput(
+                    content=initialization_output,
+                    metadata={
+                        "phase": WorkflowPhase.INITIALIZATION.value,
+                        "workflow_context": workflow_context,
+                        "phase_complete": True
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Initialization phase failed: {e}")
+                return StepOutput(
+                    content=f"Initialization phase failed: {e}",
+                    success=False,
+                    error=str(e)
+                )
+
+        init_step = Step(
+            name="workflow_initialization",
+            executor=initialization_function,
+            description="Initialize workflow with comprehensive setup and configuration"
+        )
+
+        initialization_phase = Steps(
+            name="initialization_phase",
+            steps=[init_step]
+        )
+
+        self.step_groups[WorkflowPhase.INITIALIZATION] = initialization_phase
+        logger.info("Created initialization phase with 1 step")
+
+        return initialization_phase
+
+    def create_data_collection_phase(self) -> Steps:
+        """Create comprehensive data collection phase"""
+
+        # Primary research step
+        primary_research_step = Step(
+            name="primary_market_research",
+            team=research_team,
+            description="Comprehensive primary market research and intelligence gathering"
+        )
+
+        # Financial analysis step
+        financial_research_step = Step(
+            name="financial_market_analysis",
+            agent=financial_analyst,
+            description="Financial market analysis and investment landscape research"
+        )
+
+        def data_collection_synthesis_function(step_input: StepInput) -> StepOutput:
+            """Synthesize all data collection results"""
+
+            try:
+                logger.info("Synthesizing data collection phase results")
+
+                previous_content = step_input.previous_step_content or ""
+
+                synthesis_prompt = f"""
+                DATA COLLECTION SYNTHESIS:
+
+                Research Topic: {step_input.message}
+
+                Collected Data Context:
+                {previous_content[:800] if previous_content else "No previous data available"}
+
+                Synthesis Requirements:
+                1. Consolidate all research findings into structured data
+                2. Identify key data points and insights
+                3. Organize data for downstream processing and analysis
+                4. Ensure data quality and completeness
+                5. Prepare comprehensive data package for analysis phase
+
+                Create comprehensive data collection synthesis.
+                """
+
+                synthesis_result = strategic_synthesizer.run(synthesis_prompt)
+
+                collection_synthesis_output = f"""
+                # Data Collection Phase Synthesis
+
+                **Collection Summary**
+                - Research Topic: {step_input.message}
+                - Collection Methods: Team-based intelligence + Financial analysis
+                - Data Sources: Multiple validated sources
+                - Collection Quality: Comprehensive multi-dimensional data
+
+                ## Consolidated Research Findings
+                {synthesis_result.content}
+
+                ## Data Collection Metrics
+                - Primary Research: ✓ Team-coordinated market intelligence
+                - Financial Analysis: ✓ Investment landscape and market sizing
+                - Data Synthesis: ✓ Integrated comprehensive data package
+                - Quality Validation: High-confidence data points
+
+                ## Phase Transition Status
+                - Data Collection Phase: ✓ Complete
+                - Data Package: Ready for processing phase
+                - Quality Score: Executive-grade data collection
+                """
+
+                return StepOutput(
+                    content=collection_synthesis_output,
+                    response=synthesis_result,
+                    metadata={
+                        "phase": WorkflowPhase.DATA_COLLECTION.value,
+                        "collection_methods": ["team_research", "financial_analysis"],
+                        "data_quality": "high",
+                        "phase_complete": True
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Data collection synthesis failed: {e}")
+                return StepOutput(
+                    content=f"Data collection synthesis failed: {e}",
+                    success=False,
+                    error=str(e)
+                )
+
+        collection_synthesis_step = Step(
+            name="data_collection_synthesis",
+            executor=data_collection_synthesis_function,
+            description="Synthesize and organize all data collection results"
+        )
+
+        data_collection_phase = Steps(
+            name="data_collection_phase",
+            steps=[primary_research_step, financial_research_step, collection_synthesis_step]
+        )
+
+        self.step_groups[WorkflowPhase.DATA_COLLECTION] = data_collection_phase
+        logger.info("Created data collection phase with 3 steps")
+
+        return data_collection_phase
+
+    def create_analysis_phase(self) -> Steps:
+        """Create comprehensive analysis phase"""
+
+        # Competitive analysis step
+        competitive_analysis_step = Step(
+            name="competitive_landscape_analysis",
+            agent=competitive_analyst,
+            description="Deep competitive landscape and market positioning analysis"
+        )
+
+        def strategic_analysis_function(step_input: StepInput) -> StepOutput:
+            """Strategic analysis combining all data sources"""
+
+            try:
+                logger.info("Executing strategic analysis")
+
+                collected_data = step_input.previous_step_content or ""
+
+                strategic_analysis_prompt = f"""
+                COMPREHENSIVE STRATEGIC ANALYSIS:
+
+                Research Topic: {step_input.message}
+
+                Collected Data Context:
+                {collected_data[:1000] if collected_data else "No data available"}
+
+                Strategic Analysis Requirements:
+                1. Analyze market opportunities and threats
+                2. Assess competitive positioning and dynamics
+                3. Identify strategic gaps and opportunities
+                4. Evaluate market entry and expansion strategies
+                5. Develop strategic insights and recommendations
+
+                Provide comprehensive strategic analysis integrating all data sources.
+                """
+
+                analysis_result = strategic_synthesizer.run(strategic_analysis_prompt)
+
+                strategic_analysis_output = f"""
+                # Strategic Analysis Phase Results
+
+                **Analysis Summary**
+                - Research Focus: {step_input.message}
+                - Analysis Scope: Multi-dimensional strategic assessment
+                - Data Integration: Comprehensive data synthesis
+                - Analysis Quality: Executive-grade strategic insights
+
+                ## Strategic Analysis Results
+                {analysis_result.content}
+
+                ## Analysis Dimensions
+                - Market Opportunity Assessment: ✓ Complete
+                - Competitive Dynamics Analysis: ✓ Complete
+                - Strategic Gap Identification: ✓ Complete
+                - Strategic Recommendations: ✓ Developed
+
+                ## Phase Completion Status
+                - Analysis Phase: ✓ Complete
+                - Strategic Insights: Ready for synthesis phase
+                - Quality Validation: High-confidence analysis
+                """
+
+                return StepOutput(
+                    content=strategic_analysis_output,
+                    response=analysis_result,
+                    metadata={
+                        "phase": WorkflowPhase.ANALYSIS.value,
+                        "analysis_dimensions": 4,
+                        "strategic_quality": "high",
+                        "phase_complete": True
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Strategic analysis failed: {e}")
+                return StepOutput(
+                    content=f"Strategic analysis failed: {e}",
+                    success=False,
+                    error=str(e)
+                )
+
+        strategic_analysis_step = Step(
+            name="comprehensive_strategic_analysis",
+            executor=strategic_analysis_function,
+            description="Comprehensive strategic analysis integrating all data sources"
+        )
+
+        analysis_phase = Steps(
+            name="analysis_phase",
+            steps=[competitive_analysis_step, strategic_analysis_step]
+        )
+
+        self.step_groups[WorkflowPhase.ANALYSIS] = analysis_phase
+        logger.info("Created analysis phase with 2 steps")
+
+        return analysis_phase
+
+    def create_validation_phase(self) -> Steps:
+        """Create quality validation and assurance phase"""
+
+        validation_step = Step(
+            name="quality_validation_and_assurance",
+            agent=quality_validator,
+            description="Validate analysis quality, completeness, and accuracy"
+        )
+
+        validation_phase = Steps(
+            name="validation_phase",
+            steps=[validation_step]
+        )
+
+        self.step_groups[WorkflowPhase.VALIDATION] = validation_phase
+        logger.info("Created validation phase with 1 step")
+
+        return validation_phase
+
+    def create_output_phase(self) -> Steps:
+        """Create comprehensive output and reporting phase"""
+
+        report_generation_step = Step(
+            name="executive_report_generation",
+            agent=report_generator,
+            description="Generate comprehensive executive report with strategic recommendations"
+        )
+
+        def final_output_synthesis_function(step_input: StepInput) -> StepOutput:
+            """Final synthesis and output preparation"""
+
+            try:
+                logger.info("Executing final output synthesis")
+
+                complete_analysis = step_input.previous_step_content or ""
+
+                final_synthesis_prompt = f"""
+                FINAL OUTPUT SYNTHESIS:
+
+                Research Topic: {step_input.message}
+
+                Complete Analysis Context:
+                {complete_analysis[:1200] if complete_analysis else "No analysis available"}
+
+                Final Synthesis Requirements:
+                1. Create executive summary of all findings
+                2. Consolidate strategic recommendations
+                3. Provide implementation roadmap
+                4. Include key success metrics and KPIs
+                5. Generate final comprehensive strategic report
+
+                Create final executive-ready strategic output.
+                """
+
+                final_result = report_generator.run(final_synthesis_prompt)
+
+                final_output = f"""
+                # Comprehensive Strategic Analysis - Final Report
+
+                **Executive Summary**
+                - Research Topic: {step_input.message}
+                - Analysis Depth: Comprehensive multi-phase assessment
+                - Quality Assurance: Validated executive-grade analysis
+                - Strategic Value: Actionable recommendations and roadmap
+
+                ## Final Strategic Report
+                {final_result.content}
+
+                ## Workflow Completion Summary
+                ### Executed Phases
+                - ✓ Initialization Phase: Workflow setup and configuration
+                - ✓ Data Collection Phase: Comprehensive intelligence gathering
+                - ✓ Analysis Phase: Strategic analysis and insights
+                - ✓ Validation Phase: Quality assurance and validation
+                - ✓ Output Phase: Executive report generation
+
+                ### Quality Metrics
+                - Research Depth: Comprehensive multi-dimensional analysis
+                - Data Quality: High-confidence validated sources
+                - Strategic Value: Executive-ready actionable insights
+                - Implementation Ready: Clear roadmap and recommendations
+
+                ## Workflow Success Confirmation
+                Comprehensive strategic analysis workflow completed successfully with executive-grade deliverables.
+                """
+
+                return StepOutput(
+                    content=final_output,
+                    response=final_result,
+                    metadata={
+                        "phase": WorkflowPhase.OUTPUT.value,
+                        "workflow_complete": True,
+                        "quality_grade": "executive",
+                        "phases_executed": 5
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Final output synthesis failed: {e}")
+                return StepOutput(
+                    content=f"Final output synthesis failed: {e}",
+                    success=False,
+                    error=str(e)
+                )
+
+        final_synthesis_step = Step(
+            name="final_output_synthesis",
+            executor=final_output_synthesis_function,
+            description="Final synthesis and comprehensive output preparation"
+        )
+
+        output_phase = Steps(
+            name="output_phase",
+            steps=[report_generation_step, final_synthesis_step]
+        )
+
+        self.step_groups[WorkflowPhase.OUTPUT] = output_phase
+        logger.info("Created output phase with 2 steps")
+
+        return output_phase
+
+    def build_complete_workflow(self, workflow_name: str, description: str) -> Workflow:
+        """Build complete workflow with all organized step groups"""
+
+        # Create all phases
+        phases = [
+            self.create_initialization_phase(),
+            self.create_data_collection_phase(),
+            self.create_analysis_phase(),
+            self.create_validation_phase(),
+            self.create_output_phase()
+        ]
+
+        # Create comprehensive workflow
+        complete_workflow = Workflow(
+            name=workflow_name,
+            description=description,
+            storage=SqliteStorage(
+                table_name="organized_workflows",
+                db_file="organized_workflow_data.db",
+                mode="workflow_v2"
+            ),
+            steps=phases
+        )
+
+        logger.info(f"Built complete workflow with {len(phases)} phases")
+        return complete_workflow
+
+    def get_workflow_summary(self) -> Dict[str, Any]:
+        """Get comprehensive workflow organization summary"""
+
+        summary = {
+            "total_phases": len(self.step_groups),
+            "phase_details": {},
+            "total_steps": 0
+        }
+
+        for phase, steps_group in self.step_groups.items():
+            phase_info = {
+                "phase_name": phase.value,
+                "steps_count": len(steps_group.steps),
+                "step_names": [step.name for step in steps_group.steps]
+            }
+            summary["phase_details"][phase.value] = phase_info
+            summary["total_steps"] += len(steps_group.steps)
+
+        return summary
+
+# Create advanced steps organizer
+steps_organizer = AdvancedStepsOrganizer()
+
+# Build comprehensive organized workflow
+comprehensive_organized_workflow = steps_organizer.build_complete_workflow(
+    workflow_name="Comprehensive Organized Strategic Analysis Pipeline",
+    description="Advanced multi-phase strategic analysis workflow with organized step groups"
+)
+
+# Execute organized workflow with comprehensive monitoring
+if __name__ == "__main__":
+    try:
+        logger.info("Starting comprehensive organized workflow")
+
+        # Get workflow summary
+        workflow_summary = steps_organizer.get_workflow_summary()
+        logger.info(f"Workflow organization: {workflow_summary}")
+
+        # Execute workflow
+        result = comprehensive_organized_workflow.run(
+            message="Comprehensive strategic analysis of AI-powered healthcare diagnostic platforms including market opportunities, competitive landscape, financial viability, and strategic recommendations for market entry",
+            stream=False
+        )
+
+        print("Comprehensive organized workflow completed successfully")
+        print(f"Executed {workflow_summary['total_phases']} phases with {workflow_summary['total_steps']} total steps")
+
+        # Print phase execution summary
+        phase_names = list(workflow_summary['phase_details'].keys())
+        print(f"Phase execution: {' → '.join(phase_names)}")
+
+    except Exception as e:
+        logger.error(f"Organized workflow execution failed: {e}")
+        print(f"Workflow failed: {e}")
+```
+
+## Advanced Steps Organization Patterns
+
+### Dynamic Steps Selection
+
+```python
+class DynamicStepsSelector:
+    """Select and organize steps dynamically based on requirements"""
+
+    def __init__(self):
+        self.available_step_groups = {}
+        self.selection_criteria = {}
+
+    def register_step_group(self, group_name: str, steps_group: Steps, criteria: Dict[str, Any]):
+        """Register step group with selection criteria"""
+        self.available_step_groups[group_name] = steps_group
+        self.selection_criteria[group_name] = criteria
+        logger.info(f"Registered step group: {group_name}")
+
+    def select_steps_for_workflow(
+        self,
+        requirements: Dict[str, Any]
+    ) -> List[Steps]:
+        """Select appropriate step groups based on requirements"""
+
+        selected_groups = []
+
+        for group_name, steps_group in self.available_step_groups.items():
+            criteria = self.selection_criteria[group_name]
+
+            # Check if group meets requirements
+            if self._meets_requirements(criteria, requirements):
+                selected_groups.append(steps_group)
+                logger.info(f"Selected step group: {group_name}")
+
+        return selected_groups
+
+    def _meets_requirements(self, criteria: Dict[str, Any], requirements: Dict[str, Any]) -> bool:
+        """Check if step group criteria meet workflow requirements"""
+
+        # Check complexity requirement
+        if "complexity" in requirements and "complexity" in criteria:
+            if requirements["complexity"] not in criteria["complexity"]:
+                return False
+
+        # Check domain requirement
+        if "domain" in requirements and "domain" in criteria:
+            if requirements["domain"] != criteria["domain"]:
+                return False
+
+        # Check time constraint
+        if "time_limit" in requirements and "duration" in criteria:
+            if criteria["duration"] > requirements["time_limit"]:
+                return False
+
+        return True
+
+# Example dynamic selection setup
+dynamic_selector = DynamicStepsSelector()
+
+# Register different step groups
+basic_research_group = Steps(
+    name="basic_research",
+    steps=[
+        Step(name="simple_research", agent=researcher),
+        Step(name="basic_analysis", agent=analyzer)
+    ]
+)
+
+advanced_research_group = Steps(
+    name="advanced_research",
+    steps=[
+        Step(name="comprehensive_research", team=research_team),
+        Step(name="competitive_analysis", agent=competitive_analyst),
+        Step(name="financial_analysis", agent=financial_analyst),
+        Step(name="strategic_synthesis", agent=strategic_synthesizer)
+    ]
+)
+
+# Register with criteria
+dynamic_selector.register_step_group(
+    "basic_research",
+    basic_research_group,
+    {"complexity": ["low", "medium"], "domain": "research", "duration": 120}
+)
+
+dynamic_selector.register_step_group(
+    "advanced_research",
+    advanced_research_group,
+    {"complexity": ["high"], "domain": "research", "duration": 300}
+)
+
+# Select steps based on requirements
+selected_steps = dynamic_selector.select_steps_for_workflow({
+    "complexity": "high",
+    "domain": "research",
+    "time_limit": 400
+})
+```
+
+### Conditional Steps Groups
+
+```python
+def create_conditional_steps_workflow(
+    base_requirements: Dict[str, Any]
+) -> Workflow:
+    """Create workflow with conditional step groups"""
+
+    workflow_steps = []
+
+    # Always include initialization
+    init_phase = Steps(
+        name="initialization",
+        steps=[
+            Step(
+                name="workflow_setup",
+                agent=initialization_agent,
+                description="Initialize workflow based on requirements"
+            )
+        ]
+    )
+    workflow_steps.append(init_phase)
+
+    # Conditional research phase
+    if base_requirements.get("research_depth", "basic") == "comprehensive":
+        research_phase = Steps(
+            name="comprehensive_research",
+            steps=[
+                Step(name="primary_research", team=research_team),
+                Step(name="secondary_research", agent=primary_researcher),
+                Step(name="data_synthesis", agent=strategic_synthesizer)
+            ]
+        )
+    else:
+        research_phase = Steps(
+            name="basic_research",
+            steps=[
+                Step(name="basic_research", agent=researcher)
+            ]
+        )
+
+    workflow_steps.append(research_phase)
+
+    # Conditional analysis phase
+    if base_requirements.get("include_financial_analysis", False):
+        analysis_phase = Steps(
+            name="comprehensive_analysis",
+            steps=[
+                Step(name="market_analysis", agent=competitive_analyst),
+                Step(name="financial_analysis", agent=financial_analyst),
+                Step(name="strategic_analysis", agent=strategic_synthesizer)
+            ]
+        )
+    else:
+        analysis_phase = Steps(
+            name="basic_analysis",
+            steps=[
+                Step(name="market_analysis", agent=competitive_analyst)
+            ]
+        )
+
+    workflow_steps.append(analysis_phase)
+
+    # Always include output phase
+    output_phase = Steps(
+        name="output_generation",
+        steps=[
+            Step(name="report_generation", agent=report_generator)
+        ]
+    )
+    workflow_steps.append(output_phase)
+
+    return Workflow(
+        name="Conditional Steps Workflow",
+        description="Workflow with conditional step group selection",
+        steps=workflow_steps
+    )
+
+# Create workflows with different configurations
+basic_workflow = create_conditional_steps_workflow({
+    "research_depth": "basic",
+    "include_financial_analysis": False
+})
+
+comprehensive_workflow = create_conditional_steps_workflow({
+    "research_depth": "comprehensive",
+    "include_financial_analysis": True
+})
+```
+
+### Parallel Steps Groups
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+class ParallelStepsExecutor:
+    """Execute step groups in parallel for performance optimization"""
+
+    def __init__(self, max_workers: int = 3):
+        self.max_workers = max_workers
+
+    def create_parallel_research_groups(self) -> List[Steps]:
+        """Create parallel research step groups"""
+
+        # Market research group
+        market_research_group = Steps(
+            name="market_research_parallel",
+            steps=[
+                Step(
+                    name="market_size_analysis",
+                    agent=primary_researcher,
+                    description="Analyze market size and growth projections"
+                )
+            ]
+        )
+
+        # Competitive research group
+        competitive_research_group = Steps(
+            name="competitive_research_parallel",
+            steps=[
+                Step(
+                    name="competitor_analysis",
+                    agent=competitive_analyst,
+                    description="Analyze competitive landscape and positioning"
+                )
+            ]
+        )
+
+        # Financial research group
+        financial_research_group = Steps(
+            name="financial_research_parallel",
+            steps=[
+                Step(
+                    name="financial_opportunity_analysis",
+                    agent=financial_analyst,
+                    description="Analyze financial opportunities and viability"
+                )
+            ]
+        )
+
+        return [market_research_group, competitive_research_group, financial_research_group]
+
+    def create_parallel_workflow(self) -> Workflow:
+        """Create workflow with parallel step execution"""
+
+        # Sequential initialization
+        init_phase = Steps(
+            name="initialization_phase",
+            steps=[
+                Step(
+                    name="parallel_workflow_init",
+                    agent=initialization_agent,
+                    description="Initialize parallel workflow execution"
+                )
+            ]
+        )
+
+        # Parallel research phases
+        parallel_groups = self.create_parallel_research_groups()
+
+        # Sequential synthesis phase
+        synthesis_phase = Steps(
+            name="synthesis_phase",
+            steps=[
+                Step(
+                    name="parallel_results_synthesis",
+                    agent=strategic_synthesizer,
+                    description="Synthesize results from parallel research execution"
+                )
+            ]
+        )
+
+        # Note: Actual parallel execution would depend on AGNO's parallel capabilities
+        # This demonstrates the step organization pattern
+        all_steps = [init_phase] + parallel_groups + [synthesis_phase]
+
+        return Workflow(
+            name="Parallel Steps Workflow",
+            description="Workflow optimized for parallel step group execution",
+            steps=all_steps
+        )
+```
+
+## Speed Tips
+
+### Steps Organization Optimization
+
+- **Logical Grouping**: Group related steps for better maintainability and understanding
+- **Phase Separation**: Separate workflow into distinct phases for clear execution flow
+- **Reusable Groups**: Create reusable step groups that can be shared across workflows
+- **Dynamic Selection**: Implement dynamic step selection based on runtime requirements
+- **Parallel Opportunities**: Identify steps that can execute in parallel for performance
+- **Dependency Management**: Clearly define dependencies between step groups
+
+### Common Organization Patterns
+
+```python
+# Pattern 1: Sequential Phase Organization
+phases = [
+    initialization_phase,  # Setup and configuration
+    data_collection_phase,  # Gather information
+    processing_phase,      # Process and transform
+    analysis_phase,        # Analyze and insights
+    output_phase          # Generate results
+]
+
+# Pattern 2: Domain-Based Grouping
+domain_groups = [
+    market_research_group,     # Market-focused steps
+    competitive_analysis_group, # Competition-focused steps
+    financial_analysis_group,   # Finance-focused steps
+    strategic_synthesis_group   # Strategy-focused steps
+]
+
+# Pattern 3: Complexity-Based Grouping
+complexity_groups = {
+    "basic": [simple_research_step, basic_analysis_step],
+    "advanced": [comprehensive_research_steps, deep_analysis_steps],
+    "expert": [specialized_research_steps, expert_analysis_steps]
+}
+
+# Pattern 4: Conditional Groups
+conditional_workflow = []
+if requirements.get("include_research"):
+    conditional_workflow.append(research_phase)
+if requirements.get("include_analysis"):
+    conditional_workflow.append(analysis_phase)
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Steps Organization Anti-patterns
+
+```python
+# ❌ WRONG - Monolithic step organization
+massive_steps_group = Steps(
+    name="everything",  # Too broad!
+    steps=[
+        research_step, analysis_step, writing_step,
+        validation_step, synthesis_step, output_step,
+        cleanup_step, archival_step  # Too many mixed responsibilities!
+    ]
+)
+
+# ✅ CORRECT - Logical phase organization
+organized_phases = [
+    Steps(name="research_phase", steps=[research_step]),
+    Steps(name="analysis_phase", steps=[analysis_step, validation_step]),
+    Steps(name="output_phase", steps=[writing_step, synthesis_step])
+]
+
+# ❌ WRONG - No clear dependencies or flow
+random_groups = [
+    Steps(name="group_a", steps=[step3, step1, step5]),  # Random order!
+    Steps(name="group_b", steps=[step2, step6, step4])   # No logical flow!
+]
+
+# ✅ CORRECT - Clear flow and dependencies
+logical_flow = [
+    Steps(name="data_collection", steps=[collect_step, validate_step]),
+    Steps(name="data_processing", steps=[process_step, transform_step]),
+    Steps(name="data_output", steps=[analyze_step, report_step])
+]
+```
+
+### Group Naming and Structure Issues
+
+```python
+# ❌ WRONG - Poor naming and unclear structure
+bad_groups = [
+    Steps(name="stuff1", steps=[step1, step2]),    # Vague name!
+    Steps(name="more_stuff", steps=[step3]),       # Inconsistent naming!
+    Steps(name="final", steps=[step4, step5, step6, step7])  # Too many steps in one group!
+]
+
+# ✅ CORRECT - Clear naming and appropriate structure
+good_groups = [
+    Steps(name="initialization_phase", steps=[setup_step, config_step]),
+    Steps(name="processing_phase", steps=[process_step]),
+    Steps(name="analysis_phase", steps=[analyze_step, validate_step]),
+    Steps(name="output_phase", steps=[report_step])
+]
+
+# ❌ WRONG - Steps that should be grouped separately mixed together
+mixed_responsibilities = Steps(
+    name="mixed_phase",
+    steps=[
+        research_step,     # Data collection
+        validation_step,   # Quality assurance
+        output_step,       # Result generation
+        cleanup_step       # Maintenance
+    ]  # Different responsibilities mixed!
+)
+
+# ✅ CORRECT - Clear separation of responsibilities
+separated_phases = [
+    Steps(name="collection_phase", steps=[research_step]),
+    Steps(name="validation_phase", steps=[validation_step]),
+    Steps(name="output_phase", steps=[output_step]),
+    Steps(name="maintenance_phase", steps=[cleanup_step])
+]
+```
+
+## Best Practices Summary
+
+- **Logical Organization**: Group steps by logical phases, domains, or responsibilities
+- **Clear Naming**: Use descriptive names that clearly indicate the group's purpose
+- **Appropriate Sizing**: Keep step groups focused with 2-5 related steps per group
+- **Flow Design**: Organize groups in logical execution flow with clear dependencies
+- **Reusability**: Design step groups as reusable components across different workflows
+- **Dynamic Selection**: Implement capability to select step groups based on runtime requirements
+- **Performance Optimization**: Identify opportunities for parallel execution of independent groups
+- **Documentation**: Document the purpose and dependencies of each step group clearly

@@ -1,0 +1,1949 @@
+# DSPy Logging Strategies
+
+Comprehensive production logging and trace management patterns for DSPy 3.0.1 applications with enterprise observability.
+
+## Quick Start
+
+**Instant Structured Logging**
+```python
+# structured_logger.py
+import json
+import uuid
+from datetime import datetime
+from typing import Dict, Any, Optional
+import dspy
+from dspy.utils import usage_tracker
+import logging
+import structlog
+
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+class DSPyLogger:
+    """Structured logger for DSPy operations"""
+    
+    def __init__(self, service_name: str = "dspy-service"):
+        self.logger = structlog.get_logger()
+        self.service_name = service_name
+    
+    def log_dspy_request(self, request_id: str, prompt: str, model: str, **kwargs):
+        """Log DSPy request with structured data"""
+        self.logger.info(
+            "dspy_request_started",
+            request_id=request_id,
+            service=self.service_name,
+            model=model,
+            prompt_length=len(prompt),
+            prompt_hash=hash(prompt) % 10000,  # Avoid logging sensitive data
+            **kwargs
+        )
+    
+    def log_dspy_response(self, request_id: str, response: str, usage_data: Dict[str, Any], **kwargs):
+        """Log DSPy response with usage metrics"""
+        self.logger.info(
+            "dspy_request_completed",
+            request_id=request_id,
+            service=self.service_name,
+            response_length=len(response),
+            cost=usage_data.get("cost", 0),
+            tokens=usage_data.get("total_tokens", 0),
+            processing_time=usage_data.get("total_time", 0),
+            **kwargs
+        )
+    
+    def log_dspy_error(self, request_id: str, error: Exception, **kwargs):
+        """Log DSPy errors with context"""
+        self.logger.error(
+            "dspy_request_failed",
+            request_id=request_id,
+            service=self.service_name,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            **kwargs
+        )
+
+# Usage with DSPy
+logger = DSPyLogger("my-dspy-app")
+
+class LoggingProcessor(dspy.Signature):
+    """Example processor with logging"""
+    query: str = dspy.InputField()
+    response: str = dspy.OutputField()
+
+def process_with_logging(query: str) -> str:
+    request_id = str(uuid.uuid4())
+    
+    try:
+        # Log request start
+        logger.log_dspy_request(
+            request_id=request_id,
+            prompt=query,
+            model="openai/gpt-4o"
+        )
+        
+        # Configure DSPy
+        lm = dspy.LM('openai/gpt-4o')
+        dspy.configure(lm=lm)
+        processor = dspy.ChainOfThought(LoggingProcessor)
+        
+        # Process with usage tracking
+        with usage_tracker.track() as tracker:
+            result = processor(query=query)
+        
+        # Log successful response
+        logger.log_dspy_response(
+            request_id=request_id,
+            response=result.response,
+            usage_data={
+                "cost": tracker.cost,
+                "total_tokens": tracker.total_tokens,
+                "total_time": tracker.total_time
+            }
+        )
+        
+        return result.response
+        
+    except Exception as e:
+        logger.log_dspy_error(request_id=request_id, error=e)
+        raise
+
+# Example usage
+# response = process_with_logging("What is machine learning?")
+```
+
+**Instant Trace Context Propagation**
+```python
+# trace_context.py
+import asyncio
+import contextvars
+from typing import Dict, Any, Optional
+import uuid
+from datetime import datetime
+import dspy
+from dspy.utils import usage_tracker
+
+# Context variables for trace propagation
+trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('trace_id')
+span_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('span_id')
+user_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('user_id', default=None)
+
+class TraceContext:
+    """Manage distributed trace context"""
+    
+    def __init__(self, trace_id: Optional[str] = None, span_id: Optional[str] = None, user_id: Optional[str] = None):
+        self.trace_id = trace_id or str(uuid.uuid4())
+        self.span_id = span_id or str(uuid.uuid4())
+        self.user_id = user_id
+    
+    def __enter__(self):
+        self.trace_token = trace_id_var.set(self.trace_id)
+        self.span_token = span_id_var.set(self.span_id)
+        self.user_token = user_id_var.set(self.user_id)
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        trace_id_var.reset(self.trace_token)
+        span_id_var.reset(self.span_token)
+        user_id_var.reset(self.user_token)
+    
+    @classmethod
+    def current(cls) -> 'TraceContext':
+        """Get current trace context"""
+        return cls(
+            trace_id=trace_id_var.get(None),
+            span_id=span_id_var.get(None),
+            user_id=user_id_var.get(None)
+        )
+    
+    def child_span(self) -> 'TraceContext':
+        """Create child span with same trace ID"""
+        return TraceContext(
+            trace_id=self.trace_id,
+            span_id=str(uuid.uuid4()),
+            user_id=self.user_id
+        )
+
+class TracedDSPyProcessor:
+    """DSPy processor with distributed tracing"""
+    
+    def __init__(self, signature_class):
+        self.signature_class = signature_class
+        self.processor = dspy.ChainOfThought(signature_class)
+    
+    async def __call__(self, **kwargs):
+        trace_context = TraceContext.current()
+        
+        with TraceContext(trace_context.trace_id, trace_context.span_id, trace_context.user_id):
+            # Create child span for processing
+            child_context = trace_context.child_span()
+            
+            with child_context:
+                return await self._process_with_trace(**kwargs)
+    
+    async def _process_with_trace(self, **kwargs):
+        """Process with trace logging"""
+        trace_context = TraceContext.current()
+        start_time = datetime.now()
+        
+        # Log span start
+        print(json.dumps({
+            "timestamp": start_time.isoformat(),
+            "level": "INFO",
+            "message": "dspy_span_started",
+            "trace_id": trace_context.trace_id,
+            "span_id": trace_context.span_id,
+            "user_id": trace_context.user_id,
+            "operation": "dspy_processing",
+            "input_keys": list(kwargs.keys())
+        }))
+        
+        try:
+            with usage_tracker.track() as tracker:
+                result = self.processor(**kwargs)
+            
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            # Log span completion
+            print(json.dumps({
+                "timestamp": end_time.isoformat(),
+                "level": "INFO",
+                "message": "dspy_span_completed",
+                "trace_id": trace_context.trace_id,
+                "span_id": trace_context.span_id,
+                "user_id": trace_context.user_id,
+                "operation": "dspy_processing",
+                "duration": duration,
+                "cost": tracker.cost,
+                "tokens": tracker.total_tokens,
+                "status": "success"
+            }))
+            
+            return result
+            
+        except Exception as e:
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            # Log span error
+            print(json.dumps({
+                "timestamp": end_time.isoformat(),
+                "level": "ERROR",
+                "message": "dspy_span_failed",
+                "trace_id": trace_context.trace_id,
+                "span_id": trace_context.span_id,
+                "user_id": trace_context.user_id,
+                "operation": "dspy_processing",
+                "duration": duration,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "status": "error"
+            }))
+            
+            raise
+
+# Usage
+class QueryProcessor(dspy.Signature):
+    """Process user queries with tracing"""
+    query: str = dspy.InputField()
+    response: str = dspy.OutputField()
+
+async def process_with_tracing(query: str, user_id: str):
+    with TraceContext(user_id=user_id) as trace:
+        processor = TracedDSPyProcessor(QueryProcessor)
+        result = await processor(query=query)
+        return result
+
+# Example
+# result = await process_with_tracing("Explain AI", user_id="user_123")
+```
+
+**Instant ELK Stack Integration**
+```python
+# elk_logging.py
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any, Optional
+import elasticsearch
+import dspy
+from dspy.utils import usage_tracker
+
+class ELKLogger:
+    """Logger for ELK Stack integration"""
+    
+    def __init__(self, elasticsearch_host: str = "localhost:9200", index_prefix: str = "dspy"):
+        self.es = elasticsearch.Elasticsearch([elasticsearch_host])
+        self.index_prefix = index_prefix
+        
+        # Create index template
+        self._create_index_template()
+    
+    def _create_index_template(self):
+        """Create Elasticsearch index template for DSPy logs"""
+        template = {
+            "index_patterns": [f"{self.index_prefix}-*"],
+            "template": {
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 1,
+                    "index.refresh_interval": "5s"
+                },
+                "mappings": {
+                    "properties": {
+                        "timestamp": {"type": "date"},
+                        "trace_id": {"type": "keyword"},
+                        "span_id": {"type": "keyword"},
+                        "user_id": {"type": "keyword"},
+                        "service": {"type": "keyword"},
+                        "operation": {"type": "keyword"},
+                        "model": {"type": "keyword"},
+                        "cost": {"type": "float"},
+                        "tokens": {"type": "integer"},
+                        "duration": {"type": "float"},
+                        "status": {"type": "keyword"},
+                        "error_type": {"type": "keyword"},
+                        "error_message": {"type": "text"},
+                        "prompt_hash": {"type": "keyword"},
+                        "response_length": {"type": "integer"}
+                    }
+                }
+            }
+        }
+        
+        try:
+            self.es.indices.put_index_template(
+                name=f"{self.index_prefix}-template",
+                body=template
+            )
+        except Exception as e:
+            print(f"Failed to create index template: {e}")
+    
+    def log_dspy_event(self, event_type: str, data: Dict[str, Any]):
+        """Log DSPy event to Elasticsearch"""
+        doc = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "event_type": event_type,
+            **data
+        }
+        
+        # Generate index name with date
+        index_name = f"{self.index_prefix}-{datetime.utcnow().strftime('%Y.%m.%d')}"
+        
+        try:
+            self.es.index(
+                index=index_name,
+                body=doc
+            )
+        except Exception as e:
+            # Fallback to regular logging if Elasticsearch is unavailable
+            logging.error(f"Failed to log to Elasticsearch: {e}")
+            logging.info(json.dumps(doc))
+    
+    def search_logs(self, query: Dict[str, Any], size: int = 100) -> Dict[str, Any]:
+        """Search logs in Elasticsearch"""
+        try:
+            return self.es.search(
+                index=f"{self.index_prefix}-*",
+                body=query,
+                size=size,
+                sort=[{"timestamp": {"order": "desc"}}]
+            )
+        except Exception as e:
+            logging.error(f"Failed to search logs: {e}")
+            return {}
+
+# Usage with DSPy
+elk_logger = ELKLogger()
+
+class ELKIntegratedProcessor:
+    """DSPy processor with ELK logging"""
+    
+    def __init__(self, signature_class, service_name: str = "dspy-service"):
+        self.signature_class = signature_class
+        self.processor = dspy.ChainOfThought(signature_class)
+        self.service_name = service_name
+    
+    def __call__(self, trace_id: str, **kwargs):
+        start_time = datetime.utcnow()
+        
+        # Log request start
+        elk_logger.log_dspy_event("request_started", {
+            "trace_id": trace_id,
+            "service": self.service_name,
+            "operation": "dspy_processing",
+            "signature": self.signature_class.__name__,
+            "input_keys": list(kwargs.keys())
+        })
+        
+        try:
+            with usage_tracker.track() as tracker:
+                result = self.processor(**kwargs)
+            
+            end_time = datetime.utcnow()
+            duration = (end_time - start_time).total_seconds()
+            
+            # Log successful completion
+            elk_logger.log_dspy_event("request_completed", {
+                "trace_id": trace_id,
+                "service": self.service_name,
+                "operation": "dspy_processing",
+                "duration": duration,
+                "cost": tracker.cost,
+                "tokens": tracker.total_tokens,
+                "status": "success",
+                "model": str(dspy.settings.lm) if hasattr(dspy.settings, 'lm') else "unknown"
+            })
+            
+            return result
+            
+        except Exception as e:
+            end_time = datetime.utcnow()
+            duration = (end_time - start_time).total_seconds()
+            
+            # Log error
+            elk_logger.log_dspy_event("request_failed", {
+                "trace_id": trace_id,
+                "service": self.service_name,
+                "operation": "dspy_processing",
+                "duration": duration,
+                "status": "error",
+                "error_type": type(e).__name__,
+                "error_message": str(e)
+            })
+            
+            raise
+
+# Example usage
+class SampleProcessor(dspy.Signature):
+    """Sample signature for ELK logging"""
+    input: str = dspy.InputField()
+    output: str = dspy.OutputField()
+
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+processor = ELKIntegratedProcessor(SampleProcessor, "my-dspy-service")
+result = processor(trace_id="trace-123", input="Hello world")
+```
+
+## Comprehensive Patterns
+
+### Advanced Log Correlation
+
+**Multi-Service Log Correlation**
+```python
+# log_correlation.py
+import asyncio
+import json
+import uuid
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Coroutine
+from dataclasses import dataclass, asdict
+import aioredis
+import dspy
+from dspy.utils import usage_tracker
+
+@dataclass
+class LogEvent:
+    """Structured log event"""
+    timestamp: str
+    trace_id: str
+    span_id: str
+    parent_span_id: Optional[str]
+    service: str
+    operation: str
+    level: str
+    message: str
+    data: Dict[str, Any]
+    duration: Optional[float] = None
+    status: str = "unknown"
+
+class DistributedTraceManager:
+    """Manage distributed tracing across DSPy services"""
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.redis = None
+        self.redis_url = redis_url
+        self.service_name = "dspy-service"
+        self.active_traces: Dict[str, List[LogEvent]] = {}
+    
+    async def initialize(self):
+        """Initialize Redis connection"""
+        self.redis = await aioredis.from_url(self.redis_url)
+    
+    async def start_trace(self, trace_id: str, operation: str, data: Dict[str, Any] = None) -> str:
+        """Start a new distributed trace"""
+        span_id = str(uuid.uuid4())
+        
+        event = LogEvent(
+            timestamp=datetime.utcnow().isoformat(),
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=None,
+            service=self.service_name,
+            operation=operation,
+            level="INFO",
+            message=f"trace_started: {operation}",
+            data=data or {},
+            status="started"
+        )
+        
+        await self._store_log_event(event)
+        
+        # Store in active traces
+        if trace_id not in self.active_traces:
+            self.active_traces[trace_id] = []
+        self.active_traces[trace_id].append(event)
+        
+        return span_id
+    
+    async def start_span(self, trace_id: str, parent_span_id: str, operation: str, data: Dict[str, Any] = None) -> str:
+        """Start a child span"""
+        span_id = str(uuid.uuid4())
+        
+        event = LogEvent(
+            timestamp=datetime.utcnow().isoformat(),
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            service=self.service_name,
+            operation=operation,
+            level="INFO",
+            message=f"span_started: {operation}",
+            data=data or {},
+            status="started"
+        )
+        
+        await self._store_log_event(event)
+        
+        if trace_id in self.active_traces:
+            self.active_traces[trace_id].append(event)
+        
+        return span_id
+    
+    async def end_span(self, trace_id: str, span_id: str, status: str = "completed", data: Dict[str, Any] = None, duration: float = None):
+        """End a span"""
+        event = LogEvent(
+            timestamp=datetime.utcnow().isoformat(),
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=None,  # Will be filled from context
+            service=self.service_name,
+            operation="span_ended",
+            level="INFO" if status == "completed" else "ERROR",
+            message=f"span_ended: {status}",
+            data=data or {},
+            duration=duration,
+            status=status
+        )
+        
+        await self._store_log_event(event)
+        
+        if trace_id in self.active_traces:
+            self.active_traces[trace_id].append(event)
+    
+    async def log_dspy_processing(self, trace_id: str, span_id: str, model: str, usage_data: Dict[str, Any]):
+        """Log DSPy processing details"""
+        event = LogEvent(
+            timestamp=datetime.utcnow().isoformat(),
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=None,
+            service=self.service_name,
+            operation="dspy_processing",
+            level="INFO",
+            message="DSPy model processing completed",
+            data={
+                "model": model,
+                "cost": usage_data.get("cost", 0),
+                "tokens": usage_data.get("total_tokens", 0),
+                "processing_time": usage_data.get("total_time", 0),
+                **usage_data
+            },
+            duration=usage_data.get("total_time"),
+            status="completed"
+        )
+        
+        await self._store_log_event(event)
+    
+    async def get_trace_timeline(self, trace_id: str) -> List[LogEvent]:
+        """Get complete timeline for a trace"""
+        # Try to get from Redis first
+        stored_events = await self._get_stored_trace(trace_id)
+        
+        # Merge with active events
+        active_events = self.active_traces.get(trace_id, [])
+        
+        all_events = stored_events + active_events
+        
+        # Sort by timestamp
+        all_events.sort(key=lambda e: e.timestamp)
+        
+        return all_events
+    
+    async def analyze_trace_performance(self, trace_id: str) -> Dict[str, Any]:
+        """Analyze performance of a complete trace"""
+        timeline = await self.get_trace_timeline(trace_id)
+        
+        if not timeline:
+            return {"error": "Trace not found"}
+        
+        # Calculate trace metrics
+        start_time = None
+        end_time = None
+        total_cost = 0
+        total_tokens = 0
+        operations = {}
+        errors = []
+        
+        for event in timeline:
+            if start_time is None:
+                start_time = datetime.fromisoformat(event.timestamp)
+            end_time = datetime.fromisoformat(event.timestamp)
+            
+            # Accumulate costs and tokens
+            if "cost" in event.data:
+                total_cost += event.data["cost"]
+            if "tokens" in event.data:
+                total_tokens += event.data["tokens"]
+            
+            # Track operations
+            if event.operation not in operations:
+                operations[event.operation] = {"count": 0, "total_duration": 0}
+            operations[event.operation]["count"] += 1
+            if event.duration:
+                operations[event.operation]["total_duration"] += event.duration
+            
+            # Track errors
+            if event.status == "error" or event.level == "ERROR":
+                errors.append({
+                    "timestamp": event.timestamp,
+                    "operation": event.operation,
+                    "message": event.message,
+                    "data": event.data
+                })
+        
+        total_duration = (end_time - start_time).total_seconds() if start_time and end_time else 0
+        
+        return {
+            "trace_id": trace_id,
+            "total_duration": total_duration,
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "event_count": len(timeline),
+            "error_count": len(errors),
+            "operations": operations,
+            "errors": errors,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None
+        }
+    
+    async def _store_log_event(self, event: LogEvent):
+        """Store log event in Redis"""
+        if self.redis:
+            try:
+                # Store individual event
+                await self.redis.lpush(
+                    f"trace:{event.trace_id}:events",
+                    json.dumps(asdict(event))
+                )
+                
+                # Set expiry (7 days)
+                await self.redis.expire(f"trace:{event.trace_id}:events", 604800)
+                
+                # Store in global timeline for searching
+                await self.redis.zadd(
+                    "dspy:timeline",
+                    {json.dumps(asdict(event)): datetime.fromisoformat(event.timestamp).timestamp()}
+                )
+                
+            except Exception as e:
+                # Fallback to console logging
+                print(f"Failed to store trace event: {e}")
+                print(json.dumps(asdict(event)))
+    
+    async def _get_stored_trace(self, trace_id: str) -> List[LogEvent]:
+        """Get stored trace events from Redis"""
+        if not self.redis:
+            return []
+        
+        try:
+            events_json = await self.redis.lrange(f"trace:{trace_id}:events", 0, -1)
+            events = []
+            
+            for event_json in reversed(events_json):  # Reverse because LPUSH stores in reverse order
+                event_data = json.loads(event_json.decode())
+                events.append(LogEvent(**event_data))
+            
+            return events
+            
+        except Exception as e:
+            print(f"Failed to retrieve stored trace: {e}")
+            return []
+    
+    async def search_traces(self, 
+                          start_time: Optional[datetime] = None, 
+                          end_time: Optional[datetime] = None,
+                          service: Optional[str] = None,
+                          operation: Optional[str] = None,
+                          status: Optional[str] = None,
+                          limit: int = 100) -> List[LogEvent]:
+        """Search traces by criteria"""
+        if not self.redis:
+            return []
+        
+        try:
+            # Build time range
+            min_score = start_time.timestamp() if start_time else "-inf"
+            max_score = end_time.timestamp() if end_time else "+inf"
+            
+            # Get events in time range
+            events_json = await self.redis.zrangebyscore(
+                "dspy:timeline",
+                min_score,
+                max_score,
+                start=0,
+                num=limit
+            )
+            
+            events = []
+            for event_json in events_json:
+                event_data = json.loads(event_json.decode())
+                event = LogEvent(**event_data)
+                
+                # Apply filters
+                if service and event.service != service:
+                    continue
+                if operation and event.operation != operation:
+                    continue
+                if status and event.status != status:
+                    continue
+                
+                events.append(event)
+            
+            return events
+            
+        except Exception as e:
+            print(f"Failed to search traces: {e}")
+            return []
+
+# DSPy integration
+class TracedDSPyService:
+    """DSPy service with comprehensive tracing"""
+    
+    def __init__(self, service_name: str = "dspy-service"):
+        self.trace_manager = DistributedTraceManager()
+        self.service_name = service_name
+        self.trace_manager.service_name = service_name
+    
+    async def initialize(self):
+        """Initialize the traced service"""
+        await self.trace_manager.initialize()
+    
+    async def process_request(self, request_data: Dict[str, Any], trace_id: Optional[str] = None) -> Dict[str, Any]:
+        """Process DSPy request with full tracing"""
+        if not trace_id:
+            trace_id = str(uuid.uuid4())
+        
+        # Start main trace
+        main_span_id = await self.trace_manager.start_trace(
+            trace_id=trace_id,
+            operation="process_request",
+            data={"request_type": type(request_data.get("signature", "unknown")).__name__ if hasattr(request_data.get("signature"), "__name__") else "unknown"}
+        )
+        
+        start_time = datetime.utcnow()
+        
+        try:
+            # Create DSPy processor
+            signature_class = request_data.get("signature")
+            if not signature_class:
+                raise ValueError("No signature provided")
+            
+            # Start DSPy processing span
+            dspy_span_id = await self.trace_manager.start_span(
+                trace_id=trace_id,
+                parent_span_id=main_span_id,
+                operation="dspy_processing",
+                data={"model": request_data.get("model", "unknown")}
+            )
+            
+            # Configure DSPy
+            model_name = request_data.get("model", "openai/gpt-4o-mini")
+            lm = dspy.LM(model_name)
+            dspy.configure(lm=lm)
+            processor = dspy.ChainOfThought(signature_class)
+            
+            # Process with usage tracking
+            with usage_tracker.track() as tracker:
+                result = processor(**request_data.get("inputs", {}))
+            
+            # Log DSPy processing details
+            await self.trace_manager.log_dspy_processing(
+                trace_id=trace_id,
+                span_id=dspy_span_id,
+                model=model_name,
+                usage_data={
+                    "cost": tracker.cost,
+                    "total_tokens": tracker.total_tokens,
+                    "total_time": tracker.total_time
+                }
+            )
+            
+            # End DSPy span
+            await self.trace_manager.end_span(
+                trace_id=trace_id,
+                span_id=dspy_span_id,
+                status="completed",
+                duration=tracker.total_time
+            )
+            
+            # End main span
+            end_time = datetime.utcnow()
+            total_duration = (end_time - start_time).total_seconds()
+            
+            await self.trace_manager.end_span(
+                trace_id=trace_id,
+                span_id=main_span_id,
+                status="completed",
+                data={"total_cost": tracker.cost, "total_tokens": tracker.total_tokens},
+                duration=total_duration
+            )
+            
+            return {
+                "result": result,
+                "trace_id": trace_id,
+                "duration": total_duration,
+                "cost": tracker.cost,
+                "tokens": tracker.total_tokens
+            }
+            
+        except Exception as e:
+            # Log error and end spans
+            await self.trace_manager.end_span(
+                trace_id=trace_id,
+                span_id=main_span_id,
+                status="error",
+                data={"error": str(e)},
+                duration=(datetime.utcnow() - start_time).total_seconds()
+            )
+            
+            raise
+    
+    async def get_request_trace(self, trace_id: str) -> Dict[str, Any]:
+        """Get complete trace for a request"""
+        return await self.trace_manager.analyze_trace_performance(trace_id)
+
+# Usage example
+async def demo_traced_service():
+    service = TracedDSPyService("my-dspy-service")
+    await service.initialize()
+    
+    class SampleQuery(dspy.Signature):
+        """Sample query processor"""
+        query: str = dspy.InputField()
+        response: str = dspy.OutputField()
+    
+    # Process request
+    result = await service.process_request({
+        "signature": SampleQuery,
+        "model": "openai/gpt-4o-mini",
+        "inputs": {"query": "What is artificial intelligence?"}
+    })
+    
+    print(f"Result: {result['result'].response}")
+    print(f"Trace ID: {result['trace_id']}")
+    
+    # Get trace analysis
+    trace_analysis = await service.get_request_trace(result['trace_id'])
+    print("Trace Analysis:", json.dumps(trace_analysis, indent=2))
+
+# asyncio.run(demo_traced_service())
+```
+
+### Custom Log Formatters
+
+**Advanced Log Formatting**
+```python
+# advanced_formatters.py
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any, Optional
+import re
+from dataclasses import dataclass
+import dspy
+
+@dataclass
+class DSPyLogRecord:
+    """Enhanced log record for DSPy operations"""
+    timestamp: str
+    level: str
+    service: str
+    operation: str
+    trace_id: Optional[str]
+    span_id: Optional[str]
+    user_id: Optional[str]
+    model: Optional[str]
+    cost: Optional[float]
+    tokens: Optional[int]
+    duration: Optional[float]
+    status: str
+    message: str
+    data: Dict[str, Any]
+    error: Optional[str] = None
+
+class DSPyJSONFormatter(logging.Formatter):
+    """JSON formatter optimized for DSPy logs"""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "level": record.levelname,
+            "service": getattr(record, "service", "unknown"),
+            "operation": getattr(record, "operation", "unknown"),
+            "message": record.getMessage(),
+            "logger": record.name,
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno
+        }
+        
+        # Add DSPy-specific fields
+        dspy_fields = ["trace_id", "span_id", "user_id", "model", "cost", "tokens", "duration", "status"]
+        for field in dspy_fields:
+            if hasattr(record, field):
+                log_data[field] = getattr(record, field)
+        
+        # Add extra data
+        if hasattr(record, "data") and isinstance(record.data, dict):
+            log_data.update(record.data)
+        
+        # Add exception info
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_data, default=str)
+
+class DSPyHumanFormatter(logging.Formatter):
+    """Human-readable formatter for DSPy logs"""
+    
+    def __init__(self, colorize: bool = True):
+        super().__init__()
+        self.colorize = colorize
+        self.colors = {
+            'DEBUG': '\033[36m',    # Cyan
+            'INFO': '\033[32m',     # Green
+            'WARNING': '\033[33m',  # Yellow
+            'ERROR': '\033[31m',    # Red
+            'CRITICAL': '\033[35m', # Magenta
+            'RESET': '\033[0m'      # Reset
+        }
+    
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+        level = record.levelname
+        
+        # Colorize level if enabled
+        if self.colorize and level in self.colors:
+            level = f"{self.colors[level]}{level}{self.colors['RESET']}"
+        
+        # Build base message
+        message = f"[{timestamp}] {level} {record.name}: {record.getMessage()}"
+        
+        # Add DSPy context
+        context_parts = []
+        if hasattr(record, "trace_id"):
+            context_parts.append(f"trace={record.trace_id[:8]}")
+        if hasattr(record, "model"):
+            context_parts.append(f"model={record.model}")
+        if hasattr(record, "cost"):
+            context_parts.append(f"cost=${record.cost:.4f}")
+        if hasattr(record, "tokens"):
+            context_parts.append(f"tokens={record.tokens}")
+        if hasattr(record, "duration"):
+            context_parts.append(f"duration={record.duration:.2f}s")
+        
+        if context_parts:
+            message += f" [{', '.join(context_parts)}]"
+        
+        # Add exception if present
+        if record.exc_info:
+            message += "\n" + self.formatException(record.exc_info)
+        
+        return message
+
+class DSPyMetricsFormatter(logging.Formatter):
+    """Formatter for extracting metrics from DSPy logs"""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        # Extract metrics in Prometheus format
+        metrics = []
+        
+        timestamp = int(record.created * 1000)  # Milliseconds
+        
+        # Add labels
+        labels = {
+            "service": getattr(record, "service", "unknown"),
+            "operation": getattr(record, "operation", "unknown"),
+            "level": record.levelname
+        }
+        
+        if hasattr(record, "model"):
+            labels["model"] = record.model
+        if hasattr(record, "status"):
+            labels["status"] = record.status
+        
+        # Format labels for Prometheus
+        label_str = ",".join([f'{k}="{v}"' for k, v in labels.items()])
+        
+        # Extract numeric metrics
+        if hasattr(record, "cost") and record.cost is not None:
+            metrics.append(f"dspy_request_cost{{{label_str}}} {record.cost} {timestamp}")
+        
+        if hasattr(record, "tokens") and record.tokens is not None:
+            metrics.append(f"dspy_request_tokens{{{label_str}}} {record.tokens} {timestamp}")
+        
+        if hasattr(record, "duration") and record.duration is not None:
+            metrics.append(f"dspy_request_duration_seconds{{{label_str}}} {record.duration} {timestamp}")
+        
+        # Add counter for requests
+        metrics.append(f"dspy_requests_total{{{label_str}}} 1 {timestamp}")
+        
+        return "\n".join(metrics)
+
+class DSPySensitiveDataFilter(logging.Filter):
+    """Filter to remove sensitive data from DSPy logs"""
+    
+    def __init__(self):
+        super().__init__()
+        self.sensitive_patterns = [
+            re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),  # Email
+            re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),  # SSN
+            re.compile(r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'),  # Credit card
+            re.compile(r'\b(?:\+?1[-.]?)?\(?([0-9]{3})\)?[-.]?([0-9]{3})[-.]?([0-9]{4})\b'),  # Phone
+            re.compile(r'\b[A-Z]{2}\d{2}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{2}\b'),  # IBAN
+        ]
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Filter message
+        record.msg = self._sanitize_text(str(record.msg))
+        
+        # Filter args
+        if record.args:
+            sanitized_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    sanitized_args.append(self._sanitize_text(arg))
+                else:
+                    sanitized_args.append(arg)
+            record.args = tuple(sanitized_args)
+        
+        # Filter extra data
+        if hasattr(record, "data") and isinstance(record.data, dict):
+            record.data = self._sanitize_dict(record.data)
+        
+        return True
+    
+    def _sanitize_text(self, text: str) -> str:
+        """Remove sensitive patterns from text"""
+        for pattern in self.sensitive_patterns:
+            text = pattern.sub("[REDACTED]", text)
+        return text
+    
+    def _sanitize_dict(self, data: dict) -> dict:
+        """Recursively sanitize dictionary values"""
+        sanitized = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                sanitized[key] = self._sanitize_text(value)
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_dict(value)
+            elif isinstance(value, list):
+                sanitized[key] = [
+                    self._sanitize_text(item) if isinstance(item, str) else item
+                    for item in value
+                ]
+            else:
+                sanitized[key] = value
+        return sanitized
+
+# Enhanced DSPy logger with advanced formatting
+class AdvancedDSPyLogger:
+    """Advanced logger with multiple formatters and filters"""
+    
+    def __init__(self, service_name: str = "dspy-service", 
+                 log_level: str = "INFO",
+                 enable_console: bool = True,
+                 enable_json_file: bool = True,
+                 enable_metrics: bool = True,
+                 filter_sensitive: bool = True):
+        
+        self.service_name = service_name
+        self.logger = logging.getLogger(service_name)
+        self.logger.setLevel(getattr(logging, log_level.upper()))
+        
+        # Clear existing handlers
+        self.logger.handlers.clear()
+        
+        # Add sensitive data filter if enabled
+        if filter_sensitive:
+            self.logger.addFilter(DSPySensitiveDataFilter())
+        
+        # Console handler with human-readable format
+        if enable_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(DSPyHumanFormatter(colorize=True))
+            self.logger.addHandler(console_handler)
+        
+        # JSON file handler
+        if enable_json_file:
+            json_handler = logging.FileHandler(f"{service_name}.json.log")
+            json_handler.setFormatter(DSPyJSONFormatter())
+            self.logger.addHandler(json_handler)
+        
+        # Metrics handler
+        if enable_metrics:
+            metrics_handler = logging.FileHandler(f"{service_name}.metrics")
+            metrics_handler.setFormatter(DSPyMetricsFormatter())
+            metrics_handler.addFilter(lambda record: hasattr(record, "cost") or hasattr(record, "tokens") or hasattr(record, "duration"))
+            self.logger.addHandler(metrics_handler)
+    
+    def log_dspy_request(self, trace_id: str, operation: str, model: str, **kwargs):
+        """Log DSPy request with rich context"""
+        self.logger.info(
+            f"DSPy request started: {operation}",
+            extra={
+                "service": self.service_name,
+                "operation": operation,
+                "trace_id": trace_id,
+                "model": model,
+                "status": "started",
+                **kwargs
+            }
+        )
+    
+    def log_dspy_completion(self, trace_id: str, operation: str, model: str, 
+                          cost: float, tokens: int, duration: float, **kwargs):
+        """Log DSPy completion with metrics"""
+        self.logger.info(
+            f"DSPy request completed: {operation}",
+            extra={
+                "service": self.service_name,
+                "operation": operation,
+                "trace_id": trace_id,
+                "model": model,
+                "cost": cost,
+                "tokens": tokens,
+                "duration": duration,
+                "status": "completed",
+                **kwargs
+            }
+        )
+    
+    def log_dspy_error(self, trace_id: str, operation: str, error: Exception, **kwargs):
+        """Log DSPy error with context"""
+        self.logger.error(
+            f"DSPy request failed: {operation}",
+            extra={
+                "service": self.service_name,
+                "operation": operation,
+                "trace_id": trace_id,
+                "status": "error",
+                "error": str(error),
+                **kwargs
+            },
+            exc_info=True
+        )
+
+# Usage example
+logger = AdvancedDSPyLogger(
+    service_name="my-dspy-service",
+    log_level="INFO",
+    enable_console=True,
+    enable_json_file=True,
+    enable_metrics=True,
+    filter_sensitive=True
+)
+
+def example_dspy_processing():
+    trace_id = "trace-12345"
+    
+    # Log request start
+    logger.log_dspy_request(
+        trace_id=trace_id,
+        operation="text_processing",
+        model="openai/gpt-4o",
+        user_id="user-123"
+    )
+    
+    try:
+        # Simulate DSPy processing
+        # ... DSPy code here ...
+        
+        # Log completion
+        logger.log_dspy_completion(
+            trace_id=trace_id,
+            operation="text_processing",
+            model="openai/gpt-4o",
+            cost=0.001234,
+            tokens=150,
+            duration=2.5,
+            user_id="user-123"
+        )
+        
+    except Exception as e:
+        logger.log_dspy_error(
+            trace_id=trace_id,
+            operation="text_processing",
+            error=e,
+            user_id="user-123"
+        )
+
+# example_dspy_processing()
+```
+
+## Core Implementation Patterns
+
+### Log Aggregation Pipeline
+
+**Centralized Log Processing**
+```python
+# log_aggregation.py
+import asyncio
+import json
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional, AsyncGenerator
+from dataclasses import dataclass
+import aioredis
+import aiofiles
+import re
+from collections import defaultdict
+import dspy
+
+@dataclass
+class LogAggregate:
+    """Aggregated log metrics"""
+    time_bucket: str
+    service: str
+    operation: str
+    model: str
+    count: int
+    total_cost: float
+    total_tokens: int
+    avg_duration: float
+    error_count: int
+    p95_duration: float
+    p99_duration: float
+
+class LogAggregationPipeline:
+    """Pipeline for aggregating and analyzing DSPy logs"""
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.redis = None
+        self.redis_url = redis_url
+        self.aggregation_interval = 60  # 1 minute buckets
+        self.retention_days = 30
+        
+    async def initialize(self):
+        """Initialize the aggregation pipeline"""
+        self.redis = await aioredis.from_url(self.redis_url)
+    
+    async def process_log_stream(self, log_file_path: str):
+        """Process continuous log stream"""
+        async with aiofiles.open(log_file_path, 'r') as file:
+            await file.seek(0, 2)  # Go to end of file
+            
+            while True:
+                line = await file.readline()
+                if line:
+                    await self._process_log_line(line.strip())
+                else:
+                    await asyncio.sleep(1)
+    
+    async def _process_log_line(self, line: str):
+        """Process individual log line"""
+        try:
+            log_data = json.loads(line)
+            
+            # Extract relevant metrics
+            if log_data.get("operation") == "dspy_processing" and log_data.get("status") == "completed":
+                await self._aggregate_metrics(log_data)
+                
+        except json.JSONDecodeError:
+            # Skip non-JSON lines
+            pass
+        except Exception as e:
+            print(f"Error processing log line: {e}")
+    
+    async def _aggregate_metrics(self, log_data: Dict[str, Any]):
+        """Aggregate metrics from log entry"""
+        timestamp = datetime.fromisoformat(log_data["timestamp"])
+        time_bucket = self._get_time_bucket(timestamp)
+        
+        # Create aggregation key
+        agg_key = f"agg:{time_bucket}:{log_data.get('service', 'unknown')}:{log_data.get('operation', 'unknown')}:{log_data.get('model', 'unknown')}"
+        
+        # Update aggregated metrics
+        pipe = self.redis.pipeline()
+        
+        # Increment count
+        pipe.hincrby(agg_key, "count", 1)
+        
+        # Add cost
+        if "cost" in log_data:
+            pipe.hincrbyfloat(agg_key, "total_cost", log_data["cost"])
+        
+        # Add tokens
+        if "tokens" in log_data:
+            pipe.hincrby(agg_key, "total_tokens", log_data["tokens"])
+        
+        # Track duration for percentiles
+        if "duration" in log_data:
+            pipe.zadd(f"{agg_key}:durations", {str(log_data["duration"]): timestamp.timestamp()})
+            # Keep only last 1000 durations for percentile calculation
+            pipe.zremrangebyrank(f"{agg_key}:durations", 0, -1001)
+        
+        # Track errors
+        if log_data.get("status") == "error":
+            pipe.hincrby(agg_key, "error_count", 1)
+        
+        # Set expiry
+        pipe.expire(agg_key, self.retention_days * 24 * 3600)
+        pipe.expire(f"{agg_key}:durations", self.retention_days * 24 * 3600)
+        
+        await pipe.execute()
+    
+    def _get_time_bucket(self, timestamp: datetime) -> str:
+        """Get time bucket for aggregation"""
+        bucket_time = timestamp.replace(second=0, microsecond=0)
+        # Round to nearest minute
+        bucket_time = bucket_time.replace(minute=(bucket_time.minute // self.aggregation_interval) * self.aggregation_interval)
+        return bucket_time.isoformat()
+    
+    async def get_aggregated_metrics(self, 
+                                   start_time: datetime, 
+                                   end_time: datetime,
+                                   service: Optional[str] = None,
+                                   operation: Optional[str] = None,
+                                   model: Optional[str] = None) -> List[LogAggregate]:
+        """Get aggregated metrics for time range"""
+        aggregates = []
+        
+        # Generate time buckets
+        current_time = start_time.replace(second=0, microsecond=0)
+        while current_time <= end_time:
+            time_bucket = self._get_time_bucket(current_time)
+            
+            # Find matching aggregation keys
+            pattern = f"agg:{time_bucket}:"
+            if service:
+                pattern += service + ":"
+            else:
+                pattern += "*:"
+            if operation:
+                pattern += operation + ":"
+            else:
+                pattern += "*:"
+            if model:
+                pattern += model
+            else:
+                pattern += "*"
+            
+            keys = await self.redis.keys(pattern)
+            
+            for key in keys:
+                key_str = key.decode()
+                parts = key_str.split(":")
+                if len(parts) >= 5:
+                    bucket, svc, op, mdl = parts[1], parts[2], parts[3], parts[4]
+                    
+                    # Get aggregated data
+                    agg_data = await self.redis.hgetall(key)
+                    
+                    if agg_data:
+                        # Calculate percentiles
+                        duration_key = f"{key_str}:durations"
+                        durations = await self.redis.zrange(duration_key, 0, -1, withscores=False)
+                        duration_values = [float(d.decode()) for d in durations]
+                        
+                        p95_duration = self._calculate_percentile(duration_values, 95) if duration_values else 0
+                        p99_duration = self._calculate_percentile(duration_values, 99) if duration_values else 0
+                        avg_duration = sum(duration_values) / len(duration_values) if duration_values else 0
+                        
+                        aggregate = LogAggregate(
+                            time_bucket=bucket,
+                            service=svc,
+                            operation=op,
+                            model=mdl,
+                            count=int(agg_data.get(b"count", 0)),
+                            total_cost=float(agg_data.get(b"total_cost", 0)),
+                            total_tokens=int(agg_data.get(b"total_tokens", 0)),
+                            avg_duration=avg_duration,
+                            error_count=int(agg_data.get(b"error_count", 0)),
+                            p95_duration=p95_duration,
+                            p99_duration=p99_duration
+                        )
+                        aggregates.append(aggregate)
+            
+            current_time += timedelta(minutes=self.aggregation_interval)
+        
+        return aggregates
+    
+    def _calculate_percentile(self, values: List[float], percentile: int) -> float:
+        """Calculate percentile of values"""
+        if not values:
+            return 0
+        
+        sorted_values = sorted(values)
+        index = (percentile / 100) * (len(sorted_values) - 1)
+        
+        if index.is_integer():
+            return sorted_values[int(index)]
+        else:
+            lower_index = int(index)
+            upper_index = lower_index + 1
+            weight = index - lower_index
+            return sorted_values[lower_index] * (1 - weight) + sorted_values[upper_index] * weight
+    
+    async def generate_hourly_report(self, date: datetime) -> Dict[str, Any]:
+        """Generate hourly performance report"""
+        start_time = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = start_time + timedelta(days=1)
+        
+        aggregates = await self.get_aggregated_metrics(start_time, end_time)
+        
+        # Group by hour and service
+        hourly_data = defaultdict(lambda: defaultdict(lambda: {
+            "requests": 0,
+            "cost": 0,
+            "tokens": 0,
+            "errors": 0,
+            "avg_duration": 0,
+            "models": set()
+        }))
+        
+        for agg in aggregates:
+            bucket_time = datetime.fromisoformat(agg.time_bucket)
+            hour_key = bucket_time.hour
+            
+            hourly_data[hour_key][agg.service]["requests"] += agg.count
+            hourly_data[hour_key][agg.service]["cost"] += agg.total_cost
+            hourly_data[hour_key][agg.service]["tokens"] += agg.total_tokens
+            hourly_data[hour_key][agg.service]["errors"] += agg.error_count
+            hourly_data[hour_key][agg.service]["avg_duration"] = (
+                hourly_data[hour_key][agg.service]["avg_duration"] + agg.avg_duration
+            ) / 2  # Simple average approximation
+            hourly_data[hour_key][agg.service]["models"].add(agg.model)
+        
+        # Convert sets to lists for JSON serialization
+        for hour in hourly_data:
+            for service in hourly_data[hour]:
+                hourly_data[hour][service]["models"] = list(hourly_data[hour][service]["models"])
+        
+        return {
+            "date": date.strftime("%Y-%m-%d"),
+            "hourly_data": dict(hourly_data),
+            "summary": self._calculate_daily_summary(aggregates)
+        }
+    
+    def _calculate_daily_summary(self, aggregates: List[LogAggregate]) -> Dict[str, Any]:
+        """Calculate daily summary from aggregates"""
+        total_requests = sum(agg.count for agg in aggregates)
+        total_cost = sum(agg.total_cost for agg in aggregates)
+        total_tokens = sum(agg.total_tokens for agg in aggregates)
+        total_errors = sum(agg.error_count for agg in aggregates)
+        
+        services = set(agg.service for agg in aggregates)
+        models = set(agg.model for agg in aggregates)
+        
+        return {
+            "total_requests": total_requests,
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "total_errors": total_errors,
+            "error_rate": total_errors / total_requests if total_requests > 0 else 0,
+            "avg_cost_per_request": total_cost / total_requests if total_requests > 0 else 0,
+            "avg_tokens_per_request": total_tokens / total_requests if total_requests > 0 else 0,
+            "services_count": len(services),
+            "models_count": len(models),
+            "services": list(services),
+            "models": list(models)
+        }
+    
+    async def detect_anomalies(self, time_window: timedelta = timedelta(hours=1)) -> List[Dict[str, Any]]:
+        """Detect anomalies in log metrics"""
+        end_time = datetime.utcnow()
+        start_time = end_time - time_window
+        
+        aggregates = await self.get_aggregated_metrics(start_time, end_time)
+        anomalies = []
+        
+        # Group by service/operation/model for comparison
+        grouped = defaultdict(list)
+        for agg in aggregates:
+            key = f"{agg.service}:{agg.operation}:{agg.model}"
+            grouped[key].append(agg)
+        
+        for key, agg_list in grouped.items():
+            if len(agg_list) < 3:  # Need at least 3 data points
+                continue
+            
+            # Calculate statistics
+            error_rates = [agg.error_count / agg.count if agg.count > 0 else 0 for agg in agg_list]
+            durations = [agg.avg_duration for agg in agg_list]
+            costs = [agg.total_cost / agg.count if agg.count > 0 else 0 for agg in agg_list]
+            
+            # Detect anomalies (simple threshold-based)
+            avg_error_rate = sum(error_rates) / len(error_rates)
+            avg_duration = sum(durations) / len(durations)
+            avg_cost = sum(costs) / len(costs)
+            
+            for i, agg in enumerate(agg_list):
+                current_error_rate = error_rates[i]
+                current_duration = durations[i]
+                current_cost = costs[i]
+                
+                # Check for anomalies
+                anomaly_reasons = []
+                
+                if current_error_rate > avg_error_rate * 2 and current_error_rate > 0.1:
+                    anomaly_reasons.append(f"High error rate: {current_error_rate:.2%} (avg: {avg_error_rate:.2%})")
+                
+                if current_duration > avg_duration * 2 and current_duration > 5:
+                    anomaly_reasons.append(f"High duration: {current_duration:.2f}s (avg: {avg_duration:.2f}s)")
+                
+                if current_cost > avg_cost * 3 and current_cost > 0.01:
+                    anomaly_reasons.append(f"High cost: ${current_cost:.4f} (avg: ${avg_cost:.4f})")
+                
+                if anomaly_reasons:
+                    anomalies.append({
+                        "time_bucket": agg.time_bucket,
+                        "service": agg.service,
+                        "operation": agg.operation,
+                        "model": agg.model,
+                        "anomaly_reasons": anomaly_reasons,
+                        "metrics": {
+                            "requests": agg.count,
+                            "error_rate": current_error_rate,
+                            "avg_duration": current_duration,
+                            "avg_cost": current_cost
+                        }
+                    })
+        
+        return anomalies
+
+# Usage example
+async def demo_log_aggregation():
+    pipeline = LogAggregationPipeline()
+    await pipeline.initialize()
+    
+    # Generate daily report
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    report = await pipeline.generate_hourly_report(today)
+    
+    print("Daily Report:")
+    print(json.dumps(report, indent=2, default=str))
+    
+    # Check for anomalies
+    anomalies = await pipeline.detect_anomalies()
+    if anomalies:
+        print("\nAnomalies detected:")
+        for anomaly in anomalies:
+            print(json.dumps(anomaly, indent=2))
+    else:
+        print("\nNo anomalies detected")
+
+# asyncio.run(demo_log_aggregation())
+```
+
+## Optimization Strategies
+
+### High-Performance Logging
+
+**Async Log Buffer Management**
+```python
+# async_log_buffer.py
+import asyncio
+import json
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+from collections import deque
+from dataclasses import dataclass, asdict
+import aiofiles
+import time
+import dspy
+from dspy.utils import usage_tracker
+
+@dataclass
+class BufferedLogEntry:
+    """Buffered log entry"""
+    timestamp: float
+    level: str
+    service: str
+    trace_id: str
+    message: str
+    data: Dict[str, Any]
+
+class AsyncLogBuffer:
+    """High-performance async log buffer"""
+    
+    def __init__(self, 
+                 buffer_size: int = 10000,
+                 flush_interval: float = 5.0,
+                 batch_size: int = 1000,
+                 log_file: str = "dspy_async.log"):
+        
+        self.buffer_size = buffer_size
+        self.flush_interval = flush_interval
+        self.batch_size = batch_size
+        self.log_file = log_file
+        
+        self.buffer = deque(maxlen=buffer_size)
+        self.buffer_lock = asyncio.Lock()
+        self.flush_task = None
+        self.running = False
+        
+        # Performance metrics
+        self.logs_written = 0
+        self.logs_dropped = 0
+        self.flush_count = 0
+        self.last_flush_time = time.time()
+    
+    async def start(self):
+        """Start the async log buffer"""
+        self.running = True
+        self.flush_task = asyncio.create_task(self._flush_loop())
+    
+    async def stop(self):
+        """Stop the async log buffer and flush remaining logs"""
+        self.running = False
+        if self.flush_task:
+            await self.flush_task
+        await self.flush_buffer()
+    
+    async def log(self, level: str, service: str, trace_id: str, message: str, **data):
+        """Add log entry to buffer"""
+        entry = BufferedLogEntry(
+            timestamp=time.time(),
+            level=level,
+            service=service,
+            trace_id=trace_id,
+            message=message,
+            data=data
+        )
+        
+        async with self.buffer_lock:
+            if len(self.buffer) >= self.buffer_size:
+                # Buffer full, drop oldest or current entry
+                dropped_entry = self.buffer.popleft()  # Drop oldest
+                self.logs_dropped += 1
+            
+            self.buffer.append(entry)
+    
+    async def _flush_loop(self):
+        """Background flush loop"""
+        while self.running:
+            await asyncio.sleep(self.flush_interval)
+            await self.flush_buffer()
+    
+    async def flush_buffer(self):
+        """Flush buffer to file"""
+        if not self.buffer:
+            return
+        
+        async with self.buffer_lock:
+            # Get batch of entries to write
+            entries_to_write = []
+            for _ in range(min(self.batch_size, len(self.buffer))):
+                if self.buffer:
+                    entries_to_write.append(self.buffer.popleft())
+        
+        if entries_to_write:
+            await self._write_entries(entries_to_write)
+            self.logs_written += len(entries_to_write)
+            self.flush_count += 1
+            self.last_flush_time = time.time()
+    
+    async def _write_entries(self, entries: List[BufferedLogEntry]):
+        """Write entries to log file"""
+        try:
+            async with aiofiles.open(self.log_file, 'a') as f:
+                for entry in entries:
+                    log_line = {
+                        "timestamp": datetime.fromtimestamp(entry.timestamp).isoformat(),
+                        "level": entry.level,
+                        "service": entry.service,
+                        "trace_id": entry.trace_id,
+                        "message": entry.message,
+                        **entry.data
+                    }
+                    await f.write(json.dumps(log_line) + '\n')
+                await f.flush()
+        except Exception as e:
+            # Fallback: print to console if file write fails
+            print(f"Log write failed: {e}")
+            for entry in entries:
+                print(json.dumps(asdict(entry), default=str))
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get buffer performance statistics"""
+        return {
+            "buffer_size": len(self.buffer),
+            "max_buffer_size": self.buffer_size,
+            "logs_written": self.logs_written,
+            "logs_dropped": self.logs_dropped,
+            "flush_count": self.flush_count,
+            "last_flush_time": self.last_flush_time,
+            "buffer_utilization": len(self.buffer) / self.buffer_size,
+            "running": self.running
+        }
+
+class HighPerformanceDSPyLogger:
+    """High-performance DSPy logger using async buffering"""
+    
+    def __init__(self, service_name: str = "dspy-service"):
+        self.service_name = service_name
+        self.log_buffer = AsyncLogBuffer()
+        self.metrics = {
+            "requests_logged": 0,
+            "errors_logged": 0,
+            "responses_logged": 0
+        }
+    
+    async def start(self):
+        """Start the high-performance logger"""
+        await self.log_buffer.start()
+    
+    async def stop(self):
+        """Stop the high-performance logger"""
+        await self.log_buffer.stop()
+    
+    async def log_request(self, trace_id: str, model: str, operation: str, **kwargs):
+        """Log DSPy request"""
+        await self.log_buffer.log(
+            level="INFO",
+            service=self.service_name,
+            trace_id=trace_id,
+            message=f"DSPy request started: {operation}",
+            event_type="request_started",
+            model=model,
+            operation=operation,
+            **kwargs
+        )
+        self.metrics["requests_logged"] += 1
+    
+    async def log_response(self, trace_id: str, model: str, operation: str, 
+                          cost: float, tokens: int, duration: float, **kwargs):
+        """Log DSPy response"""
+        await self.log_buffer.log(
+            level="INFO",
+            service=self.service_name,
+            trace_id=trace_id,
+            message=f"DSPy request completed: {operation}",
+            event_type="request_completed",
+            model=model,
+            operation=operation,
+            cost=cost,
+            tokens=tokens,
+            duration=duration,
+            **kwargs
+        )
+        self.metrics["responses_logged"] += 1
+    
+    async def log_error(self, trace_id: str, operation: str, error: Exception, **kwargs):
+        """Log DSPy error"""
+        await self.log_buffer.log(
+            level="ERROR",
+            service=self.service_name,
+            trace_id=trace_id,
+            message=f"DSPy request failed: {operation}",
+            event_type="request_failed",
+            operation=operation,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            **kwargs
+        )
+        self.metrics["errors_logged"] += 1
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get logger performance statistics"""
+        buffer_stats = self.log_buffer.get_stats()
+        return {
+            "logger_metrics": self.metrics,
+            "buffer_stats": buffer_stats,
+            "performance": {
+                "avg_logs_per_flush": buffer_stats["logs_written"] / max(buffer_stats["flush_count"], 1),
+                "drop_rate": buffer_stats["logs_dropped"] / max(buffer_stats["logs_written"] + buffer_stats["logs_dropped"], 1)
+            }
+        }
+
+# Usage with DSPy
+class OptimizedDSPyProcessor:
+    """DSPy processor with high-performance logging"""
+    
+    def __init__(self, signature_class, service_name: str = "optimized-dspy"):
+        self.signature_class = signature_class
+        self.processor = dspy.ChainOfThought(signature_class)
+        self.logger = HighPerformanceDSPyLogger(service_name)
+        self.initialized = False
+    
+    async def initialize(self):
+        """Initialize the processor and logger"""
+        await self.logger.start()
+        self.initialized = True
+    
+    async def shutdown(self):
+        """Shutdown the processor and logger"""
+        await self.logger.stop()
+    
+    async def __call__(self, trace_id: str, **kwargs):
+        """Process with high-performance logging"""
+        if not self.initialized:
+            await self.initialize()
+        
+        operation = self.signature_class.__name__
+        model = str(dspy.settings.lm) if hasattr(dspy.settings, 'lm') else "unknown"
+        
+        # Log request start
+        await self.logger.log_request(
+            trace_id=trace_id,
+            model=model,
+            operation=operation,
+            input_keys=list(kwargs.keys())
+        )
+        
+        start_time = time.time()
+        
+        try:
+            with usage_tracker.track() as tracker:
+                result = self.processor(**kwargs)
+            
+            duration = time.time() - start_time
+            
+            # Log successful completion
+            await self.logger.log_response(
+                trace_id=trace_id,
+                model=model,
+                operation=operation,
+                cost=tracker.cost,
+                tokens=tracker.total_tokens,
+                duration=duration
+            )
+            
+            return result
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            
+            # Log error
+            await self.logger.log_error(
+                trace_id=trace_id,
+                operation=operation,
+                error=e,
+                duration=duration
+            )
+            
+            raise
+    
+    async def get_stats(self) -> Dict[str, Any]:
+        """Get processor performance statistics"""
+        return await self.logger.get_performance_stats()
+
+# Example usage
+class ExampleSignature(dspy.Signature):
+    """Example signature for high-performance logging"""
+    input: str = dspy.InputField()
+    output: str = dspy.OutputField()
+
+async def demo_high_performance_logging():
+    # Configure DSPy
+    lm = dspy.LM('openai/gpt-4o-mini')
+    dspy.configure(lm=lm)
+    
+    # Create optimized processor
+    processor = OptimizedDSPyProcessor(ExampleSignature)
+    await processor.initialize()
+    
+    try:
+        # Process multiple requests
+        tasks = []
+        for i in range(10):
+            task = processor(
+                trace_id=f"trace-{i}",
+                input=f"Process request {i}"
+            )
+            tasks.append(task)
+        
+        # Wait for all requests to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Get performance stats
+        stats = await processor.get_stats()
+        print("Performance Stats:", json.dumps(stats, indent=2, default=str))
+        
+    finally:
+        await processor.shutdown()
+
+# asyncio.run(demo_high_performance_logging())
+```
+
+## Speed Tips
+
+1. **Use async logging** - Buffer logs and write asynchronously to avoid blocking
+2. **Batch log writes** - Write multiple log entries together for better I/O performance
+3. **Compress log files** - Use gzip compression for long-term storage
+4. **Filter early** - Apply filters before expensive formatting operations
+5. **Use structured logging** - JSON format for better parsing performance
+6. **Implement log rotation** - Prevent log files from growing too large
+7. **Cache formatters** - Reuse formatter objects to avoid repeated initialization
+8. **Use memory-mapped files** - For high-throughput log writing
+
+## Common Pitfalls
+
+1. **Synchronous logging** - Blocking the main thread with log I/O operations
+2. **Over-logging** - Logging too much detail and impacting performance
+3. **Missing correlation IDs** - Not tracking requests across service boundaries
+4. **Logging sensitive data** - Accidentally logging PII or security credentials
+5. **Inadequate log rotation** - Allowing log files to consume too much disk space
+6. **Poor structured logging** - Using inconsistent or unparseable log formats
+7. **No log aggregation** - Not centralizing logs for analysis and monitoring
+8. **Missing error context** - Not logging enough context for debugging errors
+
+## Best Practices
+
+1. **Use correlation IDs consistently** - Track requests across all services and operations
+2. **Structure your logs** - Use consistent JSON format with standard fields
+3. **Log at appropriate levels** - Use DEBUG, INFO, WARN, ERROR, CRITICAL appropriately
+4. **Include performance metrics** - Cost, tokens, duration, and other DSPy-specific metrics
+5. **Filter sensitive data** - Implement filters to remove PII and credentials
+6. **Implement log aggregation** - Use centralized logging systems (ELK, Splunk, etc.)
+7. **Monitor log performance** - Track logging overhead and optimize accordingly
+8. **Plan for scale** - Design logging architecture to handle production volumes
+9. **Regular log analysis** - Use logs proactively to identify issues and optimize performance
+10. **Backup and retention** - Implement proper log backup and retention policies
+
+## References
+
+- [Structured Logging Best Practices](https://cloud.google.com/logging/docs/structured-logging)
+- [ELK Stack Documentation](https://www.elastic.co/what-is/elk-stack)
+- [Distributed Tracing Concepts](https://opentracing.io/docs/overview/what-is-tracing/)
+- [Python Logging Documentation](https://docs.python.org/3/library/logging.html)
+- [DSPy Documentation](https://dspy-docs.vercel.app/)

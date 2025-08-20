@@ -1,0 +1,516 @@
+---
+description: DSPy Agent Architecture - Complete agent design patterns for 10x development speed
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 Agent Architecture for rapid agent development.
+
+## Agent Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   User Input    │───►│  Agent Signature │───►│  ReAct Module   │
+│ (Query/Task)    │    │ (Input/Output)   │    │ (Reasoning+Act) │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Trajectory      │◄───│  Tool Execution  │◄───│ Tool Selection  │
+│ (Memory/State)  │    │ (Safe Sandbox)   │    │ (Dynamic Chain) │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Context Window  │    │ Error Recovery   │    │ Final Response  │
+│ Management      │    │ & Retry Logic    │    │ Extraction      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant Agent Patterns
+
+### Quick Start Agent
+
+```python
+import dspy
+
+# Minimal working agent - copy-paste ready
+def create_basic_agent(tools: list, max_steps: int = 5):
+    """Create instant agent with tool support"""
+    signature = dspy.Signature("query -> response",
+                              "You are a helpful agent that uses tools to complete tasks.")
+
+    agent = dspy.ReAct(signature, tools=tools, max_iters=max_steps)
+    return agent
+
+# Example usage
+def get_weather(city: str) -> str:
+    """Get weather for a city"""
+    return f"Weather in {city}: Sunny, 75°F"
+
+agent = create_basic_agent([get_weather])
+result = agent(query="What's the weather in New York?")
+```
+
+### Production Agent Template
+
+```python
+import dspy
+import logging
+from typing import Any, Dict, List, Optional
+from functools import wraps
+import traceback
+
+class ProductionAgent(dspy.Module):
+    """Production-ready agent with error handling, monitoring, and safety"""
+
+    def __init__(self,
+                 tools: List[Any],
+                 max_steps: int = 10,
+                 timeout_per_tool: int = 30,
+                 enable_monitoring: bool = True):
+        super().__init__()
+
+        self.tools = self._prepare_tools(tools, timeout_per_tool)
+        self.max_steps = max_steps
+        self.enable_monitoring = enable_monitoring
+
+        # Enhanced signature with structured output
+        signature = dspy.Signature({
+            "task": dspy.InputField(desc="The task to complete"),
+            "context": dspy.InputField(desc="Additional context", default=""),
+        }, {
+            "response": dspy.OutputField(desc="Final response to user"),
+            "confidence": dspy.OutputField(desc="Confidence score 0-1", type=float),
+            "tools_used": dspy.OutputField(desc="List of tools used", type=list),
+        }, "Complete the task using available tools. Prioritize safety and accuracy.")
+
+        self.agent = dspy.ReAct(signature, tools=list(self.tools.values()),
+                               max_iters=max_steps)
+
+        # Add trajectory compression for long conversations
+        self.agent.truncate_trajectory = self._smart_truncate
+
+    def _prepare_tools(self, tools: List[Any], timeout: int) -> Dict[str, Any]:
+        """Prepare tools with safety wrappers and monitoring"""
+        prepared = {}
+
+        for tool in tools:
+            wrapped = self._wrap_tool_with_safety(tool, timeout)
+            prepared[tool.__name__] = wrapped
+
+        return prepared
+
+    def _wrap_tool_with_safety(self, tool: Any, timeout: int) -> Any:
+        """Wrap tool with timeout, error handling, and monitoring"""
+        @wraps(tool)
+        def safe_tool(*args, **kwargs):
+            try:
+                if self.enable_monitoring:
+                    logging.info(f"Executing tool: {tool.__name__} with args: {args[:2]}...")
+
+                # Timeout protection using func_timeout if available
+                try:
+                    from func_timeout import func_set_timeout
+                    return func_set_timeout(timeout, tool)(*args, **kwargs)
+                except ImportError:
+                    return tool(*args, **kwargs)
+
+            except Exception as e:
+                error_msg = f"Tool {tool.__name__} failed: {str(e)}"
+                if self.enable_monitoring:
+                    logging.error(f"{error_msg}\n{traceback.format_exc()}")
+                return {"error": error_msg, "status": "failed"}
+
+        safe_tool.__name__ = tool.__name__
+        safe_tool.__doc__ = tool.__doc__
+        return safe_tool
+
+    def _smart_truncate(self, trajectory: Dict[str, Any]) -> Dict[str, Any]:
+        """Smart trajectory truncation preserving important context"""
+        keys = list(trajectory.keys())
+        if len(keys) < 8:  # Keep at least 2 full tool calls
+            raise ValueError("Cannot truncate - trajectory too short")
+
+        # Remove oldest tool call but keep first thought for context
+        for key in keys[4:8]:  # Remove one complete tool cycle
+            trajectory.pop(key, None)
+
+        return trajectory
+
+    def forward(self, task: str, context: str = "") -> dspy.Prediction:
+        """Execute agent with enhanced error handling"""
+        try:
+            result = self.agent(task=task, context=context)
+
+            # Extract metadata from trajectory
+            tools_used = []
+            confidence = 0.8  # Default confidence
+
+            if hasattr(result, 'trajectory'):
+                # Count successful tool calls
+                tools_used = [k.split('_')[1] for k in result.trajectory.keys()
+                             if k.startswith('tool_name_')]
+
+                # Simple confidence based on trajectory success
+                errors = sum(1 for k, v in result.trajectory.items()
+                           if k.startswith('observation_') and 'error' in str(v).lower())
+                confidence = max(0.1, 1.0 - (errors / max(1, len(tools_used))))
+
+            return dspy.Prediction(
+                response=result.response if hasattr(result, 'response') else str(result),
+                confidence=confidence,
+                tools_used=tools_used,
+                trajectory=getattr(result, 'trajectory', {})
+            )
+
+        except Exception as e:
+            error_response = f"Agent execution failed: {str(e)}"
+            if self.enable_monitoring:
+                logging.error(f"{error_response}\n{traceback.format_exc()}")
+
+            return dspy.Prediction(
+                response=error_response,
+                confidence=0.0,
+                tools_used=[],
+                trajectory={"error": str(e)}
+            )
+
+# Usage example
+def search_web(query: str) -> str:
+    """Search the web for information"""
+    return f"Search results for '{query}': Found 5 relevant articles..."
+
+def calculate(expression: str) -> float:
+    """Calculate mathematical expressions safely"""
+    try:
+        return eval(expression.replace('^', '**'))
+    except:
+        return "Invalid expression"
+
+# Create production agent
+agent = ProductionAgent(
+    tools=[search_web, calculate],
+    max_steps=8,
+    timeout_per_tool=30,
+    enable_monitoring=True
+)
+
+# Execute with monitoring
+result = agent(task="Search for Python tutorials and calculate 2^8",
+               context="User is a beginner programmer")
+print(f"Response: {result.response}")
+print(f"Confidence: {result.confidence}")
+print(f"Tools used: {result.tools_used}")
+```
+
+## Core Agent Patterns
+
+### 1. Signature-Driven Design
+
+```python
+# Define clear agent interfaces
+class TaskSignature(dspy.Signature):
+    """Agent signature with structured I/O"""
+
+    # Input fields with validation
+    task = dspy.InputField(desc="Primary task to complete")
+    constraints = dspy.InputField(desc="Task constraints", default="")
+    priority = dspy.InputField(desc="Task priority 1-5", type=int, default=3)
+
+    # Output fields with types
+    result = dspy.OutputField(desc="Task completion result")
+    status = dspy.OutputField(desc="Success/Failure/Partial", type=str)
+    next_actions = dspy.OutputField(desc="Recommended next steps", type=list)
+
+# Use signature in agent
+agent = dspy.ReAct(TaskSignature, tools=tools, max_iters=10)
+```
+
+### 2. Multi-Stage Agent Pipeline
+
+```python
+class MultiStageAgent(dspy.Module):
+    """Agent with distinct planning and execution stages"""
+
+    def __init__(self, tools: List[Any]):
+        super().__init__()
+
+        # Stage 1: Planning
+        plan_signature = dspy.Signature(
+            "task, available_tools -> plan: list, estimated_steps: int",
+            "Analyze task and create execution plan"
+        )
+        self.planner = dspy.ChainOfThought(plan_signature)
+
+        # Stage 2: Execution
+        exec_signature = dspy.Signature(
+            "task, plan -> result",
+            "Execute the planned steps using available tools"
+        )
+        self.executor = dspy.ReAct(exec_signature, tools=tools, max_iters=15)
+
+        # Stage 3: Validation
+        valid_signature = dspy.Signature(
+            "task, result -> is_complete: bool, quality_score: float",
+            "Validate if task was completed successfully"
+        )
+        self.validator = dspy.ChainOfThought(valid_signature)
+
+    def forward(self, task: str) -> dspy.Prediction:
+        # Plan
+        tools_desc = [f"{t.__name__}: {t.__doc__}" for t in self.tools]
+        plan_result = self.planner(task=task, available_tools=tools_desc)
+
+        # Execute
+        exec_result = self.executor(task=task, plan=plan_result.plan)
+
+        # Validate
+        validation = self.validator(task=task, result=exec_result.result)
+
+        return dspy.Prediction(
+            result=exec_result.result,
+            plan=plan_result.plan,
+            is_complete=validation.is_complete,
+            quality_score=validation.quality_score,
+            execution_trajectory=exec_result.trajectory
+        )
+```
+
+### 3. Agent State Management
+
+```python
+class StatefulAgent(dspy.Module):
+    """Agent with persistent state and memory"""
+
+    def __init__(self, tools: List[Any], memory_size: int = 100):
+        super().__init__()
+
+        self.memory = []  # Conversation memory
+        self.context = {}  # Persistent context
+        self.memory_size = memory_size
+
+        signature = dspy.Signature(
+            "query, conversation_history, persistent_context -> response, updated_context",
+            "Respond using conversation history and persistent context"
+        )
+
+        self.agent = dspy.ReAct(signature, tools=tools, max_iters=10)
+
+    def forward(self, query: str) -> dspy.Prediction:
+        # Prepare context
+        history = self._format_history()
+        context_str = self._format_context()
+
+        # Execute agent
+        result = self.agent(
+            query=query,
+            conversation_history=history,
+            persistent_context=context_str
+        )
+
+        # Update memory and context
+        self._update_memory(query, result.response)
+        self._update_context(result.updated_context if hasattr(result, 'updated_context') else "")
+
+        return result
+
+    def _format_history(self) -> str:
+        """Format recent conversation history"""
+        if not self.memory:
+            return "No previous conversation"
+
+        formatted = []
+        for i, (q, r) in enumerate(self.memory[-5:]):  # Last 5 interactions
+            formatted.append(f"Turn {i+1}:\nUser: {q}\nAgent: {r}")
+
+        return "\n\n".join(formatted)
+
+    def _format_context(self) -> str:
+        """Format persistent context"""
+        if not self.context:
+            return "No persistent context"
+
+        return ", ".join([f"{k}: {v}" for k, v in self.context.items()])
+
+    def _update_memory(self, query: str, response: str):
+        """Update conversation memory"""
+        self.memory.append((query, response))
+
+        # Trim memory if too long
+        if len(self.memory) > self.memory_size:
+            self.memory = self.memory[-self.memory_size:]
+
+    def _update_context(self, context_update: str):
+        """Update persistent context"""
+        if context_update and context_update.strip():
+            try:
+                # Simple key-value parsing
+                for item in context_update.split(','):
+                    if ':' in item:
+                        key, value = item.strip().split(':', 1)
+                        self.context[key.strip()] = value.strip()
+            except:
+                pass  # Ignore parsing errors
+```
+
+## Tool Integration Patterns
+
+### Safe Tool Execution
+
+```python
+from functools import wraps
+import asyncio
+from concurrent.futures import TimeoutError
+
+def safe_tool(timeout: int = 30, max_retries: int = 2):
+    """Decorator for safe tool execution with timeout and retries"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries + 1):
+                try:
+                    # Timeout protection
+                    if asyncio.iscoroutinefunction(func):
+                        return asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
+                    else:
+                        # Sync function with timeout
+                        import signal
+                        def timeout_handler(signum, frame):
+                            raise TimeoutError(f"Tool {func.__name__} timed out after {timeout}s")
+
+                        signal.signal(signal.SIGALRM, timeout_handler)
+                        signal.alarm(timeout)
+                        try:
+                            result = func(*args, **kwargs)
+                            signal.alarm(0)  # Cancel timeout
+                            return result
+                        finally:
+                            signal.alarm(0)
+
+                except (TimeoutError, Exception) as e:
+                    if attempt == max_retries:
+                        return {"error": f"Tool failed after {max_retries + 1} attempts: {str(e)}"}
+                    continue
+
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
+        return wrapper
+    return decorator
+
+# Usage
+@safe_tool(timeout=10, max_retries=1)
+def risky_api_call(endpoint: str) -> dict:
+    """Call external API with timeout protection"""
+    import requests
+    response = requests.get(endpoint, timeout=5)
+    return response.json()
+```
+
+### Dynamic Tool Discovery
+
+```python
+class DynamicToolAgent(dspy.Module):
+    """Agent that can discover and use tools dynamically"""
+
+    def __init__(self, initial_tools: List[Any] = None):
+        super().__init__()
+        self.available_tools = {}
+        self.tool_registry = {}
+
+        if initial_tools:
+            for tool in initial_tools:
+                self.register_tool(tool)
+
+        signature = dspy.Signature(
+            "task, available_tools -> response",
+            "Complete task using dynamically available tools"
+        )
+
+        # Will update ReAct tools dynamically
+        self.agent = dspy.ReAct(signature, tools=[], max_iters=10)
+
+    def register_tool(self, tool: Any, category: str = "general"):
+        """Register a new tool for dynamic use"""
+        tool_name = tool.__name__
+        self.available_tools[tool_name] = tool
+        self.tool_registry[tool_name] = {
+            "function": tool,
+            "category": category,
+            "description": tool.__doc__ or "No description",
+            "usage_count": 0
+        }
+
+        # Update ReAct agent tools
+        self.agent.tools[tool_name] = tool
+
+    def get_tools_by_category(self, category: str) -> List[Any]:
+        """Get tools by category"""
+        return [info["function"] for name, info in self.tool_registry.items()
+                if info["category"] == category]
+
+    def forward(self, task: str, tool_categories: List[str] = None) -> dspy.Prediction:
+        # Filter tools by category if specified
+        if tool_categories:
+            relevant_tools = []
+            for category in tool_categories:
+                relevant_tools.extend(self.get_tools_by_category(category))
+
+            # Create focused agent with subset of tools
+            focused_signature = dspy.Signature(
+                "task -> response",
+                f"Complete task using {category} tools only"
+            )
+            focused_agent = dspy.ReAct(focused_signature, tools=relevant_tools, max_iters=8)
+            result = focused_agent(task=task)
+        else:
+            # Use all available tools
+            tools_desc = "\n".join([f"- {name}: {info['description']}"
+                                  for name, info in self.tool_registry.items()])
+            result = self.agent(task=task, available_tools=tools_desc)
+
+        # Update usage statistics
+        if hasattr(result, 'trajectory'):
+            for key, value in result.trajectory.items():
+                if key.startswith('tool_name_'):
+                    tool_name = value
+                    if tool_name in self.tool_registry:
+                        self.tool_registry[tool_name]["usage_count"] += 1
+
+        return result
+```
+
+## Speed Tips
+
+- **Signature Design**: Define clear input/output signatures upfront - saves 50% debug time
+- **Tool Caching**: Cache tool results for repeated calls - 3x faster execution
+- **Smart Truncation**: Custom trajectory truncation preserves context better than default
+- **Batch Tools**: Group related tool calls in single steps when possible
+- **Error Boundaries**: Wrap tools individually to isolate failures
+- **Memory Management**: Use fixed-size memory buffers for long conversations
+- **Async Tools**: Use async tools for I/O bound operations (API calls, file ops)
+
+## Common Pitfalls
+
+1. **Context Window Explosion**: Trajectories grow rapidly. Implement smart truncation
+2. **Tool Call Loops**: Agent gets stuck calling same tool. Add call count limits
+3. **Error Propagation**: One tool failure breaks entire chain. Use error isolation
+4. **Memory Leaks**: Long conversations consume memory. Implement memory cleanup
+5. **Timeout Issues**: Tools hang indefinitely. Always use timeouts
+6. **State Inconsistency**: Agent state gets corrupted. Use immutable state patterns
+
+## Best Practices Summary
+
+- **Architecture**: Use signature-driven design with clear I/O contracts
+- **Safety**: Always wrap tools with timeout and error handling
+- **Performance**: Implement smart trajectory management and tool caching
+- **Monitoring**: Add logging and metrics to track agent behavior
+- **Testing**: Test agents with diverse inputs and edge cases
+- **Production**: Use circuit breakers and graceful degradation patterns
+
+## References
+
+- **DSPy ReAct Implementation**: `/docs/dspy/dspy/predict/react.py`
+- **Agent Tutorials**: `/docs/tutorials/agents/index.ipynb`
+- **Tool Integration**: `/docs/tutorials/tool_use/index.ipynb`
+- **Customer Service Example**: `/docs/tutorials/customer_service_agent/index.ipynb`
+- **API Documentation**: `/docs/api/modules/ReAct.md`

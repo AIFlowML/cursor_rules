@@ -1,0 +1,264 @@
+---
+description: DSPy GEPA - Reflective prompt evolution for maximum optimization speed
+globs: ["**/*.py", "**/*.ipynb"] 
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 GEPA (Genetic-Pareto) optimization for maximum development speed.
+
+## GEPA Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Base Program  │───▶│ Reflective Meta- │───▶│ Evolved Program │
+│   + Feedback    │    │  prompting LLM   │    │  + Rich Stats   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Execution Trace │    │ Prompt Mutation  │    │ Pareto Frontier │
+│  + Text Feedback│    │ + Error Analysis │    │  Optimization   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant GEPA Patterns
+
+### Quick Start
+```python
+import dspy
+
+# Initialize GEPA with rich feedback
+def feedback_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    """Rich feedback metric for GEPA optimization"""
+    score = exact_match(gold.answer, pred.answer)
+    
+    # Provide detailed feedback for evolution
+    if score < 1.0:
+        feedback = f"""
+        Expected: {gold.answer}
+        Got: {pred.answer}
+        Issue: {'Length mismatch' if len(pred.answer) != len(gold.answer) else 'Content error'}
+        Trace insight: {trace[-1] if trace else 'No trace'}
+        """
+    else:
+        feedback = "Perfect answer - keep this reasoning pattern."
+    
+    return dspy.Prediction(score=score, feedback=feedback)
+
+# Configure GEPA for rapid evolution
+gepa = dspy.GEPA(
+    metric=feedback_metric,
+    auto="medium",  # light/medium/heavy
+    reflection_lm=dspy.LM('gpt-4', temperature=1.0, max_tokens=32000),
+    track_stats=True,
+    track_best_outputs=True
+)
+
+# Evolve program
+optimized = gepa.compile(program, trainset=train, valset=val)
+```
+
+### Production Configuration
+```python
+# Enterprise GEPA setup with full tracking
+gepa = dspy.GEPA(
+    metric=rich_feedback_metric,
+    max_metric_calls=500,  # Precise budget control
+    reflection_minibatch_size=3,
+    candidate_selection_strategy="pareto",
+    reflection_lm=dspy.LM(
+        'gpt-4-turbo', 
+        temperature=1.0, 
+        max_tokens=32000
+    ),
+    
+    # Merge optimization for crossover
+    use_merge=True,
+    max_merge_invocations=5,
+    
+    # Performance tuning
+    num_threads=8,
+    failure_score=0.0,
+    perfect_score=1.0,
+    skip_perfect_score=True,
+    
+    # Enterprise logging
+    log_dir="./gepa_runs",
+    track_stats=True,
+    use_wandb=True,
+    wandb_init_kwargs={
+        'project': 'dspy-gepa-optimization',
+        'tags': ['production', 'evolution']
+    },
+    
+    # Reproducibility
+    seed=42
+)
+```
+
+## Core GEPA Patterns
+
+### Rich Feedback Design
+```python
+def comprehensive_feedback_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    """Multi-dimensional feedback for GEPA evolution"""
+    
+    # Compute base score
+    correctness = compute_correctness(gold, pred)
+    efficiency = compute_efficiency(pred_trace) if pred_trace else 1.0
+    clarity = compute_clarity(pred.reasoning) if hasattr(pred, 'reasoning') else 1.0
+    
+    # Aggregate score with weights
+    score = 0.7 * correctness + 0.2 * efficiency + 0.1 * clarity
+    
+    # Build rich textual feedback
+    feedback_parts = []
+    
+    if correctness < 0.8:
+        feedback_parts.append(f"Correctness issue: {analyze_error(gold, pred)}")
+    
+    if efficiency < 0.5:
+        feedback_parts.append(f"Efficiency problem: {analyze_performance(pred_trace)}")
+    
+    if clarity < 0.6:
+        feedback_parts.append(f"Clarity issue: {analyze_reasoning(pred.reasoning)}")
+    
+    # Predictor-specific feedback
+    if pred_name:
+        feedback_parts.append(f"Module '{pred_name}' specific feedback: {get_module_feedback(pred_name, pred_trace)}")
+    
+    feedback = " | ".join(feedback_parts) if feedback_parts else "Excellent performance across all dimensions."
+    
+    return dspy.Prediction(score=score, feedback=feedback)
+
+def analyze_error(gold, pred):
+    """Detailed error analysis for GEPA reflection"""
+    if hasattr(pred, 'reasoning') and hasattr(gold, 'reasoning'):
+        return f"Reasoning diverged at step: {find_divergence_point(gold.reasoning, pred.reasoning)}"
+    return f"Output mismatch: expected {gold.answer[:50]}..., got {pred.answer[:50]}..."
+```
+
+### Inference-Time Search
+```python
+# Use GEPA for test-time optimization
+def gepa_inference_search(tasks, base_program):
+    """GEPA as inference-time search mechanism"""
+    
+    gepa = dspy.GEPA(
+        metric=feedback_metric,
+        auto="light",  # Fast for inference
+        track_stats=True,
+        track_best_outputs=True,
+        reflection_lm=dspy.LM('gpt-4', temperature=0.8)
+    )
+    
+    # Set valset to evaluation batch
+    evolved_program = gepa.compile(
+        base_program, 
+        trainset=tasks,  # Use tasks as training
+        valset=tasks     # Same tasks for validation
+    )
+    
+    # Extract best outputs per task
+    best_outputs = evolved_program.detailed_results.best_outputs_valset
+    highest_scores = evolved_program.detailed_results.highest_score_achieved_per_val_task
+    
+    return best_outputs, highest_scores, evolved_program
+```
+
+### Advanced Pareto Optimization
+```python
+def multi_objective_gepa(program, trainset, valset):
+    """Multi-objective optimization with GEPA"""
+    
+    def pareto_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+        # Multiple objectives
+        accuracy = compute_accuracy(gold, pred)
+        speed = compute_speed(pred_trace) if pred_trace else 1.0
+        cost = compute_cost(pred_trace) if pred_trace else 1.0
+        
+        # Pareto-friendly scoring
+        objectives = [accuracy, speed, 1.0 - cost]  # Maximize all
+        score = min(objectives)  # Conservative Pareto scoring
+        
+        feedback = f"""
+        Accuracy: {accuracy:.3f}
+        Speed: {speed:.3f} 
+        Cost efficiency: {1.0 - cost:.3f}
+        Bottleneck: {['accuracy', 'speed', 'cost'][objectives.index(min(objectives))]}
+        """
+        
+        return dspy.Prediction(score=score, feedback=feedback)
+    
+    gepa = dspy.GEPA(
+        metric=pareto_metric,
+        max_metric_calls=300,
+        candidate_selection_strategy="pareto",  # Key for multi-objective
+        use_merge=True,
+        track_stats=True
+    )
+    
+    return gepa.compile(program, trainset=trainset, valset=valset)
+```
+
+## Performance Insights
+
+### GEPA vs Other Optimizers
+- **GEPA on AIME Math**: 10% improvement with GPT-4 Mini in few iterations
+- **Enterprise Tasks**: 15-25% gains with rich feedback vs scalar metrics
+- **Sample Efficiency**: 3-5x fewer rollouts than BootstrapFewShot
+- **Convergence Speed**: 2-3 iterations for 80% of potential gains
+
+### Budget Recommendations
+```python
+# Budget sizing based on problem complexity
+def gepa_budget_guide(num_predictors, dataset_size, complexity):
+    """GEPA budget recommendations"""
+    
+    base_budget = num_predictors * 50  # Base per predictor
+    
+    complexity_multipliers = {
+        'simple': 1.0,    # Classification, simple QA
+        'medium': 2.0,    # Multi-step reasoning
+        'complex': 3.0,   # Long-form generation, agents
+        'research': 5.0   # Novel domains, research tasks
+    }
+    
+    size_multiplier = min(2.0, dataset_size / 1000)
+    total_budget = int(base_budget * complexity_multipliers[complexity] * size_multiplier)
+    
+    return {
+        'max_metric_calls': total_budget,
+        'reflection_minibatch_size': 3 if complexity == 'simple' else 5,
+        'auto_setting': 'light' if total_budget < 200 else 'medium' if total_budget < 500 else 'heavy'
+    }
+```
+
+## Speed Tips
+- Use `auto="light"` for rapid prototyping (< 200 metric calls)
+- Rich feedback 3x more effective than scalar metrics
+- `reflection_minibatch_size=3` optimal for most tasks
+- `track_stats=True` for debugging and analysis
+- Strong reflection LM (GPT-4+) essential for quality evolution
+- `use_merge=True` enables crossover between successful lineages
+
+## Common Pitfalls
+- **Weak Feedback**: Scalar-only metrics limit GEPA's reflection capability
+- **Poor Reflection LM**: Weak models produce ineffective mutations
+- **Insufficient Budget**: GEPA needs 100+ metric calls for meaningful evolution
+- **Wrong Minibatch Size**: Too large wastes budget, too small misses patterns
+- **Missing Trace Context**: Rich traces enable better reflective analysis
+
+## Best Practices Summary
+- Design feedback metrics that expose reasoning failures
+- Use GPT-4+ class models for reflection_lm with high temperature
+- Start with auto="medium" for balanced speed/quality
+- Enable merge for crossover between successful candidates
+- Track detailed stats for optimization analysis
+- Leverage predictor-specific feedback for targeted improvement
+
+## References  
+- DSPy GEPA Source: `/docs/dspy/dspy/teleprompt/gepa/gepa.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/GEPA.md`
+- GEPA Paper: [arxiv:2507.19457](https://arxiv.org/abs/2507.19457)
+- Tutorial Examples: `/docs/dspy/docs/tutorials/gepa_ai_program/`

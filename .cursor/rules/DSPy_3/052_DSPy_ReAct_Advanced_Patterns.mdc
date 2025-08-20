@@ -1,0 +1,885 @@
+---
+description: DSPy ReAct Advanced Patterns - Enhanced ReAct with multi-tool support for 10x development speed
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 ReAct Advanced Patterns for rapid agent development.
+
+## Enhanced ReAct Architecture Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  User Query     │───►│ Signature        │───►│ ReAct Loop      │
+│ + Context       │    │ Polymorphism     │    │ (Thought→Act)   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Context Window  │◄───│  Trajectory      │◄───│ Tool Selection  │
+│ Truncation      │    │  Management      │    │ & Execution     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Smart Recovery  │    │ Error Handling   │    │ Result          │
+│ & Retry Logic   │    │ & Observation    │    │ Extraction      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant ReAct Patterns
+
+### Quick Start ReAct Agent
+
+```python
+import dspy
+from typing import List, Any, Dict
+import logging
+
+# Minimal ReAct with enhanced error handling - copy-paste ready
+def create_react_agent(tools: List[Any], signature: str = None, max_steps: int = 10):
+    """Create production-ready ReAct agent with error handling"""
+
+    # Default signature if not provided
+    if signature is None:
+        signature = dspy.Signature(
+            "query -> response",
+            "You are a helpful agent that uses tools to complete tasks efficiently."
+        )
+
+    # Enhanced ReAct with automatic tool wrapping
+    agent = dspy.ReAct(signature, tools=tools, max_iters=max_steps)
+
+    # Add custom trajectory truncation for better performance
+    agent.truncate_trajectory = lambda traj: smart_truncate(traj, preserve_context=True)
+
+    return agent
+
+# Safe tool execution wrapper from source analysis
+def safe_tool_execution(func):
+    """Wrap tools with timeout and error handling"""
+    import functools
+    import traceback
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            return result
+        except Exception as e:
+            error_summary = f"Tool {func.__name__} failed: {str(e)[:200]}"
+            logging.error(f"{error_summary}\n{traceback.format_exc()}")
+            return {"error": error_summary, "tool": func.__name__, "status": "failed"}
+
+    return wrapper
+
+# Example usage
+@safe_tool_execution
+def search_web(query: str) -> str:
+    """Search the web for information"""
+    return f"Search results for '{query}': Found relevant information..."
+
+@safe_tool_execution
+def calculate_math(expression: str) -> float:
+    """Calculate mathematical expressions safely"""
+    return eval(expression.replace('^', '**'))
+
+# Create agent
+agent = create_react_agent([search_web, calculate_math])
+result = agent(query="Search for Python ReAct patterns and calculate 2^8")
+```
+
+### Production ReAct Agent
+
+```python
+import dspy
+from typing import Any, Dict, List, Optional, Callable
+import time
+import asyncio
+from concurrent.futures import TimeoutError
+import json
+
+class AdvancedReActAgent(dspy.Module):
+    """Production ReAct agent with advanced features from source analysis"""
+
+    def __init__(self,
+                 tools: List[Any],
+                 signature: Any = None,
+                 max_steps: int = 10,
+                 timeout_per_step: int = 30,
+                 enable_async: bool = True,
+                 trajectory_compression: bool = True,
+                 error_recovery: bool = True):
+
+        super().__init__()
+
+        # Enhanced signature with structured outputs
+        if signature is None:
+            signature = dspy.Signature({
+                "task": dspy.InputField(desc="The task to complete"),
+                "context": dspy.InputField(desc="Additional context", default=""),
+            }, {
+                "response": dspy.OutputField(desc="Final response with reasoning"),
+                "tool_trace": dspy.OutputField(desc="Summary of tools used", type=list),
+                "confidence": dspy.OutputField(desc="Confidence in result 0-1", type=float),
+            }, "Complete the task using available tools. Think step by step.")
+
+        self.max_steps = max_steps
+        self.timeout_per_step = timeout_per_step
+        self.enable_async = enable_async
+        self.trajectory_compression = trajectory_compression
+        self.error_recovery = error_recovery
+
+        # Prepare tools with safety wrappers
+        self.safe_tools = self._prepare_safe_tools(tools)
+
+        # Initialize ReAct with enhanced configuration
+        self.react_agent = dspy.ReAct(
+            signature,
+            tools=list(self.safe_tools.values()),
+            max_iters=max_steps
+        )
+
+        # Custom trajectory truncation from source analysis
+        if trajectory_compression:
+            self.react_agent.truncate_trajectory = self._intelligent_truncate
+
+    def _prepare_safe_tools(self, tools: List[Any]) -> Dict[str, Any]:
+        """Prepare tools with comprehensive safety wrappers"""
+        safe_tools = {}
+
+        for tool in tools:
+            wrapped_tool = self._create_safe_tool(tool)
+            safe_tools[tool.__name__] = wrapped_tool
+
+        return safe_tools
+
+    def _create_safe_tool(self, tool: Any) -> Any:
+        """Create comprehensive safe tool wrapper"""
+        import functools
+        import signal
+        import traceback
+
+        @functools.wraps(tool)
+        def safe_wrapper(*args, **kwargs):
+            # Input validation
+            if len(args) > 10 or len(str(args)[:1000]) > 1000:
+                return {"error": "Input too large", "tool": tool.__name__}
+
+            # Timeout handling (Unix systems)
+            def timeout_handler(signum, frame):
+                raise TimeoutError(f"Tool {tool.__name__} timed out after {self.timeout_per_step}s")
+
+            try:
+                if hasattr(signal, 'SIGALRM'):  # Unix systems
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(self.timeout_per_step)
+
+                # Execute tool
+                result = tool(*args, **kwargs)
+
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)  # Cancel timeout
+
+                # Result validation
+                if isinstance(result, (dict, list)) and len(str(result)) > 2000:
+                    # Truncate large results
+                    result = str(result)[:1800] + "... [truncated]"
+
+                return result
+
+            except TimeoutError as e:
+                return {"error": f"Timeout after {self.timeout_per_step}s", "tool": tool.__name__}
+            except Exception as e:
+                error_msg = str(e)[:500]  # Truncate long errors
+                return {
+                    "error": f"Tool execution failed: {error_msg}",
+                    "tool": tool.__name__,
+                    "traceback": traceback.format_exc()[-1000:]  # Last 1000 chars
+                }
+            finally:
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
+
+        return safe_wrapper
+
+    def _intelligent_truncate(self, trajectory: Dict[str, Any]) -> Dict[str, Any]:
+        """Intelligent trajectory truncation preserving important context"""
+        keys = list(trajectory.keys())
+
+        if len(keys) < 12:  # Keep at least 3 full tool cycles (4 keys each)
+            raise ValueError("Trajectory too short to truncate safely")
+
+        # Analysis: Find least important tool call to remove
+        tool_scores = {}
+
+        for i in range(0, len(keys), 4):  # Each tool call has 4 keys
+            if i + 3 < len(keys):
+                thought_key = keys[i]
+                tool_key = keys[i + 1]
+                args_key = keys[i + 2]
+                obs_key = keys[i + 3]
+
+                if obs_key in trajectory:
+                    observation = str(trajectory[obs_key])
+
+                    # Score based on usefulness indicators
+                    score = 0
+                    if "error" in observation.lower():
+                        score -= 2  # Errors are less useful
+                    if len(observation) < 50:
+                        score -= 1  # Short responses might be less useful
+                    if "success" in observation.lower():
+                        score += 2  # Success indicators are useful
+
+                    tool_scores[i] = score
+
+        # Remove lowest scoring tool call (or first if tied)
+        if tool_scores:
+            worst_cycle = min(tool_scores.keys(), key=lambda k: tool_scores[k])
+
+            # Remove 4 keys for complete tool cycle
+            for offset in range(4):
+                if worst_cycle + offset < len(keys):
+                    trajectory.pop(keys[worst_cycle + offset], None)
+        else:
+            # Fallback: remove first tool call
+            for key in keys[:4]:
+                trajectory.pop(key, None)
+
+        return trajectory
+
+    def forward(self, task: str, context: str = "") -> dspy.Prediction:
+        """Execute ReAct with enhanced error handling and recovery"""
+
+        attempt = 0
+        max_attempts = 3 if self.error_recovery else 1
+
+        while attempt < max_attempts:
+            try:
+                # Execute ReAct agent
+                result = self.react_agent(task=task, context=context)
+
+                # Extract tool trace and confidence
+                tool_trace = self._extract_tool_trace(result.trajectory if hasattr(result, 'trajectory') else {})
+                confidence = self._calculate_confidence(result, tool_trace)
+
+                # Enhance result with metadata
+                return dspy.Prediction(
+                    response=result.response if hasattr(result, 'response') else str(result),
+                    tool_trace=tool_trace,
+                    confidence=confidence,
+                    trajectory=getattr(result, 'trajectory', {}),
+                    attempt_number=attempt + 1,
+                    success=True
+                )
+
+            except Exception as e:
+                attempt += 1
+                logging.error(f"ReAct attempt {attempt} failed: {str(e)}")
+
+                if attempt >= max_attempts:
+                    # Final attempt failed - return error result
+                    return dspy.Prediction(
+                        response=f"Agent failed after {max_attempts} attempts: {str(e)[:200]}",
+                        tool_trace=[],
+                        confidence=0.0,
+                        trajectory={"error": str(e)},
+                        attempt_number=attempt,
+                        success=False
+                    )
+
+                # Brief pause before retry
+                time.sleep(1.0)
+
+    async def aforward(self, task: str, context: str = "") -> dspy.Prediction:
+        """Async version of forward for better performance"""
+
+        if not self.enable_async:
+            return self.forward(task, context)
+
+        try:
+            # Use async ReAct execution
+            result = await self.react_agent.aforward(task=task, context=context)
+
+            # Process result asynchronously
+            tool_trace = await asyncio.get_event_loop().run_in_executor(
+                None, self._extract_tool_trace, getattr(result, 'trajectory', {})
+            )
+
+            confidence = self._calculate_confidence(result, tool_trace)
+
+            return dspy.Prediction(
+                response=result.response if hasattr(result, 'response') else str(result),
+                tool_trace=tool_trace,
+                confidence=confidence,
+                trajectory=getattr(result, 'trajectory', {}),
+                success=True
+            )
+
+        except Exception as e:
+            logging.error(f"Async ReAct execution failed: {str(e)}")
+            return dspy.Prediction(
+                response=f"Async agent execution failed: {str(e)[:200]}",
+                tool_trace=[],
+                confidence=0.0,
+                trajectory={"error": str(e)},
+                success=False
+            )
+
+    def _extract_tool_trace(self, trajectory: Dict[str, Any]) -> List[str]:
+        """Extract clean tool usage trace from trajectory"""
+
+        tool_trace = []
+
+        for key, value in trajectory.items():
+            if key.startswith('tool_name_'):
+                tool_name = str(value)
+                step_num = key.split('_')[-1]
+
+                # Get corresponding observation
+                obs_key = f'observation_{step_num}'
+                observation = trajectory.get(obs_key, "No observation")
+
+                # Summarize tool use
+                if isinstance(observation, dict) and "error" in observation:
+                    tool_trace.append(f"{tool_name}: Error - {observation.get('error', 'Unknown error')[:100]}")
+                else:
+                    obs_summary = str(observation)[:150]
+                    tool_trace.append(f"{tool_name}: {obs_summary}")
+
+        return tool_trace
+
+    def _calculate_confidence(self, result: Any, tool_trace: List[str]) -> float:
+        """Calculate confidence based on trajectory success"""
+
+        if not tool_trace:
+            return 0.5  # No tools used
+
+        # Count errors in tool execution
+        errors = sum(1 for trace in tool_trace if "Error" in trace or "error" in trace.lower())
+        success_rate = 1.0 - (errors / len(tool_trace))
+
+        # Base confidence on success rate
+        confidence = success_rate * 0.8  # Max 0.8 from success rate
+
+        # Bonus for successful task completion
+        response = str(result.response if hasattr(result, 'response') else result)
+        if len(response) > 20 and "error" not in response.lower():
+            confidence += 0.2
+
+        return min(1.0, max(0.0, confidence))
+
+# Usage example
+def web_search(query: str) -> str:
+    """Search the web for information"""
+    return f"Search results for '{query}': Found 5 relevant articles on the topic"
+
+def calculate(expression: str) -> float:
+    """Calculate mathematical expressions"""
+    try:
+        return eval(expression.replace('^', '**'))
+    except:
+        return {"error": "Invalid mathematical expression"}
+
+def write_file(filename: str, content: str) -> str:
+    """Write content to a file"""
+    with open(filename, 'w') as f:
+        f.write(content)
+    return f"Successfully wrote {len(content)} characters to {filename}"
+
+# Create production agent
+tools = [web_search, calculate, write_file]
+agent = AdvancedReActAgent(
+    tools=tools,
+    max_steps=8,
+    timeout_per_step=30,
+    enable_async=True,
+    trajectory_compression=True,
+    error_recovery=True
+)
+
+# Execute with full error handling
+result = agent(
+    task="Search for DSPy documentation, calculate 2^10, and write a summary file",
+    context="User is learning DSPy framework"
+)
+
+print(f"Response: {result.response}")
+print(f"Confidence: {result.confidence:.2f}")
+print(f"Tools used: {result.tool_trace}")
+```
+
+## Core ReAct Enhancement Patterns
+
+### 1. Multi-Tool Coordination
+
+```python
+class CoordinatedReAct(dspy.Module):
+    """ReAct with intelligent multi-tool coordination"""
+
+    def __init__(self, tools: List[Any], coordination_strategy: str = "sequential"):
+        super().__init__()
+
+        self.tools = tools
+        self.coordination_strategy = coordination_strategy
+
+        # Enhanced signature for coordination
+        signature = dspy.Signature({
+            "task": dspy.InputField(desc="Complex task requiring multiple tools"),
+            "available_tools": dspy.InputField(desc="Tools available for use"),
+        }, {
+            "plan": dspy.OutputField(desc="Tool coordination plan"),
+            "response": dspy.OutputField(desc="Final coordinated result"),
+        }, "Plan and coordinate multiple tools to complete complex tasks efficiently.")
+
+        self.react_agent = dspy.ReAct(signature, tools=tools, max_iters=15)
+
+    def forward(self, task: str) -> dspy.Prediction:
+        # Analyze task complexity
+        tool_descriptions = [f"{t.__name__}: {t.__doc__}" for t in self.tools]
+
+        if self.coordination_strategy == "parallel":
+            return self._parallel_coordination(task, tool_descriptions)
+        else:
+            return self._sequential_coordination(task, tool_descriptions)
+
+    def _parallel_coordination(self, task: str, tool_descriptions: List[str]) -> dspy.Prediction:
+        """Execute tools in parallel when possible"""
+
+        # Plan parallel execution
+        planner = dspy.ChainOfThought("task, tools -> parallel_plan: list")
+        plan = planner(task=task, tools=tool_descriptions)
+
+        # Execute with ReAct
+        return self.react_agent(
+            task=task,
+            available_tools="\n".join(tool_descriptions)
+        )
+
+    def _sequential_coordination(self, task: str, tool_descriptions: List[str]) -> dspy.Prediction:
+        """Execute tools sequentially with dependency management"""
+
+        return self.react_agent(
+            task=task,
+            available_tools="\n".join(tool_descriptions)
+        )
+
+# Usage
+tools = [web_search, calculate, write_file]
+coordinator = CoordinatedReAct(tools, coordination_strategy="sequential")
+result = coordinator(task="Research DSPy, analyze its performance metrics, and create a report")
+```
+
+### 2. Context-Aware Tool Selection
+
+```python
+class ContextAwareReAct(dspy.Module):
+    """ReAct with context-aware tool selection"""
+
+    def __init__(self, tools: List[Any], context_memory_size: int = 50):
+        super().__init__()
+
+        self.tools = tools
+        self.context_memory = []
+        self.context_memory_size = context_memory_size
+        self.tool_usage_stats = {tool.__name__: {"success": 0, "failure": 0} for tool in tools}
+
+        # Context-aware signature
+        signature = dspy.Signature({
+            "query": dspy.InputField(desc="Current query"),
+            "context_history": dspy.InputField(desc="Previous interactions"),
+            "tool_performance": dspy.InputField(desc="Tool success statistics"),
+        }, {
+            "response": dspy.OutputField(desc="Response considering context and tool performance"),
+            "tool_confidence": dspy.OutputField(desc="Confidence in tool selection", type=float),
+        }, "Use context and tool performance history to select the best tools for the task.")
+
+        self.react_agent = dspy.ReAct(signature, tools=tools, max_iters=12)
+
+    def forward(self, query: str) -> dspy.Prediction:
+        # Format context history
+        context_str = self._format_context_history()
+        tool_perf_str = self._format_tool_performance()
+
+        # Execute with context
+        result = self.react_agent(
+            query=query,
+            context_history=context_str,
+            tool_performance=tool_perf_str
+        )
+
+        # Update context and tool stats
+        self._update_context(query, result)
+        self._update_tool_stats(result.trajectory if hasattr(result, 'trajectory') else {})
+
+        return result
+
+    def _format_context_history(self) -> str:
+        """Format recent context for tool selection"""
+        if not self.context_memory:
+            return "No previous context"
+
+        recent_context = self.context_memory[-5:]  # Last 5 interactions
+        return " | ".join([f"Q: {ctx['query'][:50]}... A: {ctx['response'][:100]}..."
+                          for ctx in recent_context])
+
+    def _format_tool_performance(self) -> str:
+        """Format tool performance statistics"""
+        perf_summary = []
+
+        for tool_name, stats in self.tool_usage_stats.items():
+            total = stats["success"] + stats["failure"]
+            if total > 0:
+                success_rate = stats["success"] / total
+                perf_summary.append(f"{tool_name}: {success_rate:.1%} success ({total} uses)")
+            else:
+                perf_summary.append(f"{tool_name}: unused")
+
+        return " | ".join(perf_summary)
+
+    def _update_context(self, query: str, result: Any):
+        """Update context memory"""
+        response = result.response if hasattr(result, 'response') else str(result)
+
+        self.context_memory.append({
+            "query": query,
+            "response": response,
+            "timestamp": time.time()
+        })
+
+        # Trim memory if too large
+        if len(self.context_memory) > self.context_memory_size:
+            self.context_memory = self.context_memory[-self.context_memory_size:]
+
+    def _update_tool_stats(self, trajectory: Dict[str, Any]):
+        """Update tool usage statistics"""
+
+        for key, value in trajectory.items():
+            if key.startswith('tool_name_'):
+                tool_name = str(value)
+                step_num = key.split('_')[-1]
+                obs_key = f'observation_{step_num}'
+
+                if obs_key in trajectory:
+                    observation = trajectory[obs_key]
+
+                    if isinstance(observation, dict) and "error" in observation:
+                        self.tool_usage_stats[tool_name]["failure"] += 1
+                    else:
+                        self.tool_usage_stats[tool_name]["success"] += 1
+```
+
+### 3. Adaptive Step Management
+
+```python
+class AdaptiveReAct(dspy.Module):
+    """ReAct with adaptive step management based on task complexity"""
+
+    def __init__(self, tools: List[Any]):
+        super().__init__()
+
+        self.tools = tools
+
+        # Complexity assessment signature
+        self.complexity_assessor = dspy.ChainOfThought(
+            "task -> complexity: str, estimated_steps: int",
+            "Assess task complexity (simple/medium/complex) and estimate steps needed"
+        )
+
+        # Adaptive ReAct signature
+        signature = dspy.Signature(
+            "task, max_allowed_steps -> response",
+            "Complete task within the adaptive step limit based on complexity"
+        )
+
+        # We'll create ReAct instances with different step limits
+        self.react_agents = {
+            "simple": dspy.ReAct(signature, tools=tools, max_iters=5),
+            "medium": dspy.ReAct(signature, tools=tools, max_iters=10),
+            "complex": dspy.ReAct(signature, tools=tools, max_iters=20)
+        }
+
+    def forward(self, task: str) -> dspy.Prediction:
+        # Assess task complexity
+        assessment = self.complexity_assessor(task=task)
+
+        complexity = getattr(assessment, 'complexity', 'medium').lower()
+        estimated_steps = getattr(assessment, 'estimated_steps', 10)
+
+        # Select appropriate agent
+        if complexity not in self.react_agents:
+            complexity = 'medium'
+
+        agent = self.react_agents[complexity]
+
+        # Execute with appropriate step limit
+        result = agent(task=task, max_allowed_steps=estimated_steps)
+
+        # Add complexity metadata
+        if hasattr(result, '__dict__'):
+            result.assessed_complexity = complexity
+            result.estimated_steps = estimated_steps
+
+        return result
+
+# Usage
+adaptive_agent = AdaptiveReAct([web_search, calculate, write_file])
+result = adaptive_agent(task="Create a comprehensive research report on AI agents")
+print(f"Task complexity: {getattr(result, 'assessed_complexity', 'unknown')}")
+```
+
+## Tool Integration Patterns
+
+### Safe Tool Registry
+
+```python
+class SafeToolRegistry:
+    """Registry for safe tool management with validation"""
+
+    def __init__(self):
+        self.tools = {}
+        self.tool_metadata = {}
+        self.usage_stats = {}
+
+    def register_tool(self,
+                     tool: Callable,
+                     category: str = "general",
+                     risk_level: str = "low",
+                     timeout: int = 30,
+                     validation_func: Optional[Callable] = None) -> str:
+        """Register a tool with safety metadata"""
+
+        tool_name = tool.__name__
+
+        # Validate tool
+        if not callable(tool):
+            raise ValueError(f"Tool {tool_name} is not callable")
+
+        if not tool.__doc__:
+            logging.warning(f"Tool {tool_name} has no docstring")
+
+        # Create safe wrapper
+        safe_tool = self._create_safe_wrapper(tool, timeout, validation_func)
+
+        # Register
+        self.tools[tool_name] = safe_tool
+        self.tool_metadata[tool_name] = {
+            "category": category,
+            "risk_level": risk_level,
+            "timeout": timeout,
+            "original_function": tool,
+            "registration_time": time.time()
+        }
+        self.usage_stats[tool_name] = {"calls": 0, "errors": 0, "avg_duration": 0.0}
+
+        return tool_name
+
+    def _create_safe_wrapper(self, tool: Callable, timeout: int, validation_func: Optional[Callable]) -> Callable:
+        """Create comprehensive safe wrapper for tools"""
+
+        import functools
+
+        @functools.wraps(tool)
+        def safe_wrapper(*args, **kwargs):
+            start_time = time.time()
+            tool_name = tool.__name__
+
+            try:
+                # Input validation
+                if validation_func:
+                    validation_func(*args, **kwargs)
+
+                # Execute with monitoring
+                result = tool(*args, **kwargs)
+
+                # Update stats
+                duration = time.time() - start_time
+                stats = self.usage_stats[tool_name]
+                stats["calls"] += 1
+
+                # Update average duration
+                if stats["calls"] == 1:
+                    stats["avg_duration"] = duration
+                else:
+                    stats["avg_duration"] = (stats["avg_duration"] * (stats["calls"] - 1) + duration) / stats["calls"]
+
+                return result
+
+            except Exception as e:
+                self.usage_stats[tool_name]["errors"] += 1
+                return {
+                    "error": f"Tool {tool_name} failed: {str(e)[:200]}",
+                    "tool": tool_name,
+                    "duration": time.time() - start_time
+                }
+
+        return safe_wrapper
+
+    def get_tools_by_category(self, category: str) -> List[Callable]:
+        """Get tools filtered by category"""
+        return [
+            self.tools[name] for name, metadata in self.tool_metadata.items()
+            if metadata["category"] == category
+        ]
+
+    def get_tool_stats(self, tool_name: str) -> Dict[str, Any]:
+        """Get detailed statistics for a tool"""
+        if tool_name not in self.usage_stats:
+            return {"error": f"Tool {tool_name} not found"}
+
+        stats = self.usage_stats[tool_name].copy()
+        stats["metadata"] = self.tool_metadata.get(tool_name, {})
+
+        if stats["calls"] > 0:
+            stats["error_rate"] = stats["errors"] / stats["calls"]
+        else:
+            stats["error_rate"] = 0.0
+
+        return stats
+
+# Usage
+registry = SafeToolRegistry()
+
+# Register tools with safety metadata
+registry.register_tool(web_search, category="information", risk_level="low", timeout=20)
+registry.register_tool(calculate, category="computation", risk_level="low", timeout=5)
+registry.register_tool(write_file, category="file_io", risk_level="medium", timeout=15)
+
+# Create ReAct with registered tools
+computation_tools = registry.get_tools_by_category("computation")
+react_agent = dspy.ReAct("query -> response", tools=computation_tools, max_iters=8)
+```
+
+## Performance Optimization
+
+### Trajectory Memory Management
+
+```python
+def smart_truncate(trajectory: Dict[str, Any], preserve_context: bool = True) -> Dict[str, Any]:
+    """Enhanced trajectory truncation from ReAct source analysis"""
+
+    keys = list(trajectory.keys())
+
+    if len(keys) < 8:  # Need at least 2 complete tool cycles
+        raise ValueError("Trajectory too short for safe truncation")
+
+    if preserve_context:
+        # Keep first and last tool calls, remove middle ones
+        # First cycle: keys[0:4]
+        # Last cycle: keys[-4:]
+        # Remove middle cycles
+
+        first_cycle = {k: trajectory[k] for k in keys[:4] if k in trajectory}
+        last_cycle = {k: trajectory[k] for k in keys[-4:] if k in trajectory}
+
+        # Merge with separator
+        truncated = first_cycle.copy()
+        truncated["truncation_marker"] = "... [middle steps removed] ..."
+        truncated.update(last_cycle)
+
+        return truncated
+    else:
+        # Standard truncation - remove oldest cycle
+        for key in keys[:4]:
+            trajectory.pop(key, None)
+        return trajectory
+
+# Apply to ReAct agent
+react_agent = dspy.ReAct("query -> response", tools=tools, max_iters=15)
+react_agent.truncate_trajectory = lambda traj: smart_truncate(traj, preserve_context=True)
+```
+
+### Async Tool Execution
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+class AsyncReActAgent(dspy.Module):
+    """ReAct agent with async tool execution support"""
+
+    def __init__(self, tools: List[Any], max_concurrent: int = 3):
+        super().__init__()
+
+        self.tools = tools
+        self.max_concurrent = max_concurrent
+        self.executor = ThreadPoolExecutor(max_workers=max_concurrent)
+
+        signature = dspy.Signature("task -> response", "Complete task using async tools when possible")
+        self.react_agent = dspy.ReAct(signature, tools=tools, max_iters=12)
+
+    async def aforward(self, task: str) -> dspy.Prediction:
+        """Async execution with concurrent tool support"""
+
+        try:
+            # Use async ReAct execution
+            result = await self.react_agent.aforward(task=task)
+            return result
+        except Exception as e:
+            return dspy.Prediction(
+                response=f"Async execution failed: {str(e)}",
+                error=str(e)
+            )
+
+    def __del__(self):
+        """Cleanup executor on destruction"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=True)
+
+# Usage with async
+async def run_async_agent():
+    agent = AsyncReActAgent([web_search, calculate])
+    result = await agent.aforward("Search for AI trends and calculate growth rate")
+    return result
+
+# result = asyncio.run(run_async_agent())
+```
+
+## Speed Tips
+
+- **Tool Caching**: Cache tool results for repeated calls with same parameters
+- **Smart Truncation**: Use context-preserving truncation to maintain reasoning quality
+- **Timeout Management**: Set appropriate timeouts per tool type (I/O vs computation)
+- **Error Isolation**: Wrap individual tools to prevent cascade failures
+- **Trajectory Compression**: Enable trajectory compression for long multi-step tasks
+- **Async Execution**: Use async versions for I/O bound tool operations
+- **Step Adaptation**: Adjust max_iters based on task complexity assessment
+
+## Common Pitfalls
+
+1. **Context Window Explosion**: Long trajectories exceed model context limits
+
+   - **Solution**: Implement smart trajectory truncation with context preservation
+
+2. **Tool Timeout Issues**: Tools hang without timeout protection
+
+   - **Solution**: Wrap all tools with timeout and error handling
+
+3. **Error Propagation**: One failed tool call breaks entire agent execution
+
+   - **Solution**: Isolate tool failures and continue with error information
+
+4. **Memory Leaks**: Trajectory data accumulates without cleanup
+
+   - **Solution**: Implement trajectory compression and periodic cleanup
+
+5. **Poor Tool Selection**: Agent repeatedly selects wrong tools
+   - **Solution**: Use context-aware tool selection with usage statistics
+
+## Best Practices Summary
+
+- **Safety First**: Always wrap tools with timeout and error handling
+- **Context Management**: Implement intelligent trajectory truncation and context preservation
+- **Error Recovery**: Design agents to handle and recover from tool failures gracefully
+- **Performance Monitoring**: Track tool usage statistics and performance metrics
+- **Adaptive Behavior**: Adjust agent behavior based on task complexity and context
+- **Resource Management**: Use async execution and connection pooling for efficiency
+- **Testing**: Test agents with diverse inputs including edge cases and failures
+
+## References
+
+- **DSPy ReAct Source**: `/docs/dspy/dspy/predict/react.py` - Lines 17-196
+- **ReAct Tutorial**: `/docs/tutorials/agents/index.ipynb` - Production agent patterns
+- **Tool Use Tutorial**: `/docs/tutorials/tool_use/index.ipynb` - Advanced tool integration
+- **API Documentation**: `/docs/api/modules/ReAct.md` - Complete ReAct API
+- **Error Handling Patterns**: Lines 102-114, 121-144 in react.py source

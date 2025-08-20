@@ -1,0 +1,946 @@
+---
+description: Complete Customer Service Agent - Interactive AI agent system with tools and production deployment
+alwaysApply: false
+---
+
+> You are an expert in building complete DSPy 3.0.1 customer service agent systems with tool integration for production deployment.
+
+## Complete Customer Service Agent Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Customer      │    │   Intent        │    │   Context       │
+│   Input         │───▶│   Recognition   │───▶│   Management    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Tool          │    │   Action        │    │   Response      │
+│   Selection     │───▶│   Execution     │───▶│   Generation    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Escalation    │    │   Quality       │    │   Analytics     │
+│   Management    │◀───│   Assurance     │◀───│   & Logging     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant Customer Service Templates
+
+### Quick Start Service Agent
+
+```python
+import dspy
+from typing import List, Dict, Any
+from pydantic import BaseModel
+
+# Configure DSPy
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Simple service agent with basic tools
+class SimpleServiceAgent(dspy.Signature):
+    """You are a customer service agent that helps customers with their requests."""
+    customer_request: str = dspy.InputField()
+    agent_response: str = dspy.OutputField(desc="Helpful response to customer")
+
+# Basic tools
+def get_order_status(order_id: str) -> str:
+    """Get the status of a customer order"""
+    return f"Order {order_id} is currently being processed"
+
+def update_contact_info(customer_id: str, new_info: str) -> str:
+    """Update customer contact information"""
+    return f"Contact information updated for customer {customer_id}"
+
+# Create agent with tools
+agent = dspy.ReAct(
+    SimpleServiceAgent,
+    tools=[get_order_status, update_contact_info]
+)
+
+# Use the agent
+result = agent(customer_request="Can you check the status of my order #12345?")
+print(result.agent_response)
+```
+
+### Production Customer Service Agent
+
+```python
+import dspy
+import logging
+import time
+import uuid
+from typing import List, Dict, Any, Optional, Union
+from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from enum import Enum
+import json
+
+class RequestType(Enum):
+    """Customer request categories"""
+    ORDER_INQUIRY = "order_inquiry"
+    ACCOUNT_SUPPORT = "account_support"
+    BILLING_QUESTION = "billing_question"
+    TECHNICAL_SUPPORT = "technical_support"
+    COMPLAINT = "complaint"
+    GENERAL_INFO = "general_info"
+    ESCALATION = "escalation"
+
+class AgentAction(Enum):
+    """Available agent actions"""
+    SEARCH_ORDER = "search_order"
+    UPDATE_ACCOUNT = "update_account"
+    PROCESS_REFUND = "process_refund"
+    SCHEDULE_CALLBACK = "schedule_callback"
+    CREATE_TICKET = "create_ticket"
+    TRANSFER_TO_HUMAN = "transfer_to_human"
+    PROVIDE_INFO = "provide_info"
+
+@dataclass
+class CustomerProfile:
+    """Customer profile information"""
+    customer_id: str
+    name: str
+    email: str
+    phone: Optional[str] = None
+    tier: str = "standard"  # standard, premium, vip
+    interaction_history: List[Dict] = None
+
+@dataclass
+class InteractionResult:
+    """Result of customer service interaction"""
+    request_id: str
+    customer_request: str
+    agent_response: str
+    actions_taken: List[str]
+    resolution_status: str  # resolved, pending, escalated
+    processing_time: float
+    confidence_score: float
+    follow_up_required: bool
+
+class ProductionServiceAgent(dspy.Module):
+    """Production-ready customer service agent with comprehensive tooling"""
+
+    def __init__(self,
+                 company_name: str = "Your Company",
+                 max_interactions: int = 10,
+                 escalation_threshold: float = 0.3):
+
+        self.company_name = company_name
+        self.max_interactions = max_interactions
+        self.escalation_threshold = escalation_threshold
+
+        # Initialize agent components
+        self._setup_agent()
+        self._setup_tools()
+        self._setup_data_stores()
+
+        # Interaction tracking
+        self.interaction_count = 0
+        self.escalation_count = 0
+        self.setup_logging()
+
+    def setup_logging(self):
+        """Configure comprehensive logging"""
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+
+    def _setup_agent(self):
+        """Initialize the ReAct agent with proper signature"""
+
+        class CustomerServiceSignature(dspy.Signature):
+            f"""You are an expert customer service agent for {self.company_name}.
+
+            Your role is to:
+            - Understand customer needs and provide helpful solutions
+            - Use available tools to take appropriate actions
+            - Maintain a professional, empathetic tone
+            - Escalate to human agents when necessary
+            - Document all actions taken for quality assurance
+
+            Always prioritize customer satisfaction while following company policies."""
+
+            customer_request: str = dspy.InputField(desc="Customer's request or question")
+            customer_profile: str = dspy.InputField(desc="Customer profile information")
+            interaction_history: str = dspy.InputField(desc="Previous interaction context")
+
+            agent_response: str = dspy.OutputField(desc="Professional response to customer")
+            resolution_status: str = dspy.OutputField(desc="Status: resolved, pending, or escalated")
+            confidence: float = dspy.OutputField(desc="Confidence in resolution (0.0-1.0)")
+
+        # Create the ReAct agent
+        self.agent = dspy.ReAct(CustomerServiceSignature, tools=self._get_tools())
+
+    def _setup_tools(self):
+        """Setup comprehensive customer service tools"""
+
+        # Order management tools
+        def fetch_order_info(order_id: str) -> Dict[str, Any]:
+            """Fetch detailed order information including status, items, and tracking"""
+            # Simulate order lookup
+            return {
+                "order_id": order_id,
+                "status": "shipped",
+                "items": ["Product A", "Product B"],
+                "total": "$99.99",
+                "tracking_number": "TRK123456",
+                "expected_delivery": "2024-01-15"
+            }
+
+        def update_order_status(order_id: str, new_status: str) -> str:
+            """Update order status and notify customer"""
+            self.logger.info(f"Updating order {order_id} to status: {new_status}")
+            return f"Order {order_id} status updated to {new_status}"
+
+        def process_return_request(order_id: str, items: List[str], reason: str) -> Dict[str, Any]:
+            """Process return request for specified items"""
+            return_id = f"RET{int(time.time())}"
+            return {
+                "return_id": return_id,
+                "order_id": order_id,
+                "items": items,
+                "reason": reason,
+                "return_label": f"label_{return_id}.pdf",
+                "estimated_refund": "$45.99"
+            }
+
+        # Account management tools
+        def get_customer_info(customer_id: str) -> Dict[str, Any]:
+            """Fetch comprehensive customer profile and account details"""
+            return {
+                "customer_id": customer_id,
+                "name": "John Doe",
+                "email": "john@email.com",
+                "tier": "premium",
+                "account_balance": "$15.50",
+                "recent_orders": ["ORD123", "ORD124"],
+                "support_tickets": []
+            }
+
+        def update_customer_profile(customer_id: str, updates: Dict[str, str]) -> str:
+            """Update customer profile information"""
+            self.logger.info(f"Updating customer {customer_id} profile: {updates}")
+            return f"Profile updated successfully for customer {customer_id}"
+
+        def check_account_balance(customer_id: str) -> Dict[str, Any]:
+            """Check customer account balance and recent transactions"""
+            return {
+                "customer_id": customer_id,
+                "balance": "$25.75",
+                "last_transaction": "2024-01-10",
+                "pending_charges": [],
+                "available_credits": "$5.00"
+            }
+
+        # Billing and payment tools
+        def process_refund(order_id: str, amount: float, reason: str) -> Dict[str, Any]:
+            """Process refund for customer"""
+            refund_id = f"REF{int(time.time())}"
+            return {
+                "refund_id": refund_id,
+                "order_id": order_id,
+                "amount": amount,
+                "reason": reason,
+                "processing_time": "3-5 business days",
+                "reference_number": refund_id
+            }
+
+        def update_billing_info(customer_id: str, billing_data: Dict[str, str]) -> str:
+            """Update customer billing information"""
+            return f"Billing information updated for customer {customer_id}"
+
+        # Communication tools
+        def schedule_callback(customer_id: str, preferred_time: str, topic: str) -> Dict[str, Any]:
+            """Schedule callback for customer"""
+            callback_id = f"CB{int(time.time())}"
+            return {
+                "callback_id": callback_id,
+                "customer_id": customer_id,
+                "scheduled_time": preferred_time,
+                "topic": topic,
+                "status": "scheduled"
+            }
+
+        def send_email_notification(customer_id: str, subject: str, message: str) -> str:
+            """Send email notification to customer"""
+            self.logger.info(f"Sending email to customer {customer_id}: {subject}")
+            return f"Email notification sent successfully"
+
+        # Escalation tools
+        def create_support_ticket(customer_id: str, issue_description: str, priority: str = "medium") -> Dict[str, Any]:
+            """Create support ticket for complex issues"""
+            ticket_id = f"TKT{int(time.time())}"
+            return {
+                "ticket_id": ticket_id,
+                "customer_id": customer_id,
+                "description": issue_description,
+                "priority": priority,
+                "status": "open",
+                "assigned_agent": "pending"
+            }
+
+        def escalate_to_supervisor(customer_id: str, reason: str, context: str) -> str:
+            """Escalate issue to supervisor"""
+            self.escalation_count += 1
+            self.logger.warning(f"Escalating customer {customer_id} issue: {reason}")
+            return f"Issue escalated to supervisor. Reference: ESC{int(time.time())}"
+
+        # Knowledge base tools
+        def search_knowledge_base(query: str) -> List[Dict[str, str]]:
+            """Search company knowledge base for relevant information"""
+            # Simulate knowledge base search
+            return [
+                {
+                    "title": "Return Policy",
+                    "content": "Items can be returned within 30 days of purchase",
+                    "category": "returns"
+                },
+                {
+                    "title": "Shipping Information",
+                    "content": "Standard shipping takes 3-5 business days",
+                    "category": "shipping"
+                }
+            ]
+
+        def get_company_policies(policy_type: str) -> Dict[str, str]:
+            """Get specific company policies"""
+            policies = {
+                "return": "30-day return policy with receipt",
+                "shipping": "Free shipping on orders over $50",
+                "warranty": "1-year warranty on all electronics",
+                "cancellation": "Orders can be cancelled within 1 hour"
+            }
+            return {"policy": policies.get(policy_type, "Policy not found")}
+
+        # Store tools for agent access
+        self.tools = [
+            fetch_order_info, update_order_status, process_return_request,
+            get_customer_info, update_customer_profile, check_account_balance,
+            process_refund, update_billing_info,
+            schedule_callback, send_email_notification,
+            create_support_ticket, escalate_to_supervisor,
+            search_knowledge_base, get_company_policies
+        ]
+
+    def _get_tools(self) -> List:
+        """Return list of tools for agent"""
+        return self.tools
+
+    def _setup_data_stores(self):
+        """Initialize data stores for customers, orders, etc."""
+        self.customer_profiles = {}
+        self.interaction_history = {}
+        self.active_tickets = {}
+
+    def forward(self,
+               customer_request: str,
+               customer_id: str = None,
+               interaction_context: Dict = None) -> InteractionResult:
+        """Process customer service request"""
+
+        self.interaction_count += 1
+        request_id = str(uuid.uuid4())
+        start_time = time.time()
+
+        self.logger.info(f"Processing request {request_id}: {customer_request[:100]}...")
+
+        try:
+            # Get or create customer profile
+            customer_profile = self._get_customer_profile(customer_id)
+
+            # Get interaction history
+            history = self._get_interaction_history(customer_id)
+
+            # Process request through agent
+            agent_result = self.agent(
+                customer_request=customer_request,
+                customer_profile=json.dumps(customer_profile.__dict__ if customer_profile else {}),
+                interaction_history=json.dumps(history[-5:])  # Last 5 interactions
+            )
+
+            # Extract results
+            agent_response = agent_result.agent_response
+            resolution_status = getattr(agent_result, 'resolution_status', 'resolved')
+            confidence = getattr(agent_result, 'confidence', 0.8)
+
+            # Get actions taken from trajectory
+            actions_taken = self._extract_actions_from_trajectory(agent_result.trajectory)
+
+            # Check if escalation is needed
+            if confidence < self.escalation_threshold or resolution_status == 'escalated':
+                resolution_status = 'escalated'
+                self.escalation_count += 1
+
+            processing_time = time.time() - start_time
+
+            # Create result
+            result = InteractionResult(
+                request_id=request_id,
+                customer_request=customer_request,
+                agent_response=agent_response,
+                actions_taken=actions_taken,
+                resolution_status=resolution_status,
+                processing_time=processing_time,
+                confidence_score=confidence,
+                follow_up_required=resolution_status in ['pending', 'escalated']
+            )
+
+            # Update interaction history
+            self._update_interaction_history(customer_id, result)
+
+            self.logger.info(f"Request {request_id} processed in {processing_time:.2f}s - Status: {resolution_status}")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error processing request {request_id}: {str(e)}")
+
+            # Return error response
+            return InteractionResult(
+                request_id=request_id,
+                customer_request=customer_request,
+                agent_response="I apologize, but I encountered an error processing your request. Let me escalate this to a human agent.",
+                actions_taken=["error_occurred"],
+                resolution_status="escalated",
+                processing_time=time.time() - start_time,
+                confidence_score=0.0,
+                follow_up_required=True
+            )
+
+    def _get_customer_profile(self, customer_id: str) -> Optional[CustomerProfile]:
+        """Get or create customer profile"""
+        if not customer_id:
+            return None
+
+        if customer_id not in self.customer_profiles:
+            # Create basic profile (in production, fetch from database)
+            self.customer_profiles[customer_id] = CustomerProfile(
+                customer_id=customer_id,
+                name=f"Customer {customer_id}",
+                email=f"{customer_id}@email.com",
+                interaction_history=[]
+            )
+
+        return self.customer_profiles[customer_id]
+
+    def _get_interaction_history(self, customer_id: str) -> List[Dict]:
+        """Get customer interaction history"""
+        return self.interaction_history.get(customer_id, [])
+
+    def _update_interaction_history(self, customer_id: str, result: InteractionResult):
+        """Update customer interaction history"""
+        if customer_id:
+            if customer_id not in self.interaction_history:
+                self.interaction_history[customer_id] = []
+
+            self.interaction_history[customer_id].append({
+                "timestamp": time.time(),
+                "request": result.customer_request,
+                "response": result.agent_response,
+                "status": result.resolution_status,
+                "actions": result.actions_taken
+            })
+
+    def _extract_actions_from_trajectory(self, trajectory: Dict) -> List[str]:
+        """Extract tool calls from agent trajectory"""
+        actions = []
+
+        for key, value in trajectory.items():
+            if key.startswith('tool_name_') and value:
+                actions.append(value)
+
+        return actions
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get agent performance metrics"""
+        escalation_rate = (self.escalation_count / self.interaction_count * 100) if self.interaction_count > 0 else 0
+
+        return {
+            "total_interactions": self.interaction_count,
+            "escalation_count": self.escalation_count,
+            "escalation_rate": f"{escalation_rate:.2f}%",
+            "active_customers": len(self.customer_profiles),
+            "escalation_threshold": self.escalation_threshold
+        }
+
+# Specialized agents for different scenarios
+class TechnicalSupportAgent(ProductionServiceAgent):
+    """Specialized agent for technical support"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # Override signature for technical focus
+        class TechnicalSupportSignature(dspy.Signature):
+            """You are a technical support specialist with expertise in troubleshooting and problem resolution.
+
+            Focus on:
+            - Systematic diagnosis of technical issues
+            - Step-by-step troubleshooting guidance
+            - Clear technical explanations for non-technical users
+            - Escalation to engineering when needed
+            """
+
+            customer_request: str = dspy.InputField()
+            technical_context: str = dspy.InputField()
+            device_info: str = dspy.InputField()
+
+            troubleshooting_steps: str = dspy.OutputField()
+            resolution: str = dspy.OutputField()
+            escalation_needed: bool = dspy.OutputField()
+
+        self.agent = dspy.ReAct(TechnicalSupportSignature, tools=self._get_technical_tools())
+
+    def _get_technical_tools(self):
+        """Technical support specific tools"""
+
+        def run_system_diagnostic(device_id: str) -> Dict[str, Any]:
+            """Run diagnostic on customer device"""
+            return {
+                "device_id": device_id,
+                "system_status": "healthy",
+                "errors": [],
+                "recommendations": ["Update software", "Clear cache"]
+            }
+
+        def create_debug_log(customer_id: str, issue_type: str) -> str:
+            """Create debug log for technical issue"""
+            log_id = f"LOG{int(time.time())}"
+            return f"Debug log {log_id} created for {issue_type}"
+
+        def escalate_to_engineering(issue_description: str, severity: str) -> str:
+            """Escalate complex technical issues to engineering team"""
+            ticket_id = f"ENG{int(time.time())}"
+            return f"Issue escalated to engineering. Ticket: {ticket_id}"
+
+        return self.tools + [run_system_diagnostic, create_debug_log, escalate_to_engineering]
+
+class BillingAgent(ProductionServiceAgent):
+    """Specialized agent for billing and payment issues"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        class BillingSignature(dspy.Signature):
+            """You are a billing specialist focused on payment and account issues.
+
+            Expertise in:
+            - Payment processing and troubleshooting
+            - Subscription management
+            - Refund and credit processing
+            - Account balance reconciliation
+            """
+
+            customer_request: str = dspy.InputField()
+            account_info: str = dspy.InputField()
+            billing_history: str = dspy.InputField()
+
+            billing_action: str = dspy.OutputField()
+            resolution: str = dspy.OutputField()
+            amount_involved: float = dspy.OutputField()
+
+        self.agent = dspy.ReAct(BillingSignature, tools=self._get_billing_tools())
+
+    def _get_billing_tools(self):
+        """Billing specific tools"""
+
+        def process_payment_retry(customer_id: str, payment_method: str) -> Dict[str, Any]:
+            """Retry failed payment with updated method"""
+            return {
+                "customer_id": customer_id,
+                "payment_status": "success",
+                "transaction_id": f"TXN{int(time.time())}"
+            }
+
+        def apply_account_credit(customer_id: str, amount: float, reason: str) -> str:
+            """Apply credit to customer account"""
+            return f"${amount} credit applied to account {customer_id} for {reason}"
+
+        def generate_invoice(customer_id: str, charges: List[Dict]) -> str:
+            """Generate detailed invoice for customer"""
+            invoice_id = f"INV{int(time.time())}"
+            return f"Invoice {invoice_id} generated and sent to customer {customer_id}"
+
+        return self.tools + [process_payment_retry, apply_account_credit, generate_invoice]
+```
+
+## Advanced Agent Patterns
+
+### Multi-Agent Customer Service System
+
+```python
+class CustomerServiceOrchestrator:
+    """Orchestrates multiple specialized agents"""
+
+    def __init__(self):
+        self.general_agent = ProductionServiceAgent()
+        self.technical_agent = TechnicalSupportAgent()
+        self.billing_agent = BillingAgent()
+
+        # Intent classifier
+        self.intent_classifier = dspy.ChainOfThought(
+            "customer_request -> intent: str, confidence: float, routing_reason: str"
+        )
+
+    def route_request(self, customer_request: str, customer_id: str = None) -> InteractionResult:
+        """Route request to appropriate specialized agent"""
+
+        # Classify intent
+        classification = self.intent_classifier(customer_request=customer_request)
+        intent = getattr(classification, 'intent', 'general').lower()
+        confidence = getattr(classification, 'confidence', 0.5)
+
+        # Route to appropriate agent
+        if intent in ['technical', 'bug', 'error'] and confidence > 0.7:
+            return self.technical_agent.forward(customer_request, customer_id)
+        elif intent in ['billing', 'payment', 'refund'] and confidence > 0.7:
+            return self.billing_agent.forward(customer_request, customer_id)
+        else:
+            return self.general_agent.forward(customer_request, customer_id)
+
+    def get_system_metrics(self) -> Dict[str, Any]:
+        """Get metrics from all agents"""
+        return {
+            "general_agent": self.general_agent.get_performance_metrics(),
+            "technical_agent": self.technical_agent.get_performance_metrics(),
+            "billing_agent": self.billing_agent.get_performance_metrics()
+        }
+
+# Conversation memory and context management
+class ConversationManager:
+    """Manage multi-turn conversations with context"""
+
+    def __init__(self, agent: ProductionServiceAgent):
+        self.agent = agent
+        self.conversations = {}  # conversation_id -> messages
+        self.context_window = 10  # Keep last 10 exchanges
+
+    def continue_conversation(self,
+                            conversation_id: str,
+                            customer_message: str,
+                            customer_id: str = None) -> InteractionResult:
+        """Continue existing conversation with context"""
+
+        if conversation_id not in self.conversations:
+            self.conversations[conversation_id] = []
+
+        # Add customer message to conversation
+        self.conversations[conversation_id].append({
+            "role": "customer",
+            "message": customer_message,
+            "timestamp": time.time()
+        })
+
+        # Build context from conversation history
+        context_messages = self.conversations[conversation_id][-self.context_window:]
+        conversation_context = "\n".join([
+            f"{msg['role']}: {msg['message']}" for msg in context_messages[:-1]
+        ])
+
+        # Enhance request with conversation context
+        enhanced_request = f"""
+        Conversation Context:
+        {conversation_context}
+
+        Current Customer Message: {customer_message}
+
+        Please respond considering the full conversation context.
+        """
+
+        # Process through agent
+        result = self.agent.forward(enhanced_request, customer_id, {
+            "conversation_id": conversation_id,
+            "turn_count": len(self.conversations[conversation_id])
+        })
+
+        # Add agent response to conversation
+        self.conversations[conversation_id].append({
+            "role": "agent",
+            "message": result.agent_response,
+            "timestamp": time.time()
+        })
+
+        return result
+
+    def start_new_conversation(self, customer_message: str, customer_id: str = None) -> Tuple[str, InteractionResult]:
+        """Start new conversation and return conversation ID"""
+        conversation_id = str(uuid.uuid4())
+        result = self.continue_conversation(conversation_id, customer_message, customer_id)
+        return conversation_id, result
+```
+
+## Production Deployment
+
+### FastAPI Service
+
+```python
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from typing import List, Optional
+import asyncio
+import uvicorn
+
+class ServiceRequest(BaseModel):
+    customer_request: str
+    customer_id: Optional[str] = None
+    request_type: Optional[str] = None
+
+class ServiceResponse(BaseModel):
+    request_id: str
+    agent_response: str
+    resolution_status: str
+    confidence_score: float
+    actions_taken: List[str]
+    follow_up_required: bool
+    processing_time: float
+
+app = FastAPI(title="Customer Service Agent API", version="1.0.0")
+
+# Global agent instance
+service_orchestrator = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize customer service system"""
+    global service_orchestrator
+    service_orchestrator = CustomerServiceOrchestrator()
+
+@app.post("/service/request", response_model=ServiceResponse)
+async def handle_service_request(request: ServiceRequest):
+    """Handle customer service request"""
+    if service_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        result = service_orchestrator.route_request(
+            request.customer_request,
+            request.customer_id
+        )
+
+        return ServiceResponse(
+            request_id=result.request_id,
+            agent_response=result.agent_response,
+            resolution_status=result.resolution_status,
+            confidence_score=result.confidence_score,
+            actions_taken=result.actions_taken,
+            follow_up_required=result.follow_up_required,
+            processing_time=result.processing_time
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Service request failed: {str(e)}")
+
+@app.websocket("/service/chat/{customer_id}")
+async def websocket_chat(websocket: WebSocket, customer_id: str):
+    """WebSocket endpoint for real-time chat"""
+    await websocket.accept()
+
+    conversation_manager = ConversationManager(service_orchestrator.general_agent)
+    conversation_id = None
+
+    try:
+        while True:
+            # Receive message from customer
+            data = await websocket.receive_json()
+            customer_message = data.get("message", "")
+
+            # Process message
+            if conversation_id is None:
+                conversation_id, result = conversation_manager.start_new_conversation(
+                    customer_message, customer_id
+                )
+            else:
+                result = conversation_manager.continue_conversation(
+                    conversation_id, customer_message, customer_id
+                )
+
+            # Send response
+            await websocket.send_json({
+                "type": "agent_response",
+                "message": result.agent_response,
+                "status": result.resolution_status,
+                "confidence": result.confidence_score,
+                "actions": result.actions_taken,
+                "conversation_id": conversation_id
+            })
+
+    except WebSocketDisconnect:
+        print(f"Customer {customer_id} disconnected")
+    except Exception as e:
+        await websocket.send_json({
+            "type": "error",
+            "message": f"An error occurred: {str(e)}"
+        })
+
+@app.get("/service/metrics")
+async def get_service_metrics():
+    """Get service performance metrics"""
+    if service_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return service_orchestrator.get_system_metrics()
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy" if service_orchestrator is not None else "unhealthy",
+        "service_loaded": service_orchestrator is not None
+    }
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Integration with External Systems
+
+```python
+import aiohttp
+import asyncio
+from typing import Dict, Any
+
+class ExternalSystemIntegration:
+    """Integration with CRM, ticketing, and other external systems"""
+
+    def __init__(self, config: Dict[str, str]):
+        self.config = config
+        self.session = None
+
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+
+    async def create_crm_ticket(self, customer_data: Dict, issue_description: str) -> str:
+        """Create ticket in CRM system"""
+        if not self.session:
+            raise RuntimeError("Session not initialized")
+
+        crm_endpoint = self.config.get("crm_endpoint")
+
+        payload = {
+            "customer": customer_data,
+            "issue": issue_description,
+            "priority": "medium",
+            "source": "ai_agent"
+        }
+
+        async with self.session.post(f"{crm_endpoint}/tickets", json=payload) as response:
+            if response.status == 200:
+                result = await response.json()
+                return result.get("ticket_id")
+            else:
+                raise Exception(f"CRM API error: {response.status}")
+
+    async def update_customer_profile(self, customer_id: str, updates: Dict) -> bool:
+        """Update customer profile in external system"""
+        profile_endpoint = self.config.get("profile_endpoint")
+
+        async with self.session.put(f"{profile_endpoint}/customers/{customer_id}", json=updates) as response:
+            return response.status == 200
+
+    async def send_follow_up_email(self, customer_email: str, template: str, data: Dict) -> bool:
+        """Send follow-up email via email service"""
+        email_endpoint = self.config.get("email_endpoint")
+
+        payload = {
+            "to": customer_email,
+            "template": template,
+            "data": data
+        }
+
+        async with self.session.post(f"{email_endpoint}/send", json=payload) as response:
+            return response.status == 200
+
+class IntegratedServiceAgent(ProductionServiceAgent):
+    """Service agent with external system integration"""
+
+    def __init__(self, integration_config: Dict[str, str], **kwargs):
+        super().__init__(**kwargs)
+        self.integration_config = integration_config
+
+    async def forward_with_integration(self,
+                                     customer_request: str,
+                                     customer_id: str = None) -> InteractionResult:
+        """Process request with external system integration"""
+
+        # Process normally first
+        result = self.forward(customer_request, customer_id)
+
+        # Integrate with external systems based on result
+        async with ExternalSystemIntegration(self.integration_config) as integration:
+
+            # Create CRM ticket if escalated
+            if result.resolution_status == "escalated":
+                try:
+                    customer_data = {"customer_id": customer_id}
+                    ticket_id = await integration.create_crm_ticket(
+                        customer_data,
+                        customer_request
+                    )
+                    result.actions_taken.append(f"crm_ticket_created:{ticket_id}")
+                except Exception as e:
+                    self.logger.error(f"Failed to create CRM ticket: {e}")
+
+            # Send follow-up email if required
+            if result.follow_up_required:
+                try:
+                    customer_profile = self._get_customer_profile(customer_id)
+                    if customer_profile and customer_profile.email:
+                        await integration.send_follow_up_email(
+                            customer_profile.email,
+                            "follow_up_template",
+                            {"request_id": result.request_id}
+                        )
+                        result.actions_taken.append("follow_up_email_sent")
+                except Exception as e:
+                    self.logger.error(f"Failed to send follow-up email: {e}")
+
+        return result
+```
+
+## Speed Tips
+
+- **Tool Optimization**: Cache tool results for common queries
+- **Intent Routing**: Route requests quickly to specialized agents
+- **Context Management**: Limit conversation history to essential context
+- **Batch Operations**: Group external system calls when possible
+- **Async Processing**: Use async/await for I/O operations
+- **Response Caching**: Cache common responses for faster delivery
+- **Model Selection**: Use smaller models for simpler interactions
+- **Connection Pooling**: Reuse connections to external services
+
+## Common Pitfalls
+
+- **Tool Overuse**: Avoid calling unnecessary tools that don't add value
+- **Context Loss**: Maintain conversation context across interactions
+- **Error Propagation**: Handle tool failures gracefully without breaking conversations
+- **Response Quality**: Balance automation with escalation to human agents
+- **Privacy Concerns**: Protect customer data in logs and external calls
+- **Rate Limiting**: Respect API limits for external services
+- **Session Management**: Handle long conversations and memory efficiently
+- **Escalation Logic**: Define clear criteria for human escalation
+
+## Best Practices Summary
+
+- **Tool Design**: Create focused, well-documented tools with clear purposes
+- **Error Handling**: Implement robust error handling with graceful degradation
+- **Monitoring**: Track performance metrics and customer satisfaction
+- **Human Handoff**: Design smooth transitions to human agents when needed
+- **Data Security**: Implement proper data protection and privacy measures
+- **Testing**: Comprehensive testing of agent responses and tool interactions
+- **Continuous Learning**: Update and improve based on interaction data
+- **Integration**: Seamlessly integrate with existing customer service infrastructure
+
+## References
+
+- [DSPy Customer Service Tutorial](https://github.com/stanfordnlp/dspy/blob/main/docs/tutorials/customer_service_agent/index.ipynb)
+- [ReAct Module Documentation](https://dspy.ai/api/modules/ReAct)
+- [Tool Integration Guide](https://dspy.ai/docs/tutorials/tool_use/)
+- [Production Deployment Best Practices](https://dspy.ai/docs/tutorials/deployment/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)

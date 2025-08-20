@@ -1,0 +1,1111 @@
+---
+description: Performance Optimization - Production performance tuning and optimization strategies for DSPy systems
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 performance optimization for production environments.
+
+## Performance Optimization Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Request Queue  │ => │  Load Balancer  │ => │   DSPy Workers  │
+│  (Buffering)    │    │  (Distribution) │    │   (Async Pool)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                   Performance Optimization Layer               │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Connection    │   Response      │     Memory Management       │
+│   Pooling       │   Caching       │     (GC Optimization)       │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│  Batch Process  │  Request Dedup  │    Circuit Breakers         │
+│  (Throughput)   │  (Efficiency)   │    (Fault Tolerance)        │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                    Monitoring & Profiling                      │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Metrics       │   Tracing       │     Auto-scaling            │
+│   (Prometheus)  │   (Jaeger)      │     (HPA/VPA)               │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Performance Patterns
+
+### Quick Start Performance Optimization
+
+```python
+# quick_perf.py - Essential performance optimizations for DSPy
+import dspy
+from fastapi import FastAPI
+import asyncio
+import aiohttp
+import time
+from typing import Dict, Any, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+import functools
+
+class QuickPerformanceOptimizer:
+    """Quick performance optimizations for DSPy applications"""
+
+    def __init__(self, max_workers: int = 8, connection_pool_size: int = 100):
+        # Async configuration
+        self.max_workers = max_workers
+        self.connection_pool_size = connection_pool_size
+
+        # Connection pool for HTTP requests
+        connector = aiohttp.TCPConnector(
+            limit=connection_pool_size,
+            limit_per_host=50,
+            ttl_dns_cache=300,
+            use_dns_cache=True,
+            keepalive_timeout=60
+        )
+
+        self.http_session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=30)
+        )
+
+        # Thread pool for CPU-bound tasks
+        self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+
+        # Configure DSPy with optimizations
+        self.lm = dspy.LM("openai/gpt-4o-mini", max_tokens=2000, temperature=0.1)
+        dspy.configure(
+            lm=self.lm,
+            async_max_workers=max_workers,
+            experimental=True  # Enable latest optimizations
+        )
+
+        # Create async program
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+        # Performance metrics
+        self.request_times = []
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+        # Simple in-memory cache
+        self.cache = {}
+        self.cache_max_size = 1000
+
+    async def optimized_predict(self, question: str, use_cache: bool = True) -> Dict[str, Any]:
+        """Make prediction with performance optimizations"""
+
+        start_time = time.time()
+
+        # Check cache first
+        if use_cache:
+            cache_key = hash(question.lower().strip())
+            if cache_key in self.cache:
+                self.cache_hits += 1
+                cached_result = self.cache[cache_key].copy()
+                cached_result["cached"] = True
+                cached_result["response_time"] = time.time() - start_time
+                return cached_result
+
+            self.cache_misses += 1
+
+        try:
+            # Make async prediction
+            result = await self.program(question=question)
+
+            response_time = time.time() - start_time
+            self.request_times.append(response_time)
+
+            response = {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "response_time": response_time,
+                "cached": False,
+                "status": "success"
+            }
+
+            # Cache successful responses
+            if use_cache and len(self.cache) < self.cache_max_size:
+                cache_key = hash(question.lower().strip())
+                self.cache[cache_key] = response.copy()
+
+            return response
+
+        except Exception as e:
+            return {
+                "error": str(e),
+                "response_time": time.time() - start_time,
+                "cached": False,
+                "status": "error"
+            }
+
+    async def batch_predict(self, questions: List[str], max_concurrent: int = 5) -> List[Dict[str, Any]]:
+        """Process multiple questions with controlled concurrency"""
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def predict_with_semaphore(question: str):
+            async with semaphore:
+                return await self.optimized_predict(question)
+
+        # Process all questions concurrently with limit
+        tasks = [predict_with_semaphore(q) for q in questions]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Handle exceptions
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                processed_results.append({
+                    "error": str(result),
+                    "question": questions[i],
+                    "status": "error"
+                })
+            else:
+                processed_results.append(result)
+
+        return processed_results
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics"""
+
+        total_requests = len(self.request_times)
+        cache_total = self.cache_hits + self.cache_misses
+
+        stats = {
+            "total_requests": total_requests,
+            "cache_hit_rate": self.cache_hits / cache_total if cache_total > 0 else 0,
+            "cache_size": len(self.cache),
+            "avg_response_time": sum(self.request_times) / total_requests if total_requests > 0 else 0,
+            "min_response_time": min(self.request_times) if self.request_times else 0,
+            "max_response_time": max(self.request_times) if self.request_times else 0,
+            "p95_response_time": sorted(self.request_times)[int(len(self.request_times) * 0.95)] if len(self.request_times) > 20 else 0
+        }
+
+        return stats
+
+    async def cleanup(self):
+        """Clean up resources"""
+        await self.http_session.close()
+        self.thread_pool.shutdown(wait=True)
+
+# FastAPI with performance optimizations
+app = FastAPI()
+optimizer = QuickPerformanceOptimizer(max_workers=16, connection_pool_size=200)
+
+@app.post("/predict")
+async def predict_endpoint(request: dict):
+    """Optimized prediction endpoint"""
+    question = request.get("question", "")
+    if not question:
+        return {"error": "Missing question", "status": "error"}
+
+    return await optimizer.optimized_predict(question)
+
+@app.post("/batch_predict")
+async def batch_predict_endpoint(request: dict):
+    """Batch prediction endpoint"""
+    questions = request.get("questions", [])
+    max_concurrent = request.get("max_concurrent", 5)
+
+    if not questions:
+        return {"error": "Missing questions", "status": "error"}
+
+    results = await optimizer.batch_predict(questions, max_concurrent)
+    return {"results": results, "batch_size": len(questions)}
+
+@app.get("/performance")
+async def performance_stats():
+    """Performance statistics endpoint"""
+    return optimizer.get_performance_stats()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await optimizer.cleanup()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        workers=1,  # Single worker to maintain state
+        loop="uvloop",  # Use faster event loop
+        http="httptools"  # Use faster HTTP parser
+    )
+```
+
+### Enterprise Performance Framework
+
+```python
+# enterprise_perf.py - Comprehensive performance optimization framework
+import dspy
+import asyncio
+import aiohttp
+import time
+import json
+import logging
+import threading
+from typing import Dict, Any, List, Optional, Callable
+from dataclasses import dataclass, field
+from collections import deque, defaultdict
+from contextlib import asynccontextmanager
+import psutil
+import gc
+import tracemalloc
+import sys
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import multiprocessing as mp
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class PerformanceConfig:
+    """Performance configuration settings"""
+    max_async_workers: int = 16
+    connection_pool_size: int = 200
+    request_timeout: int = 30
+    cache_size: int = 10000
+    cache_ttl: int = 3600
+    batch_size: int = 10
+    batch_timeout: float = 0.1
+    enable_memory_profiling: bool = False
+    enable_request_deduplication: bool = True
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_timeout: int = 60
+
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics tracking"""
+    request_count: int = 0
+    error_count: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    dedup_hits: int = 0
+    circuit_breaker_opens: int = 0
+    response_times: deque = field(default_factory=lambda: deque(maxlen=1000))
+    memory_usage: List[float] = field(default_factory=list)
+    cpu_usage: List[float] = field(default_factory=list)
+
+class CircuitBreaker:
+    """Circuit breaker for fault tolerance"""
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        self.lock = threading.Lock()
+
+    def can_execute(self) -> bool:
+        """Check if execution is allowed"""
+        with self.lock:
+            if self.state == "CLOSED":
+                return True
+            elif self.state == "OPEN":
+                if time.time() - self.last_failure_time > self.recovery_timeout:
+                    self.state = "HALF_OPEN"
+                    return True
+                return False
+            else:  # HALF_OPEN
+                return True
+
+    def on_success(self):
+        """Record successful execution"""
+        with self.lock:
+            self.failure_count = 0
+            self.state = "CLOSED"
+
+    def on_failure(self):
+        """Record failed execution"""
+        with self.lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+                return True  # Circuit opened
+        return False
+
+class RequestDeduplicator:
+    """Deduplicate identical concurrent requests"""
+
+    def __init__(self):
+        self.pending_requests = {}
+        self.lock = asyncio.Lock()
+
+    async def get_or_create_request(self, key: str, request_func: Callable):
+        """Get existing request future or create new one"""
+        async with self.lock:
+            if key in self.pending_requests:
+                # Return existing future
+                return await self.pending_requests[key]
+
+            # Create new request
+            future = asyncio.create_task(self._execute_with_cleanup(key, request_func))
+            self.pending_requests[key] = future
+            return await future
+
+    async def _execute_with_cleanup(self, key: str, request_func: Callable):
+        """Execute request and clean up"""
+        try:
+            result = await request_func()
+            return result
+        finally:
+            # Clean up completed request
+            async with self.lock:
+                self.pending_requests.pop(key, None)
+
+class EnterprisePerformanceOptimizer:
+    """Enterprise-grade performance optimization framework"""
+
+    def __init__(self, config: PerformanceConfig = None):
+        self.config = config or PerformanceConfig()
+        self.metrics = PerformanceMetrics()
+
+        # Initialize components
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=self.config.circuit_breaker_threshold,
+            recovery_timeout=self.config.circuit_breaker_timeout
+        )
+        self.deduplicator = RequestDeduplicator()
+
+        # Connection management
+        self.connector = aiohttp.TCPConnector(
+            limit=self.config.connection_pool_size,
+            limit_per_host=50,
+            ttl_dns_cache=300,
+            use_dns_cache=True,
+            keepalive_timeout=60,
+            enable_cleanup_closed=True
+        )
+
+        self.http_session = aiohttp.ClientSession(
+            connector=self.connector,
+            timeout=aiohttp.ClientTimeout(total=self.config.request_timeout)
+        )
+
+        # Thread pools for different types of work
+        self.io_pool = ThreadPoolExecutor(max_workers=self.config.max_async_workers)
+        self.cpu_pool = ProcessPoolExecutor(max_workers=mp.cpu_count())
+
+        # Configure DSPy with optimizations
+        self.lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=2000,
+            temperature=0.1,
+            timeout=self.config.request_timeout
+        )
+
+        dspy.configure(
+            lm=self.lm,
+            async_max_workers=self.config.max_async_workers,
+            experimental=True
+        )
+
+        # Create optimized program
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+        # Advanced caching
+        self.cache = {}
+        self.cache_access_times = {}
+        self.cache_lock = asyncio.Lock()
+
+        # Batch processing
+        self.batch_queue = deque()
+        self.batch_lock = asyncio.Lock()
+        self.batch_processor_running = False
+
+        # Memory profiling
+        if self.config.enable_memory_profiling:
+            tracemalloc.start()
+
+        # Background monitoring
+        self.monitoring_task = None
+        self.start_monitoring()
+
+    def start_monitoring(self):
+        """Start background performance monitoring"""
+
+        async def monitor_loop():
+            while True:
+                try:
+                    # Memory monitoring
+                    memory_info = psutil.virtual_memory()
+                    self.metrics.memory_usage.append(memory_info.percent)
+
+                    # CPU monitoring
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    self.metrics.cpu_usage.append(cpu_percent)
+
+                    # Keep only recent measurements
+                    if len(self.metrics.memory_usage) > 1440:  # 24 hours at 1-minute intervals
+                        self.metrics.memory_usage.pop(0)
+                    if len(self.metrics.cpu_usage) > 1440:
+                        self.metrics.cpu_usage.pop(0)
+
+                    # Memory profiling
+                    if self.config.enable_memory_profiling:
+                        current, peak = tracemalloc.get_traced_memory()
+                        logger.debug(f"Memory usage: current={current/1024/1024:.1f}MB, peak={peak/1024/1024:.1f}MB")
+
+                    # Cache cleanup
+                    await self._cleanup_cache()
+
+                    # Garbage collection
+                    if len(self.metrics.memory_usage) > 0 and self.metrics.memory_usage[-1] > 80:
+                        gc.collect()
+
+                    await asyncio.sleep(60)  # Monitor every minute
+
+                except Exception as e:
+                    logger.error(f"Monitoring error: {e}")
+                    await asyncio.sleep(60)
+
+        self.monitoring_task = asyncio.create_task(monitor_loop())
+
+    async def _cleanup_cache(self):
+        """Clean up expired cache entries"""
+
+        async with self.cache_lock:
+            current_time = time.time()
+            expired_keys = [
+                key for key, access_time in self.cache_access_times.items()
+                if current_time - access_time > self.config.cache_ttl
+            ]
+
+            for key in expired_keys:
+                self.cache.pop(key, None)
+                self.cache_access_times.pop(key, None)
+
+            # LRU eviction if cache is too large
+            if len(self.cache) > self.config.cache_size:
+                # Remove oldest 10% of entries
+                sorted_items = sorted(
+                    self.cache_access_times.items(),
+                    key=lambda x: x[1]
+                )
+
+                to_remove = len(sorted_items) // 10
+                for key, _ in sorted_items[:to_remove]:
+                    self.cache.pop(key, None)
+                    self.cache_access_times.pop(key, None)
+
+    async def _get_from_cache(self, key: str) -> Optional[Any]:
+        """Get item from cache"""
+        async with self.cache_lock:
+            if key in self.cache:
+                self.cache_access_times[key] = time.time()
+                self.metrics.cache_hits += 1
+                return self.cache[key]
+
+            self.metrics.cache_misses += 1
+            return None
+
+    async def _set_cache(self, key: str, value: Any):
+        """Set item in cache"""
+        async with self.cache_lock:
+            self.cache[key] = value
+            self.cache_access_times[key] = time.time()
+
+    async def optimized_predict(self, question: str, priority: int = 1) -> Dict[str, Any]:
+        """High-performance prediction with all optimizations"""
+
+        start_time = time.time()
+        self.metrics.request_count += 1
+
+        # Generate cache key
+        cache_key = hash(question.lower().strip() + str(priority))
+
+        # Check circuit breaker
+        if not self.circuit_breaker.can_execute():
+            self.metrics.circuit_breaker_opens += 1
+            return {
+                "error": "Circuit breaker open",
+                "status": "circuit_open",
+                "response_time": time.time() - start_time
+            }
+
+        # Check cache first
+        cached_result = await self._get_from_cache(str(cache_key))
+        if cached_result:
+            cached_result["cached"] = True
+            cached_result["response_time"] = time.time() - start_time
+            return cached_result
+
+        # Request deduplication
+        if self.config.enable_request_deduplication:
+            dedup_key = f"predict:{hash(question)}"
+
+            async def execute_prediction():
+                return await self._execute_prediction(question, start_time)
+
+            try:
+                result = await self.deduplicator.get_or_create_request(dedup_key, execute_prediction)
+                if result.get("deduplicated"):
+                    self.metrics.dedup_hits += 1
+                return result
+            except Exception as e:
+                logger.error(f"Deduplication error: {e}")
+                # Fall back to direct execution
+                return await self._execute_prediction(question, start_time)
+        else:
+            return await self._execute_prediction(question, start_time)
+
+    async def _execute_prediction(self, question: str, start_time: float) -> Dict[str, Any]:
+        """Execute the actual prediction"""
+
+        try:
+            # Make async prediction
+            result = await self.program(question=question)
+
+            response_time = time.time() - start_time
+            self.metrics.response_times.append(response_time)
+
+            response = {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "response_time": response_time,
+                "cached": False,
+                "status": "success"
+            }
+
+            # Cache successful responses
+            cache_key = hash(question.lower().strip())
+            await self._set_cache(str(cache_key), response.copy())
+
+            # Record success for circuit breaker
+            self.circuit_breaker.on_success()
+
+            return response
+
+        except Exception as e:
+            self.metrics.error_count += 1
+
+            # Record failure for circuit breaker
+            circuit_opened = self.circuit_breaker.on_failure()
+            if circuit_opened:
+                self.metrics.circuit_breaker_opens += 1
+
+            logger.error(f"Prediction error: {e}")
+            return {
+                "error": str(e),
+                "response_time": time.time() - start_time,
+                "status": "error"
+            }
+
+    async def batch_predict(self, questions: List[str], max_concurrent: int = None) -> List[Dict[str, Any]]:
+        """High-performance batch prediction"""
+
+        if not max_concurrent:
+            max_concurrent = min(self.config.max_async_workers, len(questions))
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def predict_with_semaphore(question: str, index: int):
+            async with semaphore:
+                result = await self.optimized_predict(question)
+                result["batch_index"] = index
+                return result
+
+        # Process with controlled concurrency
+        tasks = [predict_with_semaphore(q, i) for i, q in enumerate(questions)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Handle exceptions and sort by original order
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                processed_results.append({
+                    "error": str(result),
+                    "question": questions[i],
+                    "batch_index": i,
+                    "status": "error"
+                })
+            else:
+                processed_results.append(result)
+
+        # Sort back to original order
+        processed_results.sort(key=lambda x: x.get("batch_index", 0))
+        return processed_results
+
+    def get_comprehensive_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive performance metrics"""
+
+        response_times = list(self.metrics.response_times)
+
+        # Calculate percentiles
+        if response_times:
+            sorted_times = sorted(response_times)
+            p50 = sorted_times[len(sorted_times) // 2]
+            p90 = sorted_times[int(len(sorted_times) * 0.9)]
+            p95 = sorted_times[int(len(sorted_times) * 0.95)]
+            p99 = sorted_times[int(len(sorted_times) * 0.99)]
+        else:
+            p50 = p90 = p95 = p99 = 0
+
+        # Calculate rates
+        total_cache_requests = self.metrics.cache_hits + self.metrics.cache_misses
+        cache_hit_rate = self.metrics.cache_hits / total_cache_requests if total_cache_requests > 0 else 0
+        error_rate = self.metrics.error_count / self.metrics.request_count if self.metrics.request_count > 0 else 0
+
+        return {
+            "requests": {
+                "total": self.metrics.request_count,
+                "errors": self.metrics.error_count,
+                "error_rate": error_rate
+            },
+            "response_times": {
+                "avg": sum(response_times) / len(response_times) if response_times else 0,
+                "min": min(response_times) if response_times else 0,
+                "max": max(response_times) if response_times else 0,
+                "p50": p50,
+                "p90": p90,
+                "p95": p95,
+                "p99": p99
+            },
+            "cache": {
+                "hits": self.metrics.cache_hits,
+                "misses": self.metrics.cache_misses,
+                "hit_rate": cache_hit_rate,
+                "size": len(self.cache)
+            },
+            "deduplication": {
+                "hits": self.metrics.dedup_hits,
+                "enabled": self.config.enable_request_deduplication
+            },
+            "circuit_breaker": {
+                "opens": self.metrics.circuit_breaker_opens,
+                "current_state": self.circuit_breaker.state
+            },
+            "system": {
+                "memory_usage_avg": sum(self.metrics.memory_usage) / len(self.metrics.memory_usage) if self.metrics.memory_usage else 0,
+                "cpu_usage_avg": sum(self.metrics.cpu_usage) / len(self.metrics.cpu_usage) if self.metrics.cpu_usage else 0,
+                "memory_profiling_enabled": self.config.enable_memory_profiling
+            }
+        }
+
+    async def cleanup(self):
+        """Clean up all resources"""
+
+        # Stop monitoring
+        if self.monitoring_task:
+            self.monitoring_task.cancel()
+
+        # Close HTTP session
+        await self.http_session.close()
+
+        # Shutdown thread pools
+        self.io_pool.shutdown(wait=True)
+        self.cpu_pool.shutdown(wait=True)
+
+        # Stop memory profiling
+        if self.config.enable_memory_profiling:
+            tracemalloc.stop()
+
+# Usage example
+async def performance_example():
+    """Example of comprehensive performance optimization"""
+
+    # Configure for high performance
+    config = PerformanceConfig(
+        max_async_workers=32,
+        connection_pool_size=500,
+        request_timeout=45,
+        cache_size=50000,
+        cache_ttl=1800,
+        enable_memory_profiling=True,
+        enable_request_deduplication=True,
+        circuit_breaker_threshold=10
+    )
+
+    optimizer = EnterprisePerformanceOptimizer(config)
+
+    # Simulate load testing
+    questions = [
+        "What is artificial intelligence?",
+        "How does machine learning work?",
+        "Explain neural networks",
+        "What are the benefits of AI?",
+        "How do transformers work?"
+    ] * 20  # 100 requests
+
+    print("Starting performance test...")
+    start_time = time.time()
+
+    # Test batch processing
+    results = await optimizer.batch_predict(questions, max_concurrent=16)
+
+    total_time = time.time() - start_time
+    successful_results = [r for r in results if r.get("status") == "success"]
+
+    print(f"Processed {len(results)} requests in {total_time:.2f} seconds")
+    print(f"Success rate: {len(successful_results)/len(results):.1%}")
+    print(f"Throughput: {len(results)/total_time:.1f} requests/second")
+
+    # Get comprehensive metrics
+    metrics = optimizer.get_comprehensive_metrics()
+    print("\nPerformance Metrics:")
+    print(f"Average response time: {metrics['response_times']['avg']:.3f}s")
+    print(f"P95 response time: {metrics['response_times']['p95']:.3f}s")
+    print(f"Cache hit rate: {metrics['cache']['hit_rate']:.1%}")
+    print(f"Error rate: {metrics['requests']['error_rate']:.1%}")
+
+    await optimizer.cleanup()
+
+# Run example
+# asyncio.run(performance_example())
+```
+
+## Core Performance Patterns
+
+### Async Request Processing
+
+```python
+# Advanced async patterns for DSPy
+import dspy
+import asyncio
+from typing import List, Dict, Any, Optional
+import aiohttp
+import time
+
+class AsyncRequestProcessor:
+    """High-performance async request processing"""
+
+    def __init__(self, max_concurrent: int = 10):
+        self.max_concurrent = max_concurrent
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+
+        # Configure DSPy for async
+        lm = dspy.LM("openai/gpt-4o-mini")
+        dspy.configure(lm=lm, async_max_workers=max_concurrent)
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+        # Performance tracking
+        self.active_requests = 0
+        self.total_requests = 0
+        self.response_times = []
+
+    async def process_request(self, question: str) -> Dict[str, Any]:
+        """Process single request with semaphore control"""
+
+        async with self.semaphore:
+            self.active_requests += 1
+            self.total_requests += 1
+            start_time = time.time()
+
+            try:
+                result = await self.program(question=question)
+                response_time = time.time() - start_time
+                self.response_times.append(response_time)
+
+                return {
+                    "answer": result.answer,
+                    "response_time": response_time,
+                    "status": "success"
+                }
+
+            except Exception as e:
+                return {
+                    "error": str(e),
+                    "response_time": time.time() - start_time,
+                    "status": "error"
+                }
+            finally:
+                self.active_requests -= 1
+
+    async def process_batch_streaming(self, questions: List[str]) -> List[Dict[str, Any]]:
+        """Process batch with streaming results"""
+
+        results = []
+        tasks = []
+
+        for question in questions:
+            task = asyncio.create_task(self.process_request(question))
+            tasks.append(task)
+
+        # Collect results as they complete
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+
+            # Optional: yield intermediate results for streaming
+            # yield result
+
+        return results
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get current performance statistics"""
+
+        avg_time = sum(self.response_times) / len(self.response_times) if self.response_times else 0
+
+        return {
+            "active_requests": self.active_requests,
+            "total_requests": self.total_requests,
+            "avg_response_time": avg_time,
+            "throughput": len(self.response_times) / sum(self.response_times) if self.response_times else 0
+        }
+
+# Usage
+processor = AsyncRequestProcessor(max_concurrent=20)
+
+# Process multiple requests
+questions = ["Question " + str(i) for i in range(50)]
+results = await processor.process_batch_streaming(questions)
+stats = processor.get_performance_stats()
+
+print(f"Processed {len(results)} requests")
+print(f"Average response time: {stats['avg_response_time']:.3f}s")
+print(f"Throughput: {stats['throughput']:.1f} requests/second")
+```
+
+### Memory-Efficient Caching
+
+```python
+# Memory-efficient caching with LRU and TTL
+import dspy
+import time
+import hashlib
+from typing import Dict, Any, Optional
+from collections import OrderedDict
+import threading
+
+class MemoryEfficientCache:
+    """Memory-efficient cache with LRU eviction and TTL"""
+
+    def __init__(self, max_size: int = 10000, default_ttl: int = 3600):
+        self.max_size = max_size
+        self.default_ttl = default_ttl
+
+        # Use OrderedDict for O(1) LRU operations
+        self.cache = OrderedDict()
+        self.timestamps = {}
+        self.access_counts = {}
+
+        # Thread safety
+        self.lock = threading.RLock()
+
+        # Statistics
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+
+    def _generate_key(self, question: str, model: str = "default") -> str:
+        """Generate cache key"""
+        content = f"{question.lower().strip()}:{model}"
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def _is_expired(self, key: str) -> bool:
+        """Check if cache entry is expired"""
+        if key not in self.timestamps:
+            return True
+
+        return time.time() - self.timestamps[key] > self.default_ttl
+
+    def _evict_expired(self):
+        """Remove expired entries"""
+        current_time = time.time()
+        expired_keys = [
+            key for key, timestamp in self.timestamps.items()
+            if current_time - timestamp > self.default_ttl
+        ]
+
+        for key in expired_keys:
+            self._remove_key(key)
+
+    def _evict_lru(self):
+        """Remove least recently used entry"""
+        if self.cache:
+            # Remove oldest entry (first in OrderedDict)
+            oldest_key = next(iter(self.cache))
+            self._remove_key(oldest_key)
+            self.evictions += 1
+
+    def _remove_key(self, key: str):
+        """Remove key from all data structures"""
+        self.cache.pop(key, None)
+        self.timestamps.pop(key, None)
+        self.access_counts.pop(key, None)
+
+    def get(self, question: str, model: str = "default") -> Optional[Dict[str, Any]]:
+        """Get cached result"""
+
+        key = self._generate_key(question, model)
+
+        with self.lock:
+            # Check if key exists and not expired
+            if key in self.cache and not self._is_expired(key):
+                # Move to end (most recently used)
+                value = self.cache.pop(key)
+                self.cache[key] = value
+
+                # Update access count
+                self.access_counts[key] = self.access_counts.get(key, 0) + 1
+
+                self.hits += 1
+                return value.copy()
+
+            # Clean up expired entry if exists
+            if key in self.cache:
+                self._remove_key(key)
+
+            self.misses += 1
+            return None
+
+    def put(self, question: str, result: Dict[str, Any], model: str = "default", ttl: Optional[int] = None):
+        """Cache result"""
+
+        key = self._generate_key(question, model)
+
+        with self.lock:
+            # Remove expired entries periodically
+            if len(self.cache) % 100 == 0:
+                self._evict_expired()
+
+            # Evict LRU entries if cache is full
+            while len(self.cache) >= self.max_size:
+                self._evict_lru()
+
+            # Add new entry
+            self.cache[key] = result.copy()
+            self.timestamps[key] = time.time()
+            self.access_counts[key] = 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+
+        with self.lock:
+            total_requests = self.hits + self.misses
+            hit_rate = self.hits / total_requests if total_requests > 0 else 0
+
+            # Memory usage estimation (rough)
+            avg_entry_size = 1024  # Estimated bytes per entry
+            memory_usage_mb = len(self.cache) * avg_entry_size / 1024 / 1024
+
+            return {
+                "size": len(self.cache),
+                "max_size": self.max_size,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_rate": hit_rate,
+                "evictions": self.evictions,
+                "memory_usage_mb": memory_usage_mb,
+                "utilization": len(self.cache) / self.max_size
+            }
+
+    def clear(self):
+        """Clear all cache entries"""
+        with self.lock:
+            self.cache.clear()
+            self.timestamps.clear()
+            self.access_counts.clear()
+
+# High-performance cached DSPy predictor
+class CachedPredictor:
+    """DSPy predictor with memory-efficient caching"""
+
+    def __init__(self, cache_size: int = 50000, cache_ttl: int = 1800):
+        self.cache = MemoryEfficientCache(cache_size, cache_ttl)
+
+        # Configure DSPy
+        lm = dspy.LM("openai/gpt-4o-mini")
+        dspy.configure(lm=lm)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def predict(self, question: str) -> Dict[str, Any]:
+        """Make prediction with caching"""
+
+        # Check cache first
+        cached_result = self.cache.get(question)
+        if cached_result:
+            cached_result["cached"] = True
+            return cached_result
+
+        # Make prediction
+        start_time = time.time()
+        try:
+            result = self.program(question=question)
+
+            response = {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "response_time": time.time() - start_time,
+                "cached": False,
+                "status": "success"
+            }
+
+            # Cache successful result
+            self.cache.put(question, response)
+
+            return response
+
+        except Exception as e:
+            return {
+                "error": str(e),
+                "response_time": time.time() - start_time,
+                "cached": False,
+                "status": "error"
+            }
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics"""
+        return self.cache.get_stats()
+
+# Usage
+predictor = CachedPredictor(cache_size=100000, cache_ttl=3600)
+
+# Test caching performance
+questions = ["What is AI?"] * 10 + ["How does ML work?"] * 10
+
+for question in questions:
+    result = await predictor.predict(question)
+    print(f"Cached: {result['cached']}, Time: {result.get('response_time', 0):.3f}s")
+
+# Get cache statistics
+stats = predictor.get_cache_stats()
+print(f"Cache hit rate: {stats['hit_rate']:.1%}")
+print(f"Memory usage: {stats['memory_usage_mb']:.1f}MB")
+```
+
+## Speed Tips
+
+- Use `asyncio` and `dspy.asyncify()` for high-concurrency workloads
+- Implement connection pooling with `aiohttp.TCPConnector` for better resource utilization
+- Use memory-efficient caching with LRU eviction and TTL expiration
+- Configure optimal `async_max_workers` based on your system resources
+- Implement request deduplication to avoid processing identical concurrent requests
+- Use circuit breakers to prevent cascade failures and improve resilience
+- Monitor and optimize garbage collection for memory-intensive workloads
+
+## Common Pitfalls
+
+- Not configuring proper connection limits leading to resource exhaustion
+- Missing proper error handling in async code causing hanging requests
+- Inadequate caching strategies leading to repeated expensive operations
+- Not monitoring memory usage causing OOM errors in production
+- Poor batch processing implementation reducing overall throughput
+- Missing circuit breakers leading to cascade failures during outages
+
+## Best Practices Summary
+
+- Always use async patterns with proper concurrency control for production workloads
+- Implement comprehensive caching with appropriate eviction policies
+- Monitor performance metrics continuously and set up automated alerting
+- Use connection pooling and keep-alive connections for better resource utilization
+- Implement proper error handling and circuit breakers for resilience
+- Profile memory usage and optimize garbage collection for long-running processes
+- Use batch processing and request deduplication to improve efficiency
+
+## References
+
+- [AsyncIO Best Practices](https://docs.python.org/3/library/asyncio.html)
+- [aiohttp Performance Guide](https://docs.aiohttp.org/en/stable/performance.html)
+- [DSPy Async Tutorial](https://dspy-docs.vercel.app/tutorials/async/)
+- [Python Memory Profiling](https://docs.python.org/3/library/tracemalloc.html)
+- [Circuit Breaker Pattern](https://martinfowler.com/bliki/CircuitBreaker.html)

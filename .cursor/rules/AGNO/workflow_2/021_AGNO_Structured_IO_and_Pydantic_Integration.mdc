@@ -1,0 +1,996 @@
+---
+description: AGNO Workflows 2.0 - Master structured I/O and Pydantic integration for type-safe workflows
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 structured I/O and Pydantic integration. Master type-safe data flows for production-ready workflows.
+
+## Structured I/O Architecture Flow
+
+```
+Pydantic Input → Agent Processing → Structured Output → Type Validation → Next Step
+      ↓               ↓                 ↓               ↓                ↓
+  Type Safe       Response Model    Validated Data   Auto Parsing    Structured
+  Validation      Configuration     Generation       Type Safety     Processing
+      ↓               ↓                 ↓               ↓                ↓
+  Input Valid     Agent Enhanced    Pydantic Model   Error Free      Reliable
+  Structure       Output Quality    Returned         Data Flow       Workflow
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Structured I/O
+```python
+from agno.workflow.v2 import Workflow, Step
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from pydantic import BaseModel, Field
+from typing import List
+
+# Define structured input
+class ResearchQuery(BaseModel):
+    topic: str = Field(description="Research topic")
+    depth: int = Field(description="Research depth 1-10", ge=1, le=10)
+    sources: List[str] = Field(description="Information sources")
+
+# Define structured output
+class ResearchResults(BaseModel):
+    topic: str
+    findings: List[str] 
+    confidence: float = Field(ge=0.0, le=1.0)
+
+# Agent with structured output
+structured_agent = Agent(
+    name="Structured Researcher",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=ResearchResults,  # Ensures structured output
+    role="Conduct research with structured results"
+)
+
+# Simple structured workflow
+structured_workflow = Workflow(
+    name="Structured Research",
+    steps=[structured_agent]
+)
+
+# Execute with structured input
+query = ResearchQuery(
+    topic="AI in Healthcare",
+    depth=7,
+    sources=["academic", "industry"]
+)
+
+response = structured_workflow.run(query)
+print(f"Structured result: {response.content}")
+```
+
+### Production Ready - Complex Structured Pipeline
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import List, Dict, Optional, Union
+from datetime import datetime
+from enum import Enum
+
+# Sophisticated input models
+class Priority(str, Enum):
+    low = "low"
+    medium = "medium" 
+    high = "high"
+    critical = "critical"
+
+class AnalysisType(str, Enum):
+    market = "market_analysis"
+    technical = "technical_analysis"
+    competitive = "competitive_analysis"
+    strategic = "strategic_analysis"
+
+class ComprehensiveAnalysisRequest(BaseModel):
+    """Complex structured input with validation"""
+    
+    # Core requirements
+    topic: str = Field(description="Primary analysis topic", min_length=5, max_length=200)
+    analysis_types: List[AnalysisType] = Field(description="Types of analysis to perform")
+    priority: Priority = Field(description="Request priority level")
+    
+    # Optional parameters with defaults
+    depth: int = Field(default=5, description="Analysis depth (1-10)", ge=1, le=10)
+    timeline: int = Field(default=30, description="Analysis timeline in days", ge=1, le=365)
+    budget_range: str = Field(default="medium", regex="^(low|medium|high|enterprise)$")
+    
+    # Complex nested data
+    stakeholders: List[str] = Field(default_factory=list, description="Project stakeholders")
+    constraints: Dict[str, str] = Field(default_factory=dict, description="Project constraints")
+    preferences: Dict[str, Union[str, int, bool]] = Field(default_factory=dict)
+    
+    # Metadata
+    requested_by: str = Field(description="Requester identification")
+    requested_at: datetime = Field(default_factory=datetime.now)
+    
+    @validator('topic')
+    def validate_topic(cls, v):
+        """Validate topic content"""
+        if not v.strip():
+            raise ValueError('Topic cannot be empty')
+        
+        forbidden_terms = ['illegal', 'harmful', 'unethical']
+        if any(term in v.lower() for term in forbidden_terms):
+            raise ValueError('Topic contains forbidden terms')
+        
+        return v.strip().title()
+    
+    @validator('analysis_types')
+    def validate_analysis_types(cls, v):
+        """Ensure at least one analysis type"""
+        if not v:
+            raise ValueError('At least one analysis type must be specified')
+        return v
+    
+    @root_validator
+    def validate_priority_depth_alignment(cls, values):
+        """Validate priority and depth are aligned"""
+        priority = values.get('priority')
+        depth = values.get('depth', 5)
+        
+        if priority == Priority.critical and depth < 8:
+            raise ValueError('Critical priority requires depth >= 8')
+        
+        if priority == Priority.low and depth > 3:
+            values['depth'] = 3  # Auto-adjust for low priority
+        
+        return values
+
+# Structured output models
+class AnalysisInsight(BaseModel):
+    """Single analysis insight"""
+    title: str
+    description: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    supporting_data: List[str] = Field(default_factory=list)
+    implications: List[str] = Field(default_factory=list)
+
+class AnalysisResults(BaseModel):
+    """Comprehensive analysis results"""
+    
+    # Core results
+    topic: str
+    analysis_type: AnalysisType
+    executive_summary: str
+    key_insights: List[AnalysisInsight]
+    
+    # Quality metrics
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    completeness_score: float = Field(ge=0.0, le=1.0)
+    data_quality_score: float = Field(ge=0.0, le=1.0)
+    
+    # Supporting information
+    sources_consulted: List[str]
+    methodologies_used: List[str]
+    limitations: List[str] = Field(default_factory=list)
+    
+    # Metadata
+    analysis_duration: int = Field(description="Analysis time in minutes")
+    analyst_confidence: str = Field(regex="^(low|medium|high|very_high)$")
+    recommended_actions: List[str] = Field(default_factory=list)
+
+class SynthesizedReport(BaseModel):
+    """Final synthesized report from multiple analyses"""
+    
+    # Report metadata
+    report_title: str
+    generated_at: datetime = Field(default_factory=datetime.now)
+    total_analyses_included: int
+    
+    # Consolidated results
+    unified_executive_summary: str
+    cross_analysis_insights: List[AnalysisInsight]
+    convergent_themes: List[str]
+    divergent_findings: List[str]
+    
+    # Quality and confidence
+    overall_confidence: float = Field(ge=0.0, le=1.0)
+    synthesis_quality: str = Field(regex="^(excellent|good|fair|poor)$")
+    
+    # Strategic recommendations
+    strategic_recommendations: List[str]
+    risk_factors: List[str] = Field(default_factory=list)
+    implementation_priorities: List[str] = Field(default_factory=list)
+    
+    # Source analysis results included
+    source_analyses: List[AnalysisResults] = Field(default_factory=list)
+
+# Agents with structured models
+market_analyst = Agent(
+    name="Market Analysis Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    response_model=AnalysisResults,
+    role="Conduct comprehensive market analysis with structured outputs",
+    instructions=[
+        "Perform thorough market research and analysis",
+        "Structure findings using the AnalysisResults model",
+        "Provide confidence scores based on data quality",
+        "Include specific supporting data and sources"
+    ]
+)
+
+technical_analyst = Agent(
+    name="Technical Analysis Specialist", 
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=AnalysisResults,
+    role="Perform detailed technical analysis with structured results",
+    instructions=[
+        "Analyze technical aspects and implementation details",
+        "Assess technical feasibility and constraints", 
+        "Provide structured technical insights",
+        "Include methodology details and limitations"
+    ]
+)
+
+synthesis_agent = Agent(
+    name="Report Synthesis Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=SynthesizedReport,
+    role="Synthesize multiple analyses into comprehensive report",
+    instructions=[
+        "Combine multiple analysis results coherently",
+        "Identify cross-cutting themes and insights",
+        "Generate strategic recommendations",
+        "Ensure high synthesis quality"
+    ]
+)
+
+# Custom structured processing function
+def structured_data_validator(step_input: StepInput) -> StepOutput:
+    """Validate and enhance structured data between steps"""
+    
+    # Get structured data from previous step
+    previous_data = step_input.previous_step_content
+    
+    # Type checking for AnalysisResults
+    if isinstance(previous_data, AnalysisResults):
+        # Validate data quality
+        quality_issues = []
+        
+        if previous_data.confidence_score < 0.6:
+            quality_issues.append("Low confidence score")
+        
+        if len(previous_data.key_insights) < 3:
+            quality_issues.append("Insufficient key insights")
+        
+        if not previous_data.sources_consulted:
+            quality_issues.append("No sources documented")
+        
+        # Create validation report
+        if quality_issues:
+            validation_report = f"""
+            ## Structured Data Validation - ISSUES FOUND ⚠️
+            
+            **Analysis Topic**: {previous_data.topic}
+            **Analysis Type**: {previous_data.analysis_type.value}
+            
+            **Quality Issues Identified**:
+            {chr(10).join(f"- {issue}" for issue in quality_issues)}
+            
+            **Current Metrics**:
+            - Confidence: {previous_data.confidence_score:.2f}
+            - Completeness: {previous_data.completeness_score:.2f} 
+            - Data Quality: {previous_data.data_quality_score:.2f}
+            - Insights Count: {len(previous_data.key_insights)}
+            
+            **Recommendation**: Review analysis quality before proceeding
+            """
+            
+            return StepOutput(
+                content=validation_report,
+                success=True  # Continue but flag issues
+            )
+        else:
+            validation_report = f"""
+            ## Structured Data Validation - PASSED ✅
+            
+            **Analysis Topic**: {previous_data.topic}
+            **Analysis Type**: {previous_data.analysis_type.value}
+            **Quality Score**: {(previous_data.confidence_score + previous_data.completeness_score + previous_data.data_quality_score) / 3:.2f}
+            
+            **Validation Results**:
+            - Confidence Score: {previous_data.confidence_score:.2f} ✅
+            - Key Insights: {len(previous_data.key_insights)} insights ✅
+            - Sources: {len(previous_data.sources_consulted)} sources ✅
+            - Methodologies: {len(previous_data.methodologies_used)} methods ✅
+            
+            **Structured Data Quality**: Excellent
+            """
+            
+            return StepOutput(
+                content=validation_report,
+                success=True
+            )
+    else:
+        return StepOutput(
+            content=f"❌ Expected AnalysisResults model, got {type(previous_data)}",
+            success=False,
+            error="Invalid structured data type"
+        )
+
+# Production structured workflow
+structured_production_workflow = Workflow(
+    name="Structured Analysis Pipeline",
+    description="End-to-end structured analysis with type safety",
+    steps=[
+        Step(
+            name="market_analysis",
+            description="Market analysis with structured output",
+            agent=market_analyst
+        ),
+        Step(
+            name="market_validation",
+            description="Validate market analysis structure",
+            executor=structured_data_validator
+        ),
+        Step(
+            name="technical_analysis", 
+            description="Technical analysis with structured output",
+            agent=technical_analyst
+        ),
+        Step(
+            name="technical_validation",
+            description="Validate technical analysis structure",
+            executor=structured_data_validator
+        ),
+        Step(
+            name="synthesis",
+            description="Synthesize analyses into final report",
+            agent=synthesis_agent
+        )
+    ]
+)
+
+# Execute with comprehensive structured input
+analysis_request = ComprehensiveAnalysisRequest(
+    topic="Edge Computing Infrastructure for IoT Applications",
+    analysis_types=[AnalysisType.market, AnalysisType.technical],
+    priority=Priority.high,
+    depth=8,
+    timeline=45,
+    budget_range="high",
+    stakeholders=["CTO", "Product Manager", "Engineering Lead"],
+    constraints={
+        "timeline": "Q4 2024 delivery",
+        "budget": "enterprise level",
+        "compliance": "SOC2 required"
+    },
+    preferences={
+        "detailed_technical_specs": True,
+        "market_size_focus": "global",
+        "competitive_depth": 5
+    },
+    requested_by="strategic_planning_team"
+)
+
+response = structured_production_workflow.run(
+    message=analysis_request,
+    additional_data={
+        "execution_mode": "comprehensive",
+        "quality_threshold": "high"
+    }
+)
+
+print(f"Structured workflow result: {response.content[:500]}...")
+```
+
+## Structured Input Patterns
+
+### Basic Pydantic Models
+```python
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from datetime import datetime
+
+# Simple input model
+class BasicQuery(BaseModel):
+    query: str = Field(description="Search query")
+    max_results: int = Field(default=10, ge=1, le=100)
+
+# Complex input model with validation
+class DetailedAnalysisRequest(BaseModel):
+    """Comprehensive analysis request with validation"""
+    
+    # Required fields
+    topic: str = Field(description="Analysis topic", min_length=1, max_length=500)
+    requirements: List[str] = Field(description="Analysis requirements")
+    
+    # Optional with defaults
+    priority: str = Field(default="medium", regex="^(low|medium|high|critical)$")
+    deadline: Optional[datetime] = Field(description="Analysis deadline")
+    
+    # Nested models
+    metadata: Dict[str, str] = Field(default_factory=dict)
+    
+    @validator('topic')
+    def validate_topic(cls, v):
+        if not v.strip():
+            raise ValueError('Topic cannot be empty')
+        return v.strip()
+```
+
+### Advanced Input Validation
+```python
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import List, Dict, Union
+from enum import Enum
+
+class DataSource(str, Enum):
+    web = "web"
+    academic = "academic" 
+    industry = "industry"
+    internal = "internal"
+
+class ResearchConfiguration(BaseModel):
+    """Advanced research configuration with cross-field validation"""
+    
+    # Core configuration
+    topic: str = Field(description="Research topic")
+    sources: List[DataSource] = Field(description="Data sources to use")
+    depth: int = Field(description="Research depth", ge=1, le=10)
+    
+    # Advanced options
+    include_historical: bool = Field(default=False)
+    focus_areas: List[str] = Field(default_factory=list)
+    exclusion_criteria: List[str] = Field(default_factory=list)
+    
+    # Quality requirements
+    min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    required_source_count: int = Field(default=3, ge=1, le=20)
+    
+    @validator('sources')
+    def validate_sources(cls, v):
+        if len(v) < 1:
+            raise ValueError('At least one data source required')
+        return v
+    
+    @root_validator
+    def validate_depth_source_alignment(cls, values):
+        """Ensure depth is aligned with available sources"""
+        depth = values.get('depth', 5)
+        sources = values.get('sources', [])
+        
+        if depth > 7 and len(sources) < 3:
+            raise ValueError('High depth research requires multiple sources')
+        
+        return values
+    
+    def get_research_strategy(self):
+        """Generate research strategy from configuration"""
+        return f"""
+        Research Strategy for: {self.topic}
+        - Sources: {[s.value for s in self.sources]}
+        - Depth Level: {self.depth}/10
+        - Quality Threshold: {self.min_confidence}
+        - Focus Areas: {len(self.focus_areas)} specified
+        """
+```
+
+## Structured Output Patterns
+
+### Response Model Configuration
+```python
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+from datetime import datetime
+
+# Basic response model
+class SimpleResponse(BaseModel):
+    content: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+# Comprehensive response model
+class DetailedAnalysisResponse(BaseModel):
+    """Comprehensive analysis response structure"""
+    
+    # Core response data
+    summary: str = Field(description="Executive summary")
+    detailed_findings: List[str] = Field(description="Detailed findings")
+    
+    # Quality metrics
+    confidence_score: float = Field(ge=0.0, le=1.0, description="Analysis confidence")
+    completeness_score: float = Field(ge=0.0, le=1.0, description="Analysis completeness")
+    
+    # Supporting information
+    sources_used: List[str] = Field(description="Sources consulted")
+    methodology: str = Field(description="Analysis methodology")
+    limitations: List[str] = Field(default_factory=list)
+    
+    # Structured insights
+    key_insights: List[Dict[str, Union[str, float]]] = Field(default_factory=list)
+    recommendations: List[str] = Field(default_factory=list)
+    
+    # Metadata
+    analysis_date: datetime = Field(default_factory=datetime.now)
+    analyst_notes: Optional[str] = Field(description="Additional analyst notes")
+
+# Agent with detailed response model
+detailed_agent = Agent(
+    name="Detailed Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=DetailedAnalysisResponse,
+    role="Provide comprehensive structured analysis"
+)
+```
+
+### Nested Response Models
+```python
+class Insight(BaseModel):
+    """Individual insight structure"""
+    title: str
+    description: str
+    importance: str = Field(regex="^(low|medium|high|critical)$")
+    confidence: float = Field(ge=0.0, le=1.0)
+    supporting_evidence: List[str] = Field(default_factory=list)
+
+class Recommendation(BaseModel):
+    """Structured recommendation"""
+    recommendation: str
+    rationale: str
+    priority: str = Field(regex="^(low|medium|high|critical)$")
+    effort_estimate: str = Field(regex="^(low|medium|high)$")
+    expected_impact: str = Field(regex="^(low|medium|high)$")
+
+class ComprehensiveReport(BaseModel):
+    """Nested comprehensive report structure"""
+    
+    # Report metadata
+    title: str
+    executive_summary: str
+    report_type: str
+    
+    # Structured content
+    insights: List[Insight] = Field(description="Key insights found")
+    recommendations: List[Recommendation] = Field(description="Strategic recommendations")
+    
+    # Quality and validation
+    overall_confidence: float = Field(ge=0.0, le=1.0)
+    data_quality_assessment: str = Field(regex="^(poor|fair|good|excellent)$")
+    
+    # Report statistics
+    total_sources: int = Field(ge=0)
+    analysis_depth: int = Field(ge=1, le=10)
+    word_count: int = Field(ge=0)
+```
+
+## Structured Data Flow Management
+
+### Type-Safe Step Processing
+```python
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def structured_data_processor(step_input: StepInput) -> StepOutput:
+    """Process structured data with type safety"""
+    
+    # Get structured data from previous step
+    structured_data = step_input.previous_step_content
+    
+    # Type checking and processing
+    if isinstance(structured_data, DetailedAnalysisResponse):
+        # Access structured fields safely
+        confidence = structured_data.confidence_score
+        insights_count = len(structured_data.key_insights)
+        sources_count = len(structured_data.sources_used)
+        
+        # Process structured data
+        processing_report = f"""
+        ## Structured Data Processing Report
+        
+        **Analysis Summary**: {structured_data.summary[:200]}...
+        
+        **Quality Metrics**:
+        - Confidence: {confidence:.2f}
+        - Completeness: {structured_data.completeness_score:.2f}
+        - Insights Generated: {insights_count}
+        - Sources Consulted: {sources_count}
+        
+        **Processing Status**: Successfully processed structured analysis data
+        **Data Validation**: All required fields present and valid
+        
+        **Next Steps**: Data ready for synthesis phase
+        """
+        
+        return StepOutput(content=processing_report, success=True)
+        
+    elif isinstance(structured_data, str):
+        # Handle unstructured string data
+        return StepOutput(
+            content=f"Processed unstructured data: {len(structured_data)} characters",
+            success=True
+        )
+    
+    else:
+        return StepOutput(
+            content=f"❌ Unexpected data type: {type(structured_data)}",
+            success=False,
+            error=f"Expected structured model, got {type(structured_data)}"
+        )
+```
+
+### Multi-Model Data Handling
+```python
+from typing import Union
+
+def multi_model_processor(step_input: StepInput) -> StepOutput:
+    """Handle multiple structured model types"""
+    
+    data = step_input.previous_step_content
+    
+    # Handle different structured types
+    if isinstance(data, DetailedAnalysisResponse):
+        return StepOutput(
+            content=f"Processed analysis response: {data.confidence_score:.2f} confidence",
+            success=True
+        )
+    
+    elif isinstance(data, ComprehensiveReport):
+        return StepOutput(
+            content=f"Processed report: {len(data.insights)} insights, {len(data.recommendations)} recommendations",
+            success=True
+        )
+    
+    elif isinstance(data, dict):
+        # Handle parallel outputs with structured data
+        processed_items = []
+        for step_name, step_data in data.items():
+            if hasattr(step_data, 'confidence_score'):
+                processed_items.append(f"{step_name}: {step_data.confidence_score:.2f}")
+            else:
+                processed_items.append(f"{step_name}: processed")
+        
+        return StepOutput(
+            content=f"Processed parallel structured data: {', '.join(processed_items)}",
+            success=True
+        )
+    
+    else:
+        return StepOutput(
+            content="Processing fallback for non-structured data",
+            success=True
+        )
+
+# Custom structured data aggregator
+class StructuredDataAggregator:
+    """Aggregate multiple structured responses"""
+    
+    def __init__(self):
+        self.analyses = []
+        self.reports = []
+        self.insights = []
+    
+    def add_analysis(self, analysis: DetailedAnalysisResponse):
+        """Add structured analysis"""
+        self.analyses.append(analysis)
+        self.insights.extend(analysis.key_insights)
+    
+    def add_report(self, report: ComprehensiveReport):
+        """Add structured report"""
+        self.reports.append(report)
+        self.insights.extend([
+            {"title": insight.title, "confidence": insight.confidence}
+            for insight in report.insights
+        ])
+    
+    def generate_aggregate_summary(self) -> Dict:
+        """Generate summary of all structured data"""
+        return {
+            "total_analyses": len(self.analyses),
+            "total_reports": len(self.reports),
+            "total_insights": len(self.insights),
+            "average_confidence": sum(
+                insight.get("confidence", 0) for insight in self.insights
+            ) / max(len(self.insights), 1),
+            "data_sources": list(set(
+                source for analysis in self.analyses 
+                for source in analysis.sources_used
+            ))
+        }
+
+def structured_aggregation_processor(step_input: StepInput) -> StepOutput:
+    """Aggregate structured data using specialized aggregator"""
+    
+    aggregator = StructuredDataAggregator()
+    data = step_input.previous_step_content
+    
+    # Handle different input types
+    if isinstance(data, dict):  # Parallel outputs
+        for step_data in data.values():
+            if isinstance(step_data, DetailedAnalysisResponse):
+                aggregator.add_analysis(step_data)
+            elif isinstance(step_data, ComprehensiveReport):
+                aggregator.add_report(step_data)
+    
+    elif isinstance(data, (DetailedAnalysisResponse, ComprehensiveReport)):
+        if isinstance(data, DetailedAnalysisResponse):
+            aggregator.add_analysis(data)
+        else:
+            aggregator.add_report(data)
+    
+    # Generate aggregate summary
+    summary = aggregator.generate_aggregate_summary()
+    
+    aggregation_report = f"""
+    ## Structured Data Aggregation Report
+    
+    **Aggregation Summary**:
+    - Total Analyses: {summary['total_analyses']}
+    - Total Reports: {summary['total_reports']} 
+    - Total Insights: {summary['total_insights']}
+    - Average Confidence: {summary['average_confidence']:.2f}
+    - Unique Data Sources: {len(summary['data_sources'])}
+    
+    **Data Quality**: Structured aggregation completed successfully
+    **Processing Status**: All structured models processed and validated
+    """
+    
+    return StepOutput(content=aggregation_report, success=True)
+```
+
+## Advanced Structured Patterns
+
+### Dynamic Model Generation
+```python
+from pydantic import create_model
+from typing import Dict, Any
+
+def create_dynamic_response_model(fields_config: Dict[str, Any]) -> BaseModel:
+    """Create response model dynamically based on configuration"""
+    
+    # Build field definitions
+    field_definitions = {}
+    
+    for field_name, field_config in fields_config.items():
+        field_type = field_config.get("type", str)
+        field_description = field_config.get("description", "")
+        field_default = field_config.get("default", ...)
+        
+        if field_default == ...:
+            # Required field
+            field_definitions[field_name] = (field_type, Field(description=field_description))
+        else:
+            # Optional field with default
+            field_definitions[field_name] = (field_type, Field(default=field_default, description=field_description))
+    
+    # Create dynamic model
+    DynamicModel = create_model("DynamicResponse", **field_definitions)
+    return DynamicModel
+
+# Usage example
+response_config = {
+    "analysis_summary": {"type": str, "description": "Main analysis summary"},
+    "confidence_score": {"type": float, "description": "Analysis confidence"},
+    "key_findings": {"type": List[str], "default": [], "description": "Key findings"},
+    "source_count": {"type": int, "default": 0, "description": "Number of sources"}
+}
+
+DynamicResponseModel = create_dynamic_response_model(response_config)
+
+# Create agent with dynamic model
+dynamic_agent = Agent(
+    name="Dynamic Response Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=DynamicResponseModel,
+    role="Generate responses using dynamic model"
+)
+```
+
+### Structured Validation Pipeline
+```python
+from pydantic import ValidationError
+
+def comprehensive_validation_processor(step_input: StepInput) -> StepOutput:
+    """Comprehensive validation of structured data"""
+    
+    data = step_input.previous_step_content
+    validation_results = []
+    
+    # Validate structured data thoroughly
+    if isinstance(data, DetailedAnalysisResponse):
+        # Validate confidence scores
+        if data.confidence_score < 0.5:
+            validation_results.append("❌ Low confidence score")
+        else:
+            validation_results.append("✅ Acceptable confidence score")
+        
+        # Validate completeness
+        if data.completeness_score < 0.7:
+            validation_results.append("❌ Low completeness score")
+        else:
+            validation_results.append("✅ Good completeness score")
+        
+        # Validate content quality
+        if len(data.detailed_findings) < 3:
+            validation_results.append("❌ Insufficient detailed findings")
+        else:
+            validation_results.append("✅ Adequate detailed findings")
+        
+        # Validate sources
+        if len(data.sources_used) < 2:
+            validation_results.append("❌ Too few sources")
+        else:
+            validation_results.append("✅ Adequate source diversity")
+        
+        overall_status = "PASS" if all("✅" in result for result in validation_results) else "NEEDS_REVIEW"
+        
+        validation_report = f"""
+        ## Comprehensive Structured Data Validation
+        
+        **Validation Status**: {overall_status}
+        **Data Type**: {type(data).__name__}
+        
+        **Detailed Validation Results**:
+        {chr(10).join(validation_results)}
+        
+        **Summary Metrics**:
+        - Confidence: {data.confidence_score:.2f}
+        - Completeness: {data.completeness_score:.2f}
+        - Findings Count: {len(data.detailed_findings)}
+        - Sources Count: {len(data.sources_used)}
+        
+        **Validation Recommendation**: {'Proceed with data' if overall_status == 'PASS' else 'Review data quality'}
+        """
+        
+        return StepOutput(
+            content=validation_report,
+            success=(overall_status == "PASS")
+        )
+    
+    else:
+        return StepOutput(
+            content=f"❌ Cannot validate non-structured data of type: {type(data)}",
+            success=False
+        )
+```
+
+## Speed Tips
+
+### Quick Structured Model Creation
+```python
+# Rapid model factory
+def quick_response_model(name: str, fields: Dict[str, type]):
+    """Create response model quickly"""
+    field_definitions = {
+        field_name: (field_type, Field(description=f"{field_name} field"))
+        for field_name, field_type in fields.items()
+    }
+    return create_model(name, **field_definitions)
+
+# Usage
+QuickAnalysis = quick_response_model("QuickAnalysis", {
+    "summary": str,
+    "confidence": float,
+    "findings": List[str]
+})
+
+quick_agent = Agent(
+    name="Quick Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=QuickAnalysis
+)
+```
+
+### Structured Workflow Templates
+```python
+class StructuredWorkflowFactory:
+    """Factory for structured workflows"""
+    
+    @staticmethod
+    def analysis_workflow(input_model: BaseModel, response_model: BaseModel, agent_name: str):
+        """Create structured analysis workflow"""
+        
+        analyst = Agent(
+            name=agent_name,
+            model=OpenAIChat(id="gpt-4o"),
+            response_model=response_model,
+            role="Structured analysis with type safety"
+        )
+        
+        return Workflow(
+            name=f"Structured {agent_name} Workflow",
+            steps=[analyst]
+        )
+    
+    @staticmethod
+    def multi_stage_structured(stages: List[Dict[str, Any]]):
+        """Create multi-stage structured workflow"""
+        
+        steps = []
+        for stage in stages:
+            agent = Agent(
+                name=stage["name"],
+                model=OpenAIChat(id="gpt-4o"),
+                response_model=stage["response_model"],
+                role=stage["role"]
+            )
+            steps.append(Step(name=stage["step_name"], agent=agent))
+        
+        return Workflow(name="Multi-Stage Structured", steps=steps)
+
+# Usage
+factory = StructuredWorkflowFactory()
+
+# Quick structured workflow
+analysis_workflow = factory.analysis_workflow(
+    input_model=ResearchQuery,
+    response_model=ResearchResults,
+    agent_name="Research Analyst"
+)
+```
+
+## Common Pitfalls
+
+### Model Validation Issues
+```python
+# ❌ DON'T: Create models without validation
+class BadModel(BaseModel):
+    value: str  # No validation
+
+# ✅ DO: Include appropriate validation
+class GoodModel(BaseModel):
+    value: str = Field(min_length=1, max_length=1000, description="Validated value")
+    
+    @validator('value')
+    def validate_value(cls, v):
+        if not v.strip():
+            raise ValueError('Value cannot be empty')
+        return v.strip()
+```
+
+### Type Safety Violations
+```python
+# ❌ DON'T: Assume structured data without checking
+def bad_processor(step_input: StepInput) -> StepOutput:
+    data = step_input.previous_step_content
+    return StepOutput(content=data.confidence_score)  # May fail
+
+# ✅ DO: Check types before accessing attributes
+def good_processor(step_input: StepInput) -> StepOutput:
+    data = step_input.previous_step_content
+    
+    if hasattr(data, 'confidence_score'):
+        return StepOutput(content=f"Confidence: {data.confidence_score}")
+    else:
+        return StepOutput(content="No confidence data available")
+```
+
+### Model Complexity Issues
+```python
+# ❌ DON'T: Create overly complex nested models
+class OverlyComplexModel(BaseModel):
+    level1: Dict[str, Dict[str, Dict[str, List[Dict[str, str]]]]]  # Too nested
+
+# ✅ DO: Use reasonable nesting with clear types
+class WellStructuredModel(BaseModel):
+    categories: Dict[str, List[str]]
+    metadata: Dict[str, Union[str, int, float]]
+    results: List[AnalysisInsight]  # Use other models for nesting
+```
+
+## Best Practices Summary
+
+- **Model Design**: Create focused, well-validated Pydantic models
+- **Type Safety**: Always check types before accessing structured attributes
+- **Validation**: Implement comprehensive field and cross-field validation
+- **Error Handling**: Handle ValidationError and type mismatches gracefully
+- **Documentation**: Document model fields with clear descriptions
+- **Nesting**: Use reasonable model nesting, avoid excessive complexity
+- **Performance**: Cache model instances when possible
+- **Testing**: Test structured workflows with valid and invalid inputs
+- **Flexibility**: Support both structured and unstructured data flows
+
+## References
+
+- [Pydantic Documentation](https://docs.pydantic.dev/)
+- [Agent Response Models](/docs/agents/response_models.md)
+- [Workflow Data Types](/docs/workflows_2/data_types.md)
+- [Type Safety Guide](/docs/workflows_2/type_safety.md)

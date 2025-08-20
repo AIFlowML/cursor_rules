@@ -1,0 +1,1239 @@
+---
+description: Complete Testing Strategies - Comprehensive testing patterns for DSPy programs and applications
+alwaysApply: false
+---
+
+> You are an expert in building comprehensive testing strategies for DSPy 3.0.1 applications with unit, integration, and performance testing patterns.
+
+## Complete Testing Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Unit Tests    │    │   Integration   │    │   End-to-End    │
+│   (Modules)     │───▶│   Tests         │───▶│   Tests         │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Mock Testing  │    │   Data Pipeline │    │   Performance   │
+│   (LM Calls)    │───▶│   Testing       │───▶│   Testing       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Regression    │    │   Evaluation    │    │   CI/CD         │
+│   Testing       │◀───│   Testing       │◀───│   Integration   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant Testing Templates
+
+### Quick Start Testing Setup
+```python
+import pytest
+import dspy
+from unittest.mock import Mock, patch
+import tempfile
+import json
+
+# Basic DSPy program for testing
+class SimpleQA(dspy.Module):
+    def __init__(self):
+        self.qa = dspy.ChainOfThought('question -> answer')
+    
+    def forward(self, question):
+        return self.qa(question=question)
+
+# Simple test
+def test_simple_qa():
+    """Basic test with mock LM"""
+    
+    # Mock the LM response
+    mock_lm = Mock()
+    mock_response = Mock()
+    mock_response.answer = "Test answer"
+    mock_lm.return_value = mock_response
+    
+    with patch('dspy.settings.lm', mock_lm):
+        qa_system = SimpleQA()
+        result = qa_system(question="What is testing?")
+        assert result.answer == "Test answer"
+
+if __name__ == "__main__":
+    pytest.main([__file__])
+```
+
+### Production Testing Framework
+```python
+import pytest
+import dspy
+import asyncio
+import time
+import logging
+from typing import Dict, List, Any, Optional, Callable
+from unittest.mock import Mock, patch, MagicMock
+from dataclasses import dataclass
+from contextlib import contextmanager
+import tempfile
+import json
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+# Configure logging for tests
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class TestResult:
+    """Test result container"""
+    test_name: str
+    success: bool
+    execution_time: float
+    error_message: Optional[str] = None
+    metrics: Optional[Dict[str, float]] = None
+
+class DSPyTestFramework:
+    """Comprehensive testing framework for DSPy applications"""
+    
+    def __init__(self):
+        self.test_results = []
+        self.mock_responses = {}
+        self.temp_dir = None
+        
+    def setup_test_environment(self):
+        """Setup isolated test environment"""
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Configure DSPy for testing
+        dspy.settings.configure(
+            cache_turn_on=False,  # Disable cache for deterministic tests
+            experimental=True
+        )
+        
+        return self.temp_dir
+    
+    def cleanup_test_environment(self):
+        """Cleanup test environment"""
+        if self.temp_dir:
+            import shutil
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    @contextmanager
+    def mock_lm_responses(self, responses: Dict[str, Any]):
+        """Context manager for mocking LM responses"""
+        
+        original_lm = dspy.settings.lm
+        
+        # Create mock LM
+        mock_lm = MagicMock()
+        
+        def mock_call(*args, **kwargs):
+            # Extract input from kwargs or args
+            input_key = None
+            if 'question' in kwargs:
+                input_key = kwargs['question']
+            elif 'text' in kwargs:
+                input_key = kwargs['text']
+            elif args:
+                input_key = str(args[0])
+            
+            # Return predefined response or default
+            if input_key in responses:
+                return responses[input_key]
+            else:
+                # Return default mock response
+                mock_response = Mock()
+                mock_response.answer = "Default mock answer"
+                mock_response.confidence = 0.8
+                return mock_response
+        
+        mock_lm.side_effect = mock_call
+        
+        try:
+            # Replace LM with mock
+            dspy.settings.lm = mock_lm
+            yield mock_lm
+        finally:
+            # Restore original LM
+            dspy.settings.lm = original_lm
+    
+    def run_test_suite(self, test_functions: List[Callable]) -> List[TestResult]:
+        """Run a suite of test functions"""
+        
+        results = []
+        
+        for test_func in test_functions:
+            try:
+                start_time = time.time()
+                
+                # Run test
+                test_func()
+                
+                execution_time = time.time() - start_time
+                
+                results.append(TestResult(
+                    test_name=test_func.__name__,
+                    success=True,
+                    execution_time=execution_time
+                ))
+                
+                logger.info(f"✅ {test_func.__name__} passed ({execution_time:.3f}s)")
+                
+            except Exception as e:
+                execution_time = time.time() - start_time
+                
+                results.append(TestResult(
+                    test_name=test_func.__name__,
+                    success=False,
+                    execution_time=execution_time,
+                    error_message=str(e)
+                ))
+                
+                logger.error(f"❌ {test_func.__name__} failed: {str(e)}")
+        
+        return results
+    
+    def generate_test_report(self, results: List[TestResult]) -> Dict[str, Any]:
+        """Generate comprehensive test report"""
+        
+        total_tests = len(results)
+        passed_tests = sum(1 for r in results if r.success)
+        failed_tests = total_tests - passed_tests
+        
+        avg_execution_time = sum(r.execution_time for r in results) / total_tests if total_tests > 0 else 0
+        
+        return {
+            "summary": {
+                "total_tests": total_tests,
+                "passed": passed_tests,
+                "failed": failed_tests,
+                "success_rate": passed_tests / total_tests * 100 if total_tests > 0 else 0,
+                "avg_execution_time": avg_execution_time
+            },
+            "details": [
+                {
+                    "test_name": r.test_name,
+                    "success": r.success,
+                    "execution_time": r.execution_time,
+                    "error_message": r.error_message
+                }
+                for r in results
+            ]
+        }
+
+# Comprehensive test fixtures
+@pytest.fixture
+def dspy_test_framework():
+    """Pytest fixture for DSPy testing framework"""
+    framework = DSPyTestFramework()
+    framework.setup_test_environment()
+    yield framework
+    framework.cleanup_test_environment()
+
+@pytest.fixture
+def sample_qa_program():
+    """Sample QA program for testing"""
+    class TestQAProgram(dspy.Module):
+        def __init__(self):
+            self.qa = dspy.ChainOfThought('question -> answer: str, confidence: float')
+        
+        def forward(self, question: str):
+            return self.qa(question=question)
+    
+    return TestQAProgram()
+
+@pytest.fixture
+def sample_classifier():
+    """Sample classifier for testing"""
+    class TestClassifier(dspy.Module):
+        def __init__(self, classes: List[str]):
+            self.classes = classes
+            self.classifier = dspy.ChainOfThought(f'text -> predicted_class: str, confidence: float')
+        
+        def forward(self, text: str):
+            return self.classifier(text=text)
+    
+    return TestClassifier(classes=["positive", "negative", "neutral"])
+
+@pytest.fixture
+def sample_data():
+    """Sample test data"""
+    return {
+        'qa_examples': [
+            {"question": "What is AI?", "expected_answer": "Artificial Intelligence"},
+            {"question": "How does ML work?", "expected_answer": "Machine Learning algorithms"}
+        ],
+        'classification_examples': [
+            {"text": "I love this product", "expected_class": "positive"},
+            {"text": "This is terrible", "expected_class": "negative"},
+            {"text": "It's okay", "expected_class": "neutral"}
+        ]
+    }
+```
+
+## Unit Testing Patterns
+
+### DSPy Module Unit Tests
+```python
+class TestDSPyModules:
+    """Unit tests for DSPy modules"""
+    
+    def test_signature_creation(self):
+        """Test DSPy signature creation"""
+        
+        # Test basic signature
+        signature = dspy.Signature('question -> answer')
+        assert signature is not None
+        
+        # Test typed signature
+        typed_signature = dspy.Signature('text: str -> category: str, confidence: float')
+        assert typed_signature is not None
+    
+    def test_predict_module(self, dspy_test_framework):
+        """Test basic Predict module"""
+        
+        with dspy_test_framework.mock_lm_responses({
+            "test question": Mock(answer="test answer")
+        }):
+            predictor = dspy.Predict('question -> answer')
+            result = predictor(question="test question")
+            
+            assert hasattr(result, 'answer')
+            assert result.answer == "test answer"
+    
+    def test_chain_of_thought_module(self, dspy_test_framework):
+        """Test ChainOfThought module"""
+        
+        mock_result = Mock()
+        mock_result.reasoning = "Test reasoning"
+        mock_result.answer = "Test answer"
+        
+        with dspy_test_framework.mock_lm_responses({
+            "complex question": mock_result
+        }):
+            cot = dspy.ChainOfThought('question -> reasoning: str, answer: str')
+            result = cot(question="complex question")
+            
+            assert hasattr(result, 'reasoning')
+            assert hasattr(result, 'answer')
+            assert result.reasoning == "Test reasoning"
+            assert result.answer == "Test answer"
+    
+    def test_custom_module(self, dspy_test_framework, sample_qa_program):
+        """Test custom DSPy module"""
+        
+        mock_result = Mock()
+        mock_result.answer = "Custom answer"
+        mock_result.confidence = 0.9
+        
+        with dspy_test_framework.mock_lm_responses({
+            "What is testing?": mock_result
+        }):
+            result = sample_qa_program(question="What is testing?")
+            
+            assert hasattr(result, 'answer')
+            assert hasattr(result, 'confidence')
+            assert result.answer == "Custom answer"
+            assert result.confidence == 0.9
+    
+    def test_module_with_invalid_input(self, sample_qa_program):
+        """Test module behavior with invalid input"""
+        
+        with pytest.raises(Exception):
+            sample_qa_program(question="")  # Empty question
+        
+        with pytest.raises(TypeError):
+            sample_qa_program()  # Missing required argument
+    
+    def test_signature_validation(self):
+        """Test signature input/output validation"""
+        
+        # Test with proper types
+        class TypedSignature(dspy.Signature):
+            text: str = dspy.InputField()
+            number: int = dspy.InputField() 
+            result: str = dspy.OutputField()
+        
+        # This should work
+        predictor = dspy.Predict(TypedSignature)
+        assert predictor is not None
+        
+        # Test signature parsing
+        parsed_signature = dspy.Signature('input1: str, input2: int -> output: str')
+        assert parsed_signature is not None
+
+class TestOptimizers:
+    """Unit tests for DSPy optimizers"""
+    
+    def test_bootstrap_optimizer(self, dspy_test_framework, sample_qa_program, sample_data):
+        """Test BootstrapFewShot optimizer"""
+        
+        # Create training examples
+        trainset = [
+            dspy.Example(question=ex["question"], answer=ex["expected_answer"]).with_inputs("question")
+            for ex in sample_data['qa_examples']
+        ]
+        
+        # Mock metric
+        def simple_metric(example, prediction, trace=None):
+            return True  # Always pass for testing
+        
+        with dspy_test_framework.mock_lm_responses({
+            "What is AI?": Mock(answer="Artificial Intelligence", confidence=0.9),
+            "How does ML work?": Mock(answer="Machine Learning algorithms", confidence=0.8)
+        }):
+            optimizer = dspy.BootstrapFewShot(metric=simple_metric)
+            
+            # This should not raise an exception
+            optimized_program = optimizer.compile(
+                sample_qa_program,
+                trainset=trainset,
+                max_bootstrapped_demos=1
+            )
+            
+            assert optimized_program is not None
+    
+    def test_evaluation_metrics(self, sample_data):
+        """Test evaluation metrics"""
+        
+        # Test exact match metric
+        def exact_match(example, prediction, trace=None):
+            return example.answer == prediction.answer
+        
+        # Create test example and prediction
+        example = dspy.Example(question="test", answer="expected")
+        prediction = Mock(answer="expected")
+        
+        assert exact_match(example, prediction) == True
+        
+        # Test with mismatch
+        prediction.answer = "different"
+        assert exact_match(example, prediction) == False
+    
+    def test_optimizer_with_no_training_data(self, sample_qa_program):
+        """Test optimizer behavior with no training data"""
+        
+        def simple_metric(example, prediction, trace=None):
+            return True
+        
+        optimizer = dspy.BootstrapFewShot(metric=simple_metric)
+        
+        with pytest.raises(Exception):
+            optimizer.compile(sample_qa_program, trainset=[])
+
+class TestDataHandling:
+    """Unit tests for data handling"""
+    
+    def test_example_creation(self):
+        """Test DSPy Example creation"""
+        
+        # Basic example
+        example = dspy.Example(question="test", answer="response")
+        assert example.question == "test"
+        assert example.answer == "response"
+        
+        # Example with input specification
+        example_with_inputs = dspy.Example(
+            question="test", 
+            answer="response"
+        ).with_inputs("question")
+        
+        assert "question" in example_with_inputs.inputs()
+        assert "answer" not in example_with_inputs.inputs()
+    
+    def test_data_loading(self, tmp_path):
+        """Test data loading functionality"""
+        
+        # Create temporary test data
+        test_data = [
+            {"question": "Q1", "answer": "A1"},
+            {"question": "Q2", "answer": "A2"}
+        ]
+        
+        data_file = tmp_path / "test_data.json"
+        with open(data_file, 'w') as f:
+            json.dump(test_data, f)
+        
+        # Load data
+        with open(data_file) as f:
+            loaded_data = json.load(f)
+        
+        assert len(loaded_data) == 2
+        assert loaded_data[0]["question"] == "Q1"
+    
+    def test_data_preprocessing(self, sample_data):
+        """Test data preprocessing functions"""
+        
+        def preprocess_text(text: str) -> str:
+            return text.lower().strip()
+        
+        # Test preprocessing
+        processed = preprocess_text("  TEST TEXT  ")
+        assert processed == "test text"
+        
+        # Test with batch data
+        texts = ["Text 1", "  Text 2  ", "TEXT 3"]
+        processed_texts = [preprocess_text(text) for text in texts]
+        
+        assert processed_texts == ["text 1", "text 2", "text 3"]
+```
+
+## Integration Testing Patterns
+
+### End-to-End Pipeline Testing
+```python
+class TestDSPyPipelines:
+    """Integration tests for complete DSPy pipelines"""
+    
+    def test_rag_pipeline(self, dspy_test_framework):
+        """Test complete RAG pipeline"""
+        
+        class SimpleRAG(dspy.Module):
+            def __init__(self, retriever):
+                self.retriever = retriever
+                self.qa = dspy.ChainOfThought('context, question -> answer')
+            
+            def forward(self, question):
+                context = self.retriever(question)
+                return self.qa(context=context, question=question)
+        
+        # Mock retriever
+        mock_retriever = Mock()
+        mock_retriever.return_value = "Relevant context"
+        
+        # Mock QA response
+        mock_qa_result = Mock()
+        mock_qa_result.answer = "RAG answer"
+        
+        with dspy_test_framework.mock_lm_responses({
+            "test question": mock_qa_result
+        }):
+            rag_system = SimpleRAG(retriever=mock_retriever)
+            result = rag_system(question="test question")
+            
+            assert hasattr(result, 'answer')
+            assert result.answer == "RAG answer"
+            
+            # Verify retriever was called
+            mock_retriever.assert_called_once_with("test question")
+    
+    def test_classification_pipeline(self, dspy_test_framework):
+        """Test classification pipeline with preprocessing"""
+        
+        class ClassificationPipeline(dspy.Module):
+            def __init__(self, classes):
+                self.classes = classes
+                self.classifier = dspy.ChainOfThought('text -> predicted_class: str, confidence: float')
+            
+            def preprocess(self, text):
+                return text.lower().strip()
+            
+            def forward(self, text):
+                processed_text = self.preprocess(text)
+                return self.classifier(text=processed_text)
+        
+        mock_result = Mock()
+        mock_result.predicted_class = "positive"
+        mock_result.confidence = 0.85
+        
+        with dspy_test_framework.mock_lm_responses({
+            "this is great!": mock_result
+        }):
+            pipeline = ClassificationPipeline(["positive", "negative", "neutral"])
+            result = pipeline(text="  THIS IS GREAT!  ")
+            
+            assert result.predicted_class == "positive"
+            assert result.confidence == 0.85
+    
+    def test_multi_step_pipeline(self, dspy_test_framework):
+        """Test multi-step processing pipeline"""
+        
+        class MultiStepPipeline(dspy.Module):
+            def __init__(self):
+                self.intent_classifier = dspy.ChainOfThought('text -> intent: str')
+                self.response_generator = dspy.ChainOfThought('intent, text -> response: str')
+            
+            def forward(self, text):
+                intent_result = self.intent_classifier(text=text)
+                response_result = self.response_generator(
+                    intent=intent_result.intent, 
+                    text=text
+                )
+                
+                return dspy.Prediction(
+                    intent=intent_result.intent,
+                    response=response_result.response
+                )
+        
+        # Mock responses for each step
+        mock_intent = Mock()
+        mock_intent.intent = "question"
+        
+        mock_response = Mock()
+        mock_response.response = "Here's your answer"
+        
+        with patch.object(dspy.ChainOfThought, '__call__') as mock_call:
+            mock_call.side_effect = [mock_intent, mock_response]
+            
+            pipeline = MultiStepPipeline()
+            result = pipeline(text="What is the weather?")
+            
+            assert result.intent == "question"
+            assert result.response == "Here's your answer"
+            
+            # Verify both steps were called
+            assert mock_call.call_count == 2
+
+class TestExternalIntegrations:
+    """Test integration with external services"""
+    
+    def test_api_integration(self, dspy_test_framework):
+        """Test integration with external APIs"""
+        
+        class APIIntegratedModule(dspy.Module):
+            def __init__(self, api_client):
+                self.api_client = api_client
+                self.processor = dspy.ChainOfThought('data -> analysis: str')
+            
+            def forward(self, query):
+                # Fetch data from API
+                api_data = self.api_client.fetch_data(query)
+                
+                # Process with DSPy
+                result = self.processor(data=api_data)
+                
+                return result
+        
+        # Mock API client
+        mock_api_client = Mock()
+        mock_api_client.fetch_data.return_value = "API data"
+        
+        mock_result = Mock()
+        mock_result.analysis = "API analysis"
+        
+        with dspy_test_framework.mock_lm_responses({
+            "API data": mock_result
+        }):
+            module = APIIntegratedModule(mock_api_client)
+            result = module(query="test query")
+            
+            assert result.analysis == "API analysis"
+            mock_api_client.fetch_data.assert_called_once_with("test query")
+    
+    def test_database_integration(self, dspy_test_framework):
+        """Test integration with database operations"""
+        
+        class DatabaseModule(dspy.Module):
+            def __init__(self, db_connection):
+                self.db = db_connection
+                self.analyzer = dspy.ChainOfThought('data -> insights: str')
+            
+            def forward(self, query_params):
+                # Query database
+                data = self.db.query(query_params)
+                
+                # Analyze with DSPy
+                result = self.analyzer(data=str(data))
+                
+                return result
+        
+        # Mock database
+        mock_db = Mock()
+        mock_db.query.return_value = [{"id": 1, "value": "test"}]
+        
+        mock_result = Mock()
+        mock_result.insights = "Data insights"
+        
+        with dspy_test_framework.mock_lm_responses({
+            "[{'id': 1, 'value': 'test'}]": mock_result
+        }):
+            module = DatabaseModule(mock_db)
+            result = module(query_params={"filter": "test"})
+            
+            assert result.insights == "Data insights"
+            mock_db.query.assert_called_once_with({"filter": "test"})
+```
+
+## Performance and Load Testing
+
+### Performance Testing Framework
+```python
+import time
+import statistics
+import concurrent.futures
+import threading
+from typing import List, Callable
+
+class DSPyPerformanceTester:
+    """Performance testing framework for DSPy applications"""
+    
+    def __init__(self):
+        self.metrics = {}
+        self.lock = threading.Lock()
+    
+    def measure_execution_time(self, func: Callable, *args, **kwargs) -> Dict[str, Any]:
+        """Measure execution time of a function"""
+        
+        start_time = time.time()
+        start_cpu = time.process_time()
+        
+        try:
+            result = func(*args, **kwargs)
+            success = True
+            error = None
+        except Exception as e:
+            result = None
+            success = False
+            error = str(e)
+        
+        end_time = time.time()
+        end_cpu = time.process_time()
+        
+        return {
+            'result': result,
+            'success': success,
+            'error': error,
+            'wall_time': end_time - start_time,
+            'cpu_time': end_cpu - start_cpu,
+            'timestamp': start_time
+        }
+    
+    def load_test(self, 
+                  func: Callable, 
+                  args_list: List[tuple], 
+                  num_threads: int = 10,
+                  max_workers: int = None) -> Dict[str, Any]:
+        """Perform load testing with multiple threads"""
+        
+        results = []
+        
+        def worker(args):
+            return self.measure_execution_time(func, *args)
+        
+        # Execute with thread pool
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers or num_threads) as executor:
+            futures = [executor.submit(worker, args) for args in args_list]
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    results.append({
+                        'success': False,
+                        'error': str(e),
+                        'wall_time': 0,
+                        'cpu_time': 0
+                    })
+        
+        # Calculate statistics
+        successful_results = [r for r in results if r['success']]
+        wall_times = [r['wall_time'] for r in successful_results]
+        cpu_times = [r['cpu_time'] for r in successful_results]
+        
+        if wall_times:
+            stats = {
+                'total_requests': len(results),
+                'successful_requests': len(successful_results),
+                'failed_requests': len(results) - len(successful_results),
+                'success_rate': len(successful_results) / len(results) * 100,
+                'wall_time_stats': {
+                    'min': min(wall_times),
+                    'max': max(wall_times),
+                    'mean': statistics.mean(wall_times),
+                    'median': statistics.median(wall_times),
+                    'stdev': statistics.stdev(wall_times) if len(wall_times) > 1 else 0
+                },
+                'cpu_time_stats': {
+                    'min': min(cpu_times),
+                    'max': max(cpu_times),
+                    'mean': statistics.mean(cpu_times),
+                    'median': statistics.median(cpu_times),
+                    'stdev': statistics.stdev(cpu_times) if len(cpu_times) > 1 else 0
+                },
+                'throughput': len(successful_results) / max(wall_times) if wall_times else 0
+            }
+        else:
+            stats = {
+                'total_requests': len(results),
+                'successful_requests': 0,
+                'failed_requests': len(results),
+                'success_rate': 0,
+                'error_summary': [r['error'] for r in results if r.get('error')]
+            }
+        
+        return stats
+    
+    def memory_profiling(self, func: Callable, *args, **kwargs):
+        """Profile memory usage (requires psutil)"""
+        try:
+            import psutil
+            import os
+            
+            process = psutil.Process(os.getpid())
+            
+            # Measure before
+            memory_before = process.memory_info().rss / 1024 / 1024  # MB
+            
+            # Execute function
+            result = self.measure_execution_time(func, *args, **kwargs)
+            
+            # Measure after
+            memory_after = process.memory_info().rss / 1024 / 1024  # MB
+            
+            result['memory_usage'] = {
+                'before_mb': memory_before,
+                'after_mb': memory_after,
+                'delta_mb': memory_after - memory_before
+            }
+            
+            return result
+            
+        except ImportError:
+            logger.warning("psutil not available for memory profiling")
+            return self.measure_execution_time(func, *args, **kwargs)
+
+class TestPerformance:
+    """Performance tests for DSPy applications"""
+    
+    def test_module_performance(self, sample_qa_program, dspy_test_framework):
+        """Test performance of DSPy modules"""
+        
+        perf_tester = DSPyPerformanceTester()
+        
+        mock_result = Mock()
+        mock_result.answer = "Performance test answer"
+        mock_result.confidence = 0.8
+        
+        with dspy_test_framework.mock_lm_responses({
+            "performance test question": mock_result
+        }):
+            # Single execution timing
+            result = perf_tester.measure_execution_time(
+                sample_qa_program,
+                question="performance test question"
+            )
+            
+            assert result['success'] is True
+            assert result['wall_time'] < 1.0  # Should be fast with mocked LM
+            assert result['result'].answer == "Performance test answer"
+    
+    def test_concurrent_execution(self, sample_qa_program, dspy_test_framework):
+        """Test concurrent execution performance"""
+        
+        perf_tester = DSPyPerformanceTester()
+        
+        mock_result = Mock()
+        mock_result.answer = "Concurrent answer"
+        mock_result.confidence = 0.8
+        
+        with dspy_test_framework.mock_lm_responses({
+            "concurrent question": mock_result
+        }):
+            # Prepare test cases
+            test_args = [("concurrent question",) for _ in range(10)]
+            
+            # Run load test
+            stats = perf_tester.load_test(
+                sample_qa_program,
+                test_args,
+                num_threads=5
+            )
+            
+            assert stats['total_requests'] == 10
+            assert stats['success_rate'] > 90  # Allow for some variance
+            assert 'wall_time_stats' in stats
+    
+    def test_memory_usage(self, sample_qa_program, dspy_test_framework):
+        """Test memory usage of DSPy modules"""
+        
+        perf_tester = DSPyPerformanceTester()
+        
+        mock_result = Mock()
+        mock_result.answer = "Memory test answer"
+        mock_result.confidence = 0.8
+        
+        with dspy_test_framework.mock_lm_responses({
+            "memory test question": mock_result
+        }):
+            result = perf_tester.memory_profiling(
+                sample_qa_program,
+                question="memory test question"
+            )
+            
+            assert result['success'] is True
+            
+            if 'memory_usage' in result:
+                # Memory usage should be reasonable
+                assert result['memory_usage']['delta_mb'] < 100  # Less than 100MB increase
+    
+    def test_batch_processing_performance(self, sample_classifier, dspy_test_framework):
+        """Test batch processing performance"""
+        
+        mock_result = Mock()
+        mock_result.predicted_class = "positive"
+        mock_result.confidence = 0.8
+        
+        with dspy_test_framework.mock_lm_responses({
+            "test text 1": mock_result,
+            "test text 2": mock_result,
+            "test text 3": mock_result
+        }):
+            # Test batch processing
+            texts = ["test text 1", "test text 2", "test text 3"]
+            
+            start_time = time.time()
+            
+            results = []
+            for text in texts:
+                result = sample_classifier(text=text)
+                results.append(result)
+            
+            batch_time = time.time() - start_time
+            
+            # Verify results
+            assert len(results) == 3
+            assert all(r.predicted_class == "positive" for r in results)
+            
+            # Performance should be reasonable
+            assert batch_time < 5.0  # Should complete in under 5 seconds with mocking
+```
+
+## Regression and Quality Testing
+
+### Regression Testing Framework
+```python
+class DSPyRegressionTester:
+    """Regression testing framework for DSPy applications"""
+    
+    def __init__(self, baseline_dir: str):
+        self.baseline_dir = Path(baseline_dir)
+        self.baseline_dir.mkdir(exist_ok=True)
+    
+    def create_baseline(self, test_name: str, program: dspy.Module, test_inputs: List[Dict]):
+        """Create baseline results for regression testing"""
+        
+        baseline_file = self.baseline_dir / f"{test_name}_baseline.json"
+        
+        results = []
+        for inputs in test_inputs:
+            try:
+                result = program(**inputs)
+                
+                # Serialize result
+                if hasattr(result, '__dict__'):
+                    serialized_result = result.__dict__
+                else:
+                    serialized_result = str(result)
+                
+                results.append({
+                    'inputs': inputs,
+                    'result': serialized_result,
+                    'success': True
+                })
+            except Exception as e:
+                results.append({
+                    'inputs': inputs,
+                    'error': str(e),
+                    'success': False
+                })
+        
+        # Save baseline
+        with open(baseline_file, 'w') as f:
+            json.dump(results, f, indent=2, default=str)
+        
+        logger.info(f"Created baseline for {test_name} with {len(results)} test cases")
+    
+    def run_regression_test(self, test_name: str, program: dspy.Module, test_inputs: List[Dict]) -> Dict[str, Any]:
+        """Run regression test against baseline"""
+        
+        baseline_file = self.baseline_dir / f"{test_name}_baseline.json"
+        
+        if not baseline_file.exists():
+            raise FileNotFoundError(f"Baseline file not found: {baseline_file}")
+        
+        # Load baseline
+        with open(baseline_file) as f:
+            baseline_results = json.load(f)
+        
+        # Run current tests
+        current_results = []
+        for inputs in test_inputs:
+            try:
+                result = program(**inputs)
+                
+                if hasattr(result, '__dict__'):
+                    serialized_result = result.__dict__
+                else:
+                    serialized_result = str(result)
+                
+                current_results.append({
+                    'inputs': inputs,
+                    'result': serialized_result,
+                    'success': True
+                })
+            except Exception as e:
+                current_results.append({
+                    'inputs': inputs,
+                    'error': str(e),
+                    'success': False
+                })
+        
+        # Compare results
+        comparison = self._compare_results(baseline_results, current_results)
+        
+        return {
+            'test_name': test_name,
+            'total_cases': len(test_inputs),
+            'matching_cases': comparison['matches'],
+            'differing_cases': comparison['differences'],
+            'new_errors': comparison['new_errors'],
+            'fixed_errors': comparison['fixed_errors'],
+            'regression_detected': len(comparison['differences']) > 0 or len(comparison['new_errors']) > 0
+        }
+    
+    def _compare_results(self, baseline: List[Dict], current: List[Dict]) -> Dict[str, Any]:
+        """Compare baseline and current results"""
+        
+        matches = 0
+        differences = []
+        new_errors = []
+        fixed_errors = []
+        
+        for i, (base_result, curr_result) in enumerate(zip(baseline, current)):
+            # Compare success status
+            if base_result['success'] != curr_result['success']:
+                if base_result['success'] and not curr_result['success']:
+                    new_errors.append({
+                        'case_index': i,
+                        'inputs': curr_result['inputs'],
+                        'error': curr_result.get('error')
+                    })
+                elif not base_result['success'] and curr_result['success']:
+                    fixed_errors.append({
+                        'case_index': i,
+                        'inputs': curr_result['inputs']
+                    })
+            
+            # Compare results for successful cases
+            elif base_result['success'] and curr_result['success']:
+                if base_result['result'] != curr_result['result']:
+                    differences.append({
+                        'case_index': i,
+                        'inputs': curr_result['inputs'],
+                        'baseline_result': base_result['result'],
+                        'current_result': curr_result['result']
+                    })
+                else:
+                    matches += 1
+        
+        return {
+            'matches': matches,
+            'differences': differences,
+            'new_errors': new_errors,
+            'fixed_errors': fixed_errors
+        }
+
+class TestRegression:
+    """Regression tests for DSPy applications"""
+    
+    def test_qa_regression(self, sample_qa_program, dspy_test_framework, tmp_path):
+        """Test QA system for regressions"""
+        
+        regression_tester = DSPyRegressionTester(str(tmp_path))
+        
+        # Test inputs
+        test_inputs = [
+            {"question": "What is AI?"},
+            {"question": "How does machine learning work?"},
+            {"question": "What is deep learning?"}
+        ]
+        
+        # Mock consistent responses
+        mock_responses = {
+            "What is AI?": Mock(answer="Artificial Intelligence", confidence=0.9),
+            "How does machine learning work?": Mock(answer="ML uses algorithms", confidence=0.8),
+            "What is deep learning?": Mock(answer="DL uses neural networks", confidence=0.85)
+        }
+        
+        with dspy_test_framework.mock_lm_responses(mock_responses):
+            # Create baseline
+            regression_tester.create_baseline("qa_test", sample_qa_program, test_inputs)
+            
+            # Run regression test (should pass with same responses)
+            result = regression_tester.run_regression_test("qa_test", sample_qa_program, test_inputs)
+            
+            assert not result['regression_detected']
+            assert result['matching_cases'] == len(test_inputs)
+            assert len(result['differing_cases']) == 0
+    
+    def test_classification_regression(self, sample_classifier, dspy_test_framework, tmp_path):
+        """Test classification system for regressions"""
+        
+        regression_tester = DSPyRegressionTester(str(tmp_path))
+        
+        test_inputs = [
+            {"text": "I love this product"},
+            {"text": "This is terrible"},
+            {"text": "It's okay"}
+        ]
+        
+        mock_responses = {
+            "I love this product": Mock(predicted_class="positive", confidence=0.9),
+            "This is terrible": Mock(predicted_class="negative", confidence=0.85),
+            "It's okay": Mock(predicted_class="neutral", confidence=0.7)
+        }
+        
+        with dspy_test_framework.mock_lm_responses(mock_responses):
+            # Create baseline
+            regression_tester.create_baseline("classification_test", sample_classifier, test_inputs)
+            
+            # Test with same responses
+            result = regression_tester.run_regression_test("classification_test", sample_classifier, test_inputs)
+            
+            assert not result['regression_detected']
+            assert result['matching_cases'] == len(test_inputs)
+```
+
+## CI/CD Integration
+
+### GitHub Actions Configuration
+```yaml
+# .github/workflows/dspy-tests.yml
+name: DSPy Application Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-mock
+    
+    - name: Run unit tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        pytest tests/unit/ -v --cov=src --cov-report=xml
+    
+    - name: Run integration tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        pytest tests/integration/ -v
+    
+    - name: Run performance tests
+      run: |
+        pytest tests/performance/ -v --maxfail=1
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true
+  
+  regression-test:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+    
+    - name: Download baseline data
+      run: |
+        # Download or create baseline test data
+        mkdir -p tests/baselines
+    
+    - name: Run regression tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        pytest tests/regression/ -v
+    
+    - name: Upload regression report
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: regression-report
+        path: tests/regression_report.json
+```
+
+## Speed Tips
+- **Mock LM Calls**: Always mock LM calls in unit tests for speed and consistency
+- **Parallel Testing**: Use pytest-xdist for parallel test execution
+- **Test Data Caching**: Cache test data and model fixtures appropriately
+- **Selective Testing**: Use pytest markers to run specific test categories
+- **CI Optimization**: Use dependency caching and matrix strategies efficiently
+- **Performance Baselines**: Establish performance baselines for regression detection
+- **Test Isolation**: Ensure tests don't interfere with each other
+- **Resource Management**: Properly cleanup resources in tests
+
+## Common Pitfalls
+- **Non-Deterministic Results**: LM responses can vary, use mocking for consistency
+- **Resource Leaks**: Always cleanup temporary files and resources in tests
+- **Test Dependencies**: Avoid dependencies between test cases
+- **Environment Differences**: Test across different Python versions and environments
+- **API Rate Limits**: Be careful with real API calls in tests
+- **State Pollution**: Reset global state between tests
+- **Async Testing**: Properly handle async/await patterns in tests
+- **Mock Configuration**: Ensure mocks match real API behavior
+
+## Best Practices Summary
+- **Test Pyramid**: Balance unit, integration, and end-to-end tests appropriately
+- **Mocking Strategy**: Mock external dependencies while testing core logic
+- **Comprehensive Coverage**: Test both happy paths and error conditions
+- **Performance Monitoring**: Regularly monitor and test performance characteristics
+- **Regression Protection**: Implement regression testing for critical functionality
+- **CI Integration**: Automate testing in continuous integration pipelines
+- **Documentation**: Document test setup, conventions, and troubleshooting
+- **Maintainability**: Write clear, maintainable tests that serve as documentation
+
+## References
+- [Pytest Documentation](https://docs.pytest.org/)
+- [Python unittest.mock](https://docs.python.org/3/library/unittest.mock.html)
+- [DSPy Testing Examples](https://github.com/stanfordnlp/dspy/tree/main/tests)
+- [GitHub Actions Guide](https://docs.github.com/en/actions)
+- [Performance Testing Best Practices](https://martinfowler.com/articles/practical-test-pyramid.html)

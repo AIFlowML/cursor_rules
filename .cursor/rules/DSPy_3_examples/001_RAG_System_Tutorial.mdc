@@ -1,0 +1,616 @@
+---
+description: DSPY 3 RAG System Tutorial - Production implementation from official DSPy 3.0.1 tutorial with ColBERTv2 retrieval and optimization
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready RAG Systems using DSPy 3.0.1 based on official tutorials.
+
+## RAG Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   User Query    │────│   Query Gen      │────│   Retrieval     │
+│   "What is...?" │    │   Optimization   │    │   (ColBERTv2)   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                        │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Answer   │────│   Generation     │────│   Context       │
+│   Optimized     │    │   (CoT + RAG)    │    │   Top-K Docs    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   MLflow         │
+                    │   Monitoring     │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial RAG System (From Official Notebook)
+
+```python
+import dspy
+
+# Configure DSPy environment (from tutorial)
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Tutorial retrieval setup (exact implementation)
+max_characters = 6000  # for truncating >99th percentile of documents
+topk_docs_to_retrieve = 5  # number of documents to retrieve per search query
+
+with open("ragqa_arena_tech_corpus.jsonl") as f:
+    corpus = [ujson.loads(line)['text'][:max_characters] for line in f]
+    print(f"Loaded {len(corpus)} documents. Will encode them below.")
+
+embedder = dspy.Embedder('openai/text-embedding-3-small', dimensions=512)
+search = dspy.retrievers.Embeddings(embedder=embedder, corpus=corpus, k=topk_docs_to_retrieve)
+
+# Tutorial RAG Module (exact from notebook)
+class RAG(dspy.Module):
+    def __init__(self):
+        self.respond = dspy.ChainOfThought('context, question -> response')
+
+    def forward(self, question):
+        context = search(question).passages
+        return self.respond(context=context, question=question)
+
+# Tutorial evaluation (exact metrics)
+from dspy.evaluate import SemanticF1
+
+metric = SemanticF1(decompositional=True)
+evaluate = dspy.Evaluate(devset=devset, metric=metric, num_threads=24,
+                         display_progress=True, display_table=2)
+
+# Tutorial optimization (exact MIPROv2 usage)
+tp = dspy.MIPROv2(metric=metric, auto="medium", num_threads=24)
+optimized_rag = tp.compile(RAG(), trainset=trainset,
+                           max_bootstrapped_demos=2, max_labeled_demos=2)
+```
+
+### Production RAG System
+
+```python
+import os
+import logging
+import mlflow
+import asyncio
+from typing import Dict, List, Optional, Any
+from pydantic import BaseModel, Field
+from contextlib import asynccontextmanager
+import time
+
+# Production configuration
+class RAGConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    embedder_model: str = "openai/text-embedding-3-small"
+    embedder_dimensions: int = 512
+    max_characters: int = 6000
+    topk_docs: int = 5
+    optimization_auto: str = "medium"
+    optimization_threads: int = 24
+    max_bootstrapped_demos: int = 2
+    max_labeled_demos: int = 2
+    cache_dir: str = "./cache"
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+# Production RAG with monitoring and error handling
+class ProductionRAG(dspy.Module):
+    def __init__(self, config: RAGConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+        self.respond = dspy.ChainOfThought('context, question -> response')
+        self.retriever = None
+        self._initialize_retriever()
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"RAG.{self.config.environment}")
+        return logger
+
+    def _initialize_retriever(self):
+        try:
+            embedder = dspy.Embedder(
+                self.config.embedder_model,
+                dimensions=self.config.embedder_dimensions
+            )
+            # Load corpus with error handling
+            corpus = self._load_corpus()
+            self.retriever = dspy.retrievers.Embeddings(
+                embedder=embedder,
+                corpus=corpus,
+                k=self.config.topk_docs
+            )
+            self.logger.info(f"Retriever initialized with {len(corpus)} documents")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize retriever: {e}")
+            raise
+
+    def _load_corpus(self):
+        try:
+            import ujson
+            with open("ragqa_arena_tech_corpus.jsonl") as f:
+                corpus = [ujson.loads(line)['text'][:self.config.max_characters] for line in f]
+            return corpus
+        except FileNotFoundError:
+            self.logger.warning("Corpus file not found, using empty corpus")
+            return ["Default document for testing"]
+
+    def forward(self, question: str, **kwargs) -> dspy.Prediction:
+        start_time = time.time()
+
+        try:
+            with mlflow.start_run(nested=True):
+                # Log input
+                mlflow.log_param("question", question)
+
+                # Retrieve context
+                context = self.retriever(question).passages
+                mlflow.log_param("retrieved_docs", len(context))
+
+                # Generate response
+                response = self.respond(context=context, question=question)
+
+                # Log metrics
+                processing_time = time.time() - start_time
+                mlflow.log_metric("processing_time_ms", processing_time * 1000)
+                mlflow.log_param("response_length", len(response.response))
+
+                self.logger.info(f"Processed query in {processing_time:.2f}s")
+                return response
+
+        except Exception as e:
+            self.logger.error(f"Error processing question: {e}")
+            return dspy.Prediction(response="I apologize, but I encountered an error processing your question.")
+
+# Production training and optimization
+class RAGTrainer:
+    def __init__(self, config: RAGConfig):
+        self.config = config
+        self.logger = logging.getLogger("RAGTrainer")
+
+    def train_and_optimize(self, trainset: List, devset: List, valset: List = None):
+        """Complete training and optimization workflow from tutorial"""
+        try:
+            # Initialize base system
+            base_rag = ProductionRAG(self.config)
+
+            # Setup evaluation (exact from tutorial)
+            metric = SemanticF1(decompositional=True)
+            evaluate = dspy.Evaluate(
+                devset=devset,
+                metric=metric,
+                num_threads=self.config.optimization_threads,
+                display_progress=True,
+                display_table=2
+            )
+
+            # Baseline evaluation
+            baseline_score = evaluate(base_rag)
+            self.logger.info(f"Baseline score: {baseline_score}")
+
+            # Optimization (exact MIPROv2 from tutorial)
+            tp = dspy.MIPROv2(
+                metric=metric,
+                auto=self.config.optimization_auto,
+                num_threads=self.config.optimization_threads
+            )
+
+            optimized_rag = tp.compile(
+                base_rag,
+                trainset=trainset,
+                max_bootstrapped_demos=self.config.max_bootstrapped_demos,
+                max_labeled_demos=self.config.max_labeled_demos
+            )
+
+            # Final evaluation
+            optimized_score = evaluate(optimized_rag)
+            improvement = optimized_score - baseline_score
+
+            self.logger.info(f"Optimized score: {optimized_score} (improvement: +{improvement:.2f})")
+
+            return optimized_rag, {
+                'baseline_score': baseline_score,
+                'optimized_score': optimized_score,
+                'improvement': improvement
+            }
+
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            raise
+```
+
+## Performance Results (From Tutorial)
+
+- **Baseline Chain-of-Thought**: 41.9% Semantic F1
+- **Basic RAG**: 55.5% Semantic F1 (+13.6% improvement)
+- **Optimized RAG (MIPROv2)**: 61.1% Semantic F1 (+19.2% total improvement)
+
+## Production Enhancements
+
+### Infrastructure as Code
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```yaml
+# kubernetes.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rag-system
+  template:
+    metadata:
+      labels:
+        app: rag-system
+    spec:
+      containers:
+        - name: rag-system
+          image: rag-system:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-secret
+                  key: api-key
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-service:5000"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-service
+spec:
+  selector:
+    app: rag-system
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer
+```
+
+### FastAPI Production Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import mlflow.dspy
+
+app = FastAPI(title="Production RAG System", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class QueryRequest(BaseModel):
+    question: str
+    context_filter: Optional[str] = None
+    max_length: Optional[int] = None
+
+class QueryResponse(BaseModel):
+    answer: str
+    confidence: float
+    processing_time_ms: float
+    sources: List[str]
+    model_version: str
+
+# Global RAG system
+rag_system = None
+
+@app.on_event("startup")
+async def startup_event():
+    global rag_system
+    config = RAGConfig()
+
+    # Load optimized model from MLflow (exact from tutorial)
+    model_uri = "models:/optimized-rag/production"
+    try:
+        rag_system = mlflow.dspy.load_model(model_uri)
+        logger.info("Loaded optimized RAG model from MLflow")
+    except:
+        # Fallback to base system
+        rag_system = ProductionRAG(config)
+        logger.warning("Using base RAG system")
+
+@app.post("/query", response_model=QueryResponse)
+async def query_rag(request: QueryRequest, background_tasks: BackgroundTasks):
+    start_time = time.time()
+
+    try:
+        result = rag_system(question=request.question)
+        processing_time = (time.time() - start_time) * 1000
+
+        # Log usage metrics in background
+        background_tasks.add_task(log_usage_metrics, request.question, processing_time)
+
+        return QueryResponse(
+            answer=result.response,
+            confidence=0.95,  # Could be computed from model
+            processing_time_ms=processing_time,
+            sources=getattr(result, 'sources', []),
+            model_version="v1.0.0"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "model_loaded": rag_system is not None}
+
+@app.get("/metrics")
+async def get_metrics():
+    """Prometheus-compatible metrics endpoint"""
+    return {
+        "rag_queries_total": get_query_count(),
+        "rag_avg_response_time": get_avg_response_time(),
+        "rag_error_rate": get_error_rate()
+    }
+```
+
+### MLflow Integration (From Tutorial)
+
+```python
+import mlflow.dspy
+
+class MLflowRAGLogger:
+    def __init__(self, experiment_name="RAG_Production"):
+        mlflow.set_experiment(experiment_name)
+
+    def log_training_run(self, config: RAGConfig, results: Dict):
+        with mlflow.start_run():
+            # Log parameters
+            mlflow.log_params(config.dict())
+
+            # Log metrics
+            mlflow.log_metrics({
+                "baseline_score": results['baseline_score'],
+                "optimized_score": results['optimized_score'],
+                "improvement": results['improvement']
+            })
+
+            # Log model (exact from tutorial)
+            mlflow.dspy.log_model(
+                results['optimized_model'],
+                artifact_path="optimized_rag",
+                registered_model_name="optimized-rag"
+            )
+```
+
+## Deployment Templates
+
+### Local Development
+
+```python
+# local_dev.py
+import uvicorn
+from pathlib import Path
+
+def setup_local_development():
+    """Setup local development environment with hot reload"""
+
+    # Download tutorial data
+    from dspy.utils import download
+    download("https://huggingface.co/dspy/cache/resolve/main/ragqa_arena_tech_examples.jsonl")
+    download("https://huggingface.co/dspy/cache/resolve/main/ragqa_arena_tech_corpus.jsonl")
+
+    # Configure DSPy
+    lm = dspy.LM('openai/gpt-4o-mini')
+    dspy.configure(lm=lm)
+
+    # Start MLflow tracking
+    mlflow.set_tracking_uri("http://localhost:5000")
+    mlflow.dspy.autolog()
+
+    print("🚀 Starting RAG development server...")
+    print("📊 MLflow UI: http://localhost:5000")
+    print("🔍 API Docs: http://localhost:8000/docs")
+
+if __name__ == "__main__":
+    setup_local_development()
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+```
+
+### Production Deployment (Docker Compose)
+
+```yaml
+# docker-compose.yml
+version: "3.8"
+
+services:
+  rag-system:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - ENVIRONMENT=production
+    depends_on:
+      - mlflow
+      - redis
+    volumes:
+      - ./data:/app/data
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+
+  mlflow:
+    image: python:3.11-slim
+    ports:
+      - "5000:5000"
+    command: >
+      bash -c "pip install mlflow psycopg2-binary &&
+               mlflow server --host 0.0.0.0 --port 5000 
+               --backend-store-uri postgresql://postgres:password@postgres:5432/mlflow
+               --default-artifact-root /mlflow/artifacts"
+    depends_on:
+      - postgres
+    volumes:
+      - mlflow_data:/mlflow
+
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_DB=mlflow
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mlflow_data:
+  postgres_data:
+  redis_data:
+```
+
+## Speed Tips
+
+### Performance Optimizations (From Tutorial)
+
+```python
+# Tutorial caching implementation
+from dspy.utils import configure_cache
+configure_cache(cache_dir="./cache", cache_size=1000)
+
+# Batch processing for multiple queries
+class BatchRAG(ProductionRAG):
+    async def batch_forward(self, questions: List[str], batch_size: int = 10):
+        """Process multiple questions efficiently"""
+        results = []
+        for i in range(0, len(questions), batch_size):
+            batch = questions[i:i+batch_size]
+            batch_results = await asyncio.gather(*[
+                self.forward(q) for q in batch
+            ])
+            results.extend(batch_results)
+        return results
+
+# Vector database optimization for large corpora
+class OptimizedRetriever:
+    def __init__(self, embedder, use_faiss=True):
+        self.embedder = embedder
+        if use_faiss:
+            import faiss
+            self.index = faiss.IndexFlatIP(embedder.dimensions)
+
+    def add_documents(self, documents):
+        embeddings = self.embedder.embed(documents)
+        self.index.add(embeddings)
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Corpus Loading**: Tutorial uses 28K docs - scale appropriately
+2. **MIPROv2 Costs**: Budget ~$1.50 for medium optimization (from tutorial)
+3. **Timeout Issues**: Tutorial uses 2-minute timeouts for evaluation
+4. **Memory Requirements**: ColBERTv2 needs sufficient RAM for embeddings
+
+### Production Solutions
+
+```python
+# Circuit breaker for API failures
+from circuitbreaker import circuit
+
+@circuit(failure_threshold=5, recovery_timeout=60)
+def call_llm_with_circuit_breaker(prompt):
+    return lm(prompt)
+
+# Rate limiting
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/query")
+@limiter.limit("10/minute")
+async def rate_limited_query(request: QueryRequest):
+    return await query_rag(request)
+```
+
+## Best Practices Summary
+
+### From Tutorial
+
+- Use semantic F1 for evaluation of long-form answers
+- MIPROv2 optimizer provides significant improvements (19%+)
+- ColBERTv2 retrieval is highly effective for tech domains
+- 200 examples sufficient for training/validation
+
+### Production Guidelines
+
+- Always implement circuit breakers for external APIs
+- Monitor performance with MLflow integration
+- Use async processing for better throughput
+- Implement proper error handling and logging
+- Scale retrievers with vector databases for production
+
+## References
+
+- [Official RAG Tutorial](https://dspy.ai/tutorials/rag/)
+- [DSPy MIPROv2 Documentation](https://dspy.ai/api/optimizers/MIPROv2/)
+- [ColBERTv2 Retrieval](https://dspy.ai/api/tools/ColBERTv2/)
+- [MLflow DSPy Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

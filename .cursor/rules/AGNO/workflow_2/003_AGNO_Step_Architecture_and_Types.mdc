@@ -1,0 +1,650 @@
+---
+description: AGNO Workflows 2.0 - Master Step architecture and executor types for flexible workflow design
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 Step architecture. Master all executor types and step patterns for maximum workflow flexibility.
+
+## Step Architecture Flow
+
+```
+Define Executor → Create Step → Configure Options → Add to Workflow → Execute
+      ↓              ↓            ↓               ↓              ↓
+  Agent/Team/     Step Object   Name/Desc/      Step Sequence   Run Executor
+  Function        Wrapper       Config           in Workflow     Get Output
+      ↓              ↓            ↓               ↓              ↓
+  Configured      Ready for    Enhanced         Workflow       StepOutput
+  Executor        Workflow     Tracking         Execution      Generated
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Step Types
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+
+# Agent step - most common
+agent_step = Step(agent=research_agent)
+
+# Team step - coordinated agents
+team_step = Step(team=research_team)
+
+# Function step - custom logic  
+def process_data(step_input):
+    return StepOutput(content=f"Processed: {step_input.message}")
+
+function_step = Step(executor=process_data)
+
+# Direct usage in workflow (shorthand)
+workflow = Workflow(
+    name="Mixed Execution",
+    steps=[
+        research_agent,    # Direct agent
+        research_team,     # Direct team  
+        process_data      # Direct function
+    ]
+)
+```
+
+### Production Ready - Enhanced Step Configuration
+```python
+from agno.workflow.v2 import Step, Workflow, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+# Advanced agent configuration
+research_agent = Agent(
+    name="Research Specialist", 
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Conduct comprehensive research on assigned topics",
+    instructions=[
+        "Search for recent, credible information",
+        "Focus on authoritative sources",
+        "Provide detailed analysis with supporting evidence"
+    ]
+)
+
+analysis_team = Team(
+    name="Analysis Team",
+    mode="coordinate",
+    members=[analyst1, analyst2, reviewer],
+    instructions="Analyze research data collaboratively and provide insights"
+)
+
+def enhanced_processor(step_input: StepInput) -> StepOutput:
+    """Advanced data processing with validation and enhancement"""
+    
+    # Access input data
+    raw_content = step_input.previous_step_content or ""
+    original_message = step_input.message
+    additional_data = step_input.additional_data or {}
+    
+    # Processing logic
+    word_count = len(raw_content.split())
+    priority = additional_data.get("priority", "normal")
+    
+    # Validation
+    if word_count < 50:
+        return StepOutput(
+            content="❌ Insufficient data for processing",
+            success=False,
+            error="Content too short for analysis"
+        )
+    
+    # Enhanced processing
+    processed_content = f"""
+    ## Enhanced Processing Report
+    
+    **Original Query**: {original_message}
+    **Processing Priority**: {priority}
+    **Content Volume**: {word_count} words
+    
+    **Enhanced Analysis**:
+    {raw_content}
+    
+    **Processing Metadata**:
+    - Validation: Passed
+    - Enhancement: Applied  
+    - Quality Score: {min(word_count/100, 10):.1f}/10
+    """
+    
+    return StepOutput(
+        content=processed_content.strip(),
+        success=True,
+        step_name="enhanced_processing"
+    )
+
+# Production steps with full configuration
+research_step = Step(
+    name="comprehensive_research",
+    description="Conduct thorough research using multiple sources",
+    agent=research_agent
+)
+
+analysis_step = Step(
+    name="collaborative_analysis", 
+    description="Team-based analysis of research findings",
+    team=analysis_team
+)
+
+processing_step = Step(
+    name="enhanced_processing",
+    description="Advanced data processing with validation",
+    executor=enhanced_processor
+)
+
+# Production workflow
+workflow = Workflow(
+    name="Enhanced Research Pipeline",
+    description="Multi-executor workflow with comprehensive processing",
+    steps=[research_step, analysis_step, processing_step]
+)
+```
+
+## Step Types and Executors
+
+### 1. Agent Steps - Individual AI Executors
+```python
+# Basic agent step
+simple_step = Step(agent=my_agent)
+
+# Named agent step with configuration
+agent_step = Step(
+    name="research_phase",
+    description="Gather comprehensive research data",
+    agent=Agent(
+        name="Research Specialist",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[DuckDuckGoTools(), HackerNewsTools()],
+        role="Expert researcher and data analyst",
+        instructions=[
+            "Search multiple sources for comprehensive coverage",
+            "Verify information credibility",
+            "Present findings in structured format"
+        ]
+    )
+)
+
+# Agent with response model for structured output
+from pydantic import BaseModel
+
+class ResearchFindings(BaseModel):
+    topic: str
+    key_points: list[str] 
+    sources: list[str]
+    confidence: float
+
+structured_agent = Agent(
+    name="Structured Researcher",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=ResearchFindings
+)
+
+structured_step = Step(
+    name="structured_research",
+    agent=structured_agent
+)
+```
+
+### 2. Team Steps - Coordinated Multi-Agent Execution
+```python
+# Create team members
+researcher = Agent(name="Researcher", model=OpenAIChat(id="gpt-4o-mini"), tools=[DuckDuckGoTools()])
+analyst = Agent(name="Analyst", model=OpenAIChat(id="gpt-4o-mini"))
+reviewer = Agent(name="Reviewer", model=OpenAIChat(id="gpt-4o-mini"))
+
+# Coordinate mode - agents collaborate
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",
+    members=[researcher, analyst, reviewer],
+    instructions="Work together to research topic comprehensively"
+)
+
+# Sequence mode - agents work in sequence
+sequential_team = Team(
+    name="Sequential Team", 
+    mode="sequence",
+    members=[researcher, analyst, reviewer],
+    instructions="Process information sequentially with each agent building on previous work"
+)
+
+# Team steps
+coordinate_step = Step(
+    name="collaborative_research",
+    description="Multi-agent collaborative research",
+    team=research_team
+)
+
+sequential_step = Step(
+    name="sequential_analysis",
+    description="Sequential multi-agent processing", 
+    team=sequential_team
+)
+```
+
+### 3. Function Steps - Custom Python Logic
+```python
+from agno.workflow.v2.types import StepInput, StepOutput
+
+# Basic function step
+def simple_processor(step_input: StepInput) -> StepOutput:
+    content = step_input.previous_step_content or ""
+    return StepOutput(content=f"Processed: {content[:100]}...")
+
+simple_step = Step(executor=simple_processor)
+
+# Advanced function with full feature usage
+def advanced_processor(step_input: StepInput) -> StepOutput:
+    """Advanced processing with comprehensive input access"""
+    
+    # Access all input types
+    message = step_input.message                    # Original workflow message
+    previous_content = step_input.previous_step_content  # Last step output
+    additional_data = step_input.additional_data    # Extra metadata
+    workflow_message = step_input.workflow_message  # Original workflow input
+    
+    # Access specific previous steps by name
+    research_data = step_input.get_step_content("research_phase")
+    all_previous = step_input.get_all_previous_content()
+    
+    # Processing logic with validation
+    if not previous_content:
+        return StepOutput(
+            content="No input data to process",
+            success=False,
+            error="Missing input data"
+        )
+    
+    try:
+        # Custom processing
+        processed_data = {
+            "original_message": message,
+            "processed_content": previous_content,
+            "word_count": len(previous_content.split()),
+            "processing_timestamp": str(datetime.now()),
+            "metadata": additional_data
+        }
+        
+        # Format output
+        output = f"""
+        ## Processing Results
+        
+        **Input Analysis**: {len(previous_content)} characters processed
+        **Quality Score**: {min(len(previous_content.split())/10, 10):.1f}/10
+        
+        **Processed Content**:
+        {previous_content}
+        
+        **Processing Summary**:
+        - Input validated: ✅
+        - Processing completed: ✅
+        - Quality check: ✅
+        """
+        
+        return StepOutput(
+            content=output.strip(),
+            success=True,
+            step_name="advanced_processing"
+        )
+        
+    except Exception as e:
+        return StepOutput(
+            content=f"Processing failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+# Advanced function step
+advanced_step = Step(
+    name="advanced_processing",
+    description="Advanced data processing with comprehensive validation",
+    executor=advanced_processor
+)
+
+# Function that calls agents internally
+def agent_calling_function(step_input: StepInput) -> StepOutput:
+    """Function that orchestrates agents internally"""
+    
+    # Create or use existing agents
+    specialist_agent = Agent(
+        name="Specialist",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        role="Domain specialist"
+    )
+    
+    # Run agent within function
+    try:
+        agent_response = specialist_agent.run(step_input.previous_step_content)
+        
+        enhanced_output = f"""
+        ## Function-Orchestrated Agent Response
+        
+        **Agent Processing**: Completed by {specialist_agent.name}
+        **Agent Response**: 
+        {agent_response.content}
+        
+        **Function Enhancement**: Additional processing layer applied
+        """
+        
+        return StepOutput(
+            content=enhanced_output,
+            response=agent_response  # Include original agent response
+        )
+        
+    except Exception as e:
+        return StepOutput(
+            content=f"Agent execution failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+hybrid_step = Step(
+    name="hybrid_processing",
+    description="Function that orchestrates agent execution",
+    executor=agent_calling_function
+)
+```
+
+## Step Configuration Options
+
+### Basic Step Parameters
+```python
+# Minimal step
+basic_step = Step(agent=my_agent)
+
+# Fully configured step
+configured_step = Step(
+    name="detailed_step",                    # Step identifier (optional)
+    description="Detailed step description", # Step purpose (optional)
+    agent=my_agent,                         # OR team=my_team, OR executor=my_func
+)
+```
+
+### Step Naming and Identification
+```python
+# Named steps for better tracking
+research_step = Step(
+    name="research_phase",
+    description="Comprehensive research on given topic",
+    agent=researcher
+)
+
+analysis_step = Step(
+    name="analysis_phase", 
+    description="Deep analysis of research findings",
+    agent=analyst
+)
+
+# Benefits of naming:
+# 1. Better logging and debugging
+# 2. Access specific step outputs by name
+# 3. Clear workflow visualization
+# 4. Enhanced monitoring and metrics
+
+workflow = Workflow(
+    name="Named Steps Pipeline",
+    steps=[research_step, analysis_step]
+)
+
+# Later access specific step output
+def final_processor(step_input: StepInput) -> StepOutput:
+    research_data = step_input.get_step_content("research_phase")
+    analysis_data = step_input.get_step_content("analysis_phase") 
+    # Process both specifically
+```
+
+## Direct vs Explicit Step Usage
+
+### Direct Usage (Shorthand)
+```python
+# Direct assignment - simpler syntax
+workflow = Workflow(
+    name="Direct Usage",
+    steps=[
+        researcher_agent,    # Becomes Step(agent=researcher_agent)
+        analysis_team,       # Becomes Step(team=analysis_team)
+        processor_function   # Becomes Step(executor=processor_function)
+    ]
+)
+```
+
+### Explicit Step Creation (Full Control)
+```python
+# Explicit steps - full configuration control
+workflow = Workflow(
+    name="Explicit Usage", 
+    steps=[
+        Step(
+            name="research",
+            description="Research phase",
+            agent=researcher_agent
+        ),
+        Step(
+            name="analysis",
+            description="Analysis phase", 
+            team=analysis_team
+        ),
+        Step(
+            name="processing",
+            description="Processing phase",
+            executor=processor_function
+        )
+    ]
+)
+```
+
+## StepInput and StepOutput Interfaces
+
+### StepInput - Input to Custom Functions
+```python
+def comprehensive_function(step_input: StepInput) -> StepOutput:
+    """Example showcasing all StepInput capabilities"""
+    
+    # Core input data
+    message = step_input.message                    # Current step input
+    previous = step_input.previous_step_content     # Previous step output
+    workflow_msg = step_input.workflow_message      # Original workflow input
+    
+    # Additional data and metadata
+    extra_data = step_input.additional_data or {}   # Additional parameters
+    
+    # Previous step access methods
+    specific_step = step_input.get_step_content("step_name")  # Specific step by name
+    all_previous = step_input.get_all_previous_content()      # All previous content
+    
+    # Use the data
+    print(f"Processing: {message}")
+    print(f"Previous output: {previous[:100] if previous else 'None'}...")
+    print(f"Additional data: {extra_data}")
+    
+    return StepOutput(content="Processing complete")
+```
+
+### StepOutput - Output from Custom Functions
+```python
+def example_outputs(step_input: StepInput) -> StepOutput:
+    """Examples of different StepOutput patterns"""
+    
+    # Basic success output
+    if step_input.message == "basic":
+        return StepOutput(
+            content="Basic processing complete"
+        )
+    
+    # Success with metadata
+    elif step_input.message == "detailed":
+        return StepOutput(
+            content="Detailed processing results...",
+            success=True,
+            step_name="detailed_processing"
+        )
+    
+    # Error output
+    elif step_input.message == "error":
+        return StepOutput(
+            content="Processing failed due to invalid input",
+            success=False,
+            error="Invalid input format"
+        )
+    
+    # Early termination
+    elif step_input.message == "stop":
+        return StepOutput(
+            content="Critical issue detected - stopping workflow",
+            stop=True  # Terminates entire workflow
+        )
+    
+    # With agent response included
+    elif step_input.message == "hybrid":
+        agent_response = some_agent.run("Process this")
+        return StepOutput(
+            content="Function enhanced the agent response",
+            response=agent_response  # Include original agent response
+        )
+```
+
+## Step Execution Patterns
+
+### Sequential Execution (Default)
+```python
+# Steps execute in order: Step 1 → Step 2 → Step 3
+workflow = Workflow(
+    name="Sequential",
+    steps=[
+        Step(name="step1", agent=agent1),
+        Step(name="step2", agent=agent2), 
+        Step(name="step3", agent=agent3)
+    ]
+)
+```
+
+### Mixed Executor Pipeline
+```python
+# Combine different executor types effectively
+workflow = Workflow(
+    name="Mixed Pipeline",
+    steps=[
+        Step(name="research", team=research_team),      # Team collaboration
+        Step(name="validate", executor=validator_func), # Custom validation
+        Step(name="analyze", agent=analyst_agent),      # Individual analysis
+        Step(name="process", executor=processor_func),  # Custom processing
+        Step(name="finalize", agent=writer_agent)       # Final content creation
+    ]
+)
+```
+
+## Speed Tips
+
+### Rapid Step Creation
+```python
+# Quick step factory
+def quick_step(name, executor, description=None):
+    """Create configured step quickly"""
+    if hasattr(executor, 'name'):  # Agent or Team
+        return Step(name=name, description=description, agent=executor)
+    else:  # Function
+        return Step(name=name, description=description, executor=executor)
+
+# Usage
+steps = [
+    quick_step("research", researcher, "Research phase"),
+    quick_step("analyze", analyst, "Analysis phase"), 
+    quick_step("process", processor, "Processing phase")
+]
+
+workflow = Workflow(name="Quick Build", steps=steps)
+```
+
+### Step Templates
+```python
+# Reusable step configurations
+RESEARCH_STEP_TEMPLATE = {
+    "name": "research_phase",
+    "description": "Comprehensive research and data gathering"
+}
+
+ANALYSIS_STEP_TEMPLATE = {
+    "name": "analysis_phase", 
+    "description": "Data analysis and insight extraction"
+}
+
+# Apply templates
+research_step = Step(**RESEARCH_STEP_TEMPLATE, agent=researcher)
+analysis_step = Step(**ANALYSIS_STEP_TEMPLATE, agent=analyst)
+```
+
+## Common Pitfalls
+
+### Invalid Executor Configuration
+```python
+# ❌ DON'T: Multiple executors in one step
+step = Step(agent=my_agent, team=my_team)  # Invalid
+
+# ❌ DON'T: No executor specified
+step = Step(name="empty")  # Invalid
+
+# ✅ DO: Single executor per step
+agent_step = Step(agent=my_agent)
+team_step = Step(team=my_team)
+func_step = Step(executor=my_function)
+```
+
+### StepOutput Issues
+```python
+# ❌ DON'T: Forget to return StepOutput
+def bad_function(step_input):
+    return "Just a string"  # Wrong return type
+
+# ❌ DON'T: Return None
+def bad_function2(step_input):
+    processed = step_input.message
+    # Missing return statement
+
+# ✅ DO: Always return StepOutput
+def good_function(step_input):
+    return StepOutput(content="Processed successfully")
+```
+
+### Step Access Errors
+```python
+# ❌ DON'T: Assume step names exist
+def bad_access(step_input):
+    data = step_input.get_step_content("nonexistent_step")
+    return StepOutput(content=data)  # data is None
+
+# ✅ DO: Check step content exists
+def good_access(step_input):
+    data = step_input.get_step_content("research_step") 
+    if data:
+        return StepOutput(content=f"Found data: {data}")
+    else:
+        return StepOutput(content="No research data found")
+```
+
+## Best Practices Summary
+
+- **Choose Appropriate Executors**: Agents for individual tasks, teams for collaboration, functions for custom logic
+- **Name Your Steps**: Use descriptive names for better debugging and monitoring
+- **Validate Function Outputs**: Always return proper StepOutput objects
+- **Handle Missing Data**: Check for None values in step inputs
+- **Use Mixed Pipelines**: Combine different executor types strategically  
+- **Configure Properly**: Ensure agents have models, teams have members, functions have proper signatures
+- **Error Handling**: Implement proper error handling in custom functions
+- **Document Steps**: Use descriptions to clarify step purposes
+- **Test Thoroughly**: Validate each step type independently before combining
+
+## References
+
+- [Step API Reference](/docs/api/workflows_2/step.md)
+- [StepInput Documentation](/docs/api/workflows_2/step_input.md) 
+- [StepOutput Documentation](/docs/api/workflows_2/step_output.md)
+- [Agent Integration](/docs/agents/overview.md)
+- [Team Integration](/docs/teams/overview.md)

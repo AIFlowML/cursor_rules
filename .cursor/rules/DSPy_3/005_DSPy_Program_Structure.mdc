@@ -1,0 +1,607 @@
+---
+description: DSPy 3.0.1 Program Architecture - Build modular, composable AI programs through inheritance and composition
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 program architecture. Master the art of building complex AI systems through modular composition, inheritance, and proper separation of concerns.
+
+## Program Architecture Flow
+
+```
+Define Requirements → Design Structure → Implement Modules → Compose System → Optimize
+        ↓                  ↓              ↓               ↓             ↓
+    Use Cases          Single Purpose    Forward Method   Module Tree   BootstrapFS
+        ↓                  ↓              ↓               ↓             ↓
+    Problem Space      Clear Interface   Input/Output    Hierarchy     Auto-tuning
+        ↓                  ↓              ↓               ↓             ↓
+    Requirements       Testable Units    Type Safety     Composition   Production
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Program Structure
+
+```python
+import dspy
+
+class SimpleQA(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.generate_answer = dspy.Predict("question -> answer")
+
+    def forward(self, question):
+        return self.generate_answer(question=question)
+
+# Configure and use
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+
+qa_program = SimpleQA()
+result = qa_program(question="What is DSPy?")
+print(result.answer)
+```
+
+### Production Ready - Complex Program Architecture
+
+```python
+import dspy
+from typing import List, Dict, Optional
+from abc import ABC, abstractmethod
+
+class BaseQASystem(dspy.Module, ABC):
+    """Abstract base class for QA systems."""
+
+    @abstractmethod
+    def forward(self, question: str, context: Optional[List[str]] = None):
+        pass
+
+class DocumentRetriever(dspy.Module):
+    """Handles document retrieval and context preparation."""
+
+    def __init__(self, max_docs: int = 5):
+        super().__init__()
+        self.max_docs = max_docs
+        self.retrieve = dspy.Predict("query -> relevant_docs: list[str]")
+        self.rank = dspy.Predict("query, docs -> ranked_docs: list[str]")
+
+    def forward(self, query: str) -> List[str]:
+        # Retrieve candidate documents
+        retrieval_result = self.retrieve(query=query)
+
+        # Rank and filter documents
+        ranking_result = self.rank(
+            query=query,
+            docs=retrieval_result.relevant_docs
+        )
+
+        return ranking_result.ranked_docs[:self.max_docs]
+
+class AnswerGenerator(dspy.Module):
+    """Generates answers using different reasoning strategies."""
+
+    def __init__(self, use_reasoning: bool = True):
+        super().__init__()
+        if use_reasoning:
+            self.generate = dspy.ChainOfThought(
+                "question, context -> reasoning, answer, confidence"
+            )
+        else:
+            self.generate = dspy.Predict(
+                "question, context -> answer, confidence"
+            )
+
+    def forward(self, question: str, context: List[str]):
+        context_str = "\n".join(context)
+        return self.generate(question=question, context=context_str)
+
+class QualityValidator(dspy.Module):
+    """Validates answer quality and triggers refinement if needed."""
+
+    def __init__(self):
+        super().__init__()
+        self.validate = dspy.Predict(
+            "question, answer, context -> is_valid: bool, issues: str"
+        )
+        self.refine = dspy.Predict(
+            "question, answer, issues, context -> improved_answer"
+        )
+
+    def forward(self, question: str, answer: str, context: List[str]):
+        context_str = "\n".join(context)
+
+        # Validate answer quality
+        validation = self.validate(
+            question=question,
+            answer=answer,
+            context=context_str
+        )
+
+        # Refine if needed
+        if not validation.is_valid:
+            refined = self.refine(
+                question=question,
+                answer=answer,
+                issues=validation.issues,
+                context=context_str
+            )
+            return dspy.Prediction(
+                answer=refined.improved_answer,
+                refined=True,
+                original_answer=answer
+            )
+
+        return dspy.Prediction(answer=answer, refined=False)
+
+class AdvancedQASystem(BaseQASystem):
+    """Complete QA system with retrieval, generation, and validation."""
+
+    def __init__(self,
+                 max_docs: int = 5,
+                 use_reasoning: bool = True,
+                 validate_quality: bool = True):
+        super().__init__()
+
+        # Compose subsystems
+        self.retriever = DocumentRetriever(max_docs=max_docs)
+        self.generator = AnswerGenerator(use_reasoning=use_reasoning)
+
+        if validate_quality:
+            self.validator = QualityValidator()
+        else:
+            self.validator = None
+
+    def forward(self, question: str, context: Optional[List[str]] = None):
+        # Step 1: Retrieve context if not provided
+        if context is None:
+            context = self.retriever(query=question)
+
+        # Step 2: Generate answer
+        generation_result = self.generator(
+            question=question,
+            context=context
+        )
+
+        # Step 3: Validate and potentially refine
+        if self.validator:
+            final_result = self.validator(
+                question=question,
+                answer=generation_result.answer,
+                context=context
+            )
+
+            # Combine results
+            return dspy.Prediction(
+                question=question,
+                context=context,
+                answer=final_result.answer,
+                confidence=getattr(generation_result, 'confidence', None),
+                reasoning=getattr(generation_result, 'reasoning', None),
+                refined=final_result.refined
+            )
+        else:
+            return dspy.Prediction(
+                question=question,
+                context=context,
+                answer=generation_result.answer,
+                confidence=getattr(generation_result, 'confidence', None),
+                reasoning=getattr(generation_result, 'reasoning', None),
+                refined=False
+            )
+
+# Usage
+qa_system = AdvancedQASystem(
+    max_docs=3,
+    use_reasoning=True,
+    validate_quality=True
+)
+
+result = qa_system(question="How does machine learning work?")
+print(f"Answer: {result.answer}")
+print(f"Refined: {result.refined}")
+```
+
+## Core Architecture Patterns
+
+### Single Responsibility Modules
+
+```python
+# ✅ DO: Each module has one clear purpose
+class SentimentClassifier(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.classify = dspy.Predict("text -> sentiment, confidence")
+
+    def forward(self, text):
+        return self.classify(text=text)
+
+class TextSummarizer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.summarize = dspy.ChainOfThought("text -> summary, key_points")
+
+    def forward(self, text):
+        return self.summarize(text=text)
+
+# ❌ DON'T: Mix responsibilities
+class MonolithicProcessor(dspy.Module):
+    def forward(self, text):
+        # Doing classification, summarization, translation all at once
+        pass
+```
+
+### Hierarchical Composition
+
+```python
+# Bottom-up composition pattern
+class ContentAnalyzer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Leaf modules - atomic operations
+        self.classifier = SentimentClassifier()
+        self.summarizer = TextSummarizer()
+        self.extractor = EntityExtractor()
+
+        # Coordinator module
+        self.synthesize = dspy.Predict(
+            "sentiment, summary, entities -> analysis_report"
+        )
+
+    def forward(self, text):
+        # Parallel processing of components
+        sentiment_result = self.classifier(text=text)
+        summary_result = self.summarizer(text=text)
+        entities_result = self.extractor(text=text)
+
+        # Synthesize results
+        return self.synthesize(
+            sentiment=sentiment_result.sentiment,
+            summary=summary_result.summary,
+            entities=entities_result.entities
+        )
+```
+
+### Pipeline Architecture
+
+```python
+class DocumentProcessingPipeline(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Sequential processing stages
+        self.preprocessor = TextPreprocessor()
+        self.analyzer = ContentAnalyzer()
+        self.enricher = ContentEnricher()
+        self.formatter = ResultFormatter()
+
+    def forward(self, raw_document):
+        # Sequential pipeline execution
+        cleaned_text = self.preprocessor(text=raw_document)
+        analysis = self.analyzer(text=cleaned_text.processed_text)
+        enriched = self.enricher(analysis=analysis)
+        formatted = self.formatter(enriched_analysis=enriched)
+
+        return formatted
+```
+
+## Advanced Composition Patterns
+
+### Conditional Execution
+
+```python
+class AdaptiveProcessor(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Different processing paths
+        self.complexity_assessor = dspy.Predict("text -> complexity: str")
+        self.simple_processor = dspy.Predict("text -> result")
+        self.complex_processor = dspy.ChainOfThought("text -> reasoning, result")
+        self.expert_processor = dspy.BestOfN(
+            dspy.ChainOfThought("text -> result"), n=3
+        )
+
+    def forward(self, text):
+        # Determine processing complexity
+        complexity = self.complexity_assessor(text=text)
+
+        # Route to appropriate processor
+        if "simple" in complexity.complexity.lower():
+            return self.simple_processor(text=text)
+        elif "complex" in complexity.complexity.lower():
+            return self.complex_processor(text=text)
+        else:
+            return self.expert_processor(text=text)
+```
+
+### Error Recovery and Fallbacks
+
+```python
+class RobustQASystem(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Primary processing chain
+        self.primary_retriever = AdvancedRetriever()
+        self.primary_generator = dspy.ChainOfThought("question, context -> answer")
+
+        # Fallback systems
+        self.fallback_retriever = SimpleRetriever()
+        self.fallback_generator = dspy.Predict("question -> answer")
+
+        # Quality checker
+        self.quality_check = dspy.Predict("answer -> is_good: bool")
+
+    def forward(self, question):
+        try:
+            # Try primary path
+            context = self.primary_retriever(query=question)
+            answer = self.primary_generator(
+                question=question,
+                context=context.documents
+            )
+
+            # Validate quality
+            quality = self.quality_check(answer=answer.answer)
+            if quality.is_good:
+                return answer
+
+        except Exception as e:
+            print(f"Primary system failed: {e}")
+
+        # Fallback to simpler approach
+        try:
+            context = self.fallback_retriever(query=question)
+            return self.fallback_generator(question=question)
+        except Exception as e:
+            # Last resort - direct answer
+            return self.fallback_generator(question=question)
+```
+
+### State Management
+
+```python
+class StatefulConversation(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # State tracking
+        self.conversation_history = []
+        self.user_profile = {}
+
+        # Processing modules
+        self.context_manager = dspy.Predict(
+            "history, current_message -> relevant_context"
+        )
+        self.response_generator = dspy.ChainOfThought(
+            "context, message, user_profile -> response"
+        )
+        self.profile_updater = dspy.Predict(
+            "history, message, response -> updated_profile: dict"
+        )
+
+    def forward(self, message):
+        # Update context
+        context = self.context_manager(
+            history=str(self.conversation_history[-5:]),  # Last 5 turns
+            current_message=message
+        )
+
+        # Generate response
+        response = self.response_generator(
+            context=context.relevant_context,
+            message=message,
+            user_profile=str(self.user_profile)
+        )
+
+        # Update state
+        profile_update = self.profile_updater(
+            history=str(self.conversation_history),
+            message=message,
+            response=response.response
+        )
+
+        # Persist state changes
+        self.conversation_history.append({
+            "user": message,
+            "assistant": response.response
+        })
+        self.user_profile.update(profile_update.updated_profile)
+
+        return response
+```
+
+## Testing and Validation Patterns
+
+### Testable Module Design
+
+```python
+class TestableQAModule(dspy.Module):
+    def __init__(self, retriever=None, generator=None):
+        super().__init__()
+
+        # Dependency injection for testing
+        self.retriever = retriever or DefaultRetriever()
+        self.generator = generator or dspy.Predict("question, context -> answer")
+
+    def forward(self, question, context=None):
+        if context is None:
+            context = self.retriever(query=question)
+
+        return self.generator(question=question, context=context)
+
+# Testing with mocks
+def test_qa_module():
+    class MockRetriever(dspy.Module):
+        def forward(self, query):
+            return ["test context"]
+
+    class MockGenerator(dspy.Module):
+        def forward(self, question, context):
+            return dspy.Prediction(answer="test answer")
+
+    qa = TestableQAModule(
+        retriever=MockRetriever(),
+        generator=MockGenerator()
+    )
+
+    result = qa(question="test question")
+    assert result.answer == "test answer"
+```
+
+### Performance Monitoring
+
+```python
+class MonitoredModule(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.predict = dspy.Predict("input -> output")
+        self.call_count = 0
+        self.total_time = 0
+
+    def forward(self, **kwargs):
+        import time
+        start_time = time.time()
+
+        try:
+            result = self.predict(**kwargs)
+            return result
+        finally:
+            # Update metrics
+            self.call_count += 1
+            self.total_time += time.time() - start_time
+
+    def get_metrics(self):
+        return {
+            "calls": self.call_count,
+            "total_time": self.total_time,
+            "avg_time": self.total_time / max(self.call_count, 1)
+        }
+```
+
+## Speed Tips
+
+### Module Organization Best Practices
+
+```python
+# ✅ DO: Organize by functionality
+class MultimodalAnalyzer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Group related functionality
+        self.text_processors = {
+            "sentiment": SentimentAnalyzer(),
+            "entities": EntityExtractor(),
+            "summary": TextSummarizer()
+        }
+
+        self.image_processors = {
+            "caption": ImageCaptioner(),
+            "objects": ObjectDetector()
+        }
+
+        self.synthesizer = MultimodalSynthesizer()
+
+    def forward(self, text=None, image=None):
+        results = {}
+
+        if text:
+            for name, processor in self.text_processors.items():
+                results[f"text_{name}"] = processor(text=text)
+
+        if image:
+            for name, processor in self.image_processors.items():
+                results[f"image_{name}"] = processor(image=image)
+
+        return self.synthesizer(analysis_results=results)
+```
+
+### Lazy Loading and Resource Management
+
+```python
+class EfficientProcessor(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Lazy-loaded expensive components
+        self._heavy_processor = None
+        self._specialized_model = None
+
+    @property
+    def heavy_processor(self):
+        if self._heavy_processor is None:
+            self._heavy_processor = ExpensiveProcessor()
+        return self._heavy_processor
+
+    def forward(self, task_type, **kwargs):
+        if task_type == "light":
+            return self.light_processor(**kwargs)
+        else:
+            return self.heavy_processor(**kwargs)  # Only loaded when needed
+```
+
+## Common Pitfalls
+
+### Avoiding Circular Dependencies
+
+```python
+# ❌ DON'T: Create circular dependencies
+class ModuleA(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.module_b = ModuleB()  # Circular if ModuleB uses ModuleA
+
+# ✅ DO: Use dependency injection or shared components
+class SharedProcessor(dspy.Module):
+    def forward(self, data, mode):
+        if mode == "a":
+            return self.process_a(data)
+        else:
+            return self.process_b(data)
+
+class ModuleA(dspy.Module):
+    def __init__(self, shared_processor):
+        super().__init__()
+        self.processor = shared_processor
+```
+
+### Proper Error Handling
+
+```python
+class RobustModule(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.predictor = dspy.Predict("input -> output")
+
+    def forward(self, **kwargs):
+        try:
+            return self.predictor(**kwargs)
+        except Exception as e:
+            # Log error but return meaningful fallback
+            logger.error(f"Module failed: {e}")
+            return dspy.Prediction(
+                output="Error occurred during processing",
+                error=str(e),
+                success=False
+            )
+```
+
+## Best Practices Summary
+
+- **Single Responsibility**: Each module should have one clear purpose
+- **Composition Over Inheritance**: Build complexity through module composition
+- **Dependency Injection**: Make modules testable by injecting dependencies
+- **Error Recovery**: Implement fallback strategies for robust systems
+- **State Management**: Handle stateful interactions properly
+- **Performance Monitoring**: Track metrics for optimization
+- **Resource Efficiency**: Use lazy loading for expensive components
+- **Clean Interfaces**: Define clear input/output contracts
+- **Modular Testing**: Test individual components in isolation
+
+## References
+
+- [Module API Documentation](/docs/api/modules/Module.md)
+- [Program Composition Tutorial](/docs/tutorials/core_development/)
+- [Testing DSPy Programs](/docs/tutorials/testing/)
+- [Performance Optimization Guide](/docs/tutorials/optimization/)

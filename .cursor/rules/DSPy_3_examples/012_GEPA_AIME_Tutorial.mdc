@@ -1,0 +1,862 @@
+---
+description: DSPY 3 GEPA AIME Tutorial - Math reasoning optimization achieving 46.7% to 56.7% improvement
+alwaysApply: false
+---
+
+> You are an expert in GEPA optimization for mathematical reasoning using DSPy 3.0.1 based on official AIME tutorial.
+
+## GEPA Math Reasoning Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                GEPA AIME Math Optimization Pipeline              │
+├──────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐    ┌─────────────────┐    ┌──────────────┐  │
+│  │ Problem Input   │    │ Chain of        │    │ Reflection   │  │
+│  │ • AIME Problems │───▶│ Thought         │───▶│ Analysis     │  │
+│  │ • Math Context  │    │ Reasoning       │    │ & Feedback   │  │
+│  └─────────────────┘    └─────────────────┘    └──────────────┘  │
+│           │                       │                      │        │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Mathematical Domain Feedback                   │  │
+│  │  • Step-by-step solution validation                        │  │
+│  │  • Mathematical identity application                       │  │
+│  │  • Algebraic manipulation feedback                         │  │
+│  │  • Verification and bounds checking                        │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│           │                       │                      │        │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                  Prompt Evolution Tree                      │  │
+│  │  • Mathematical reasoning strategies                       │  │
+│  │  • Domain-specific guidance                                │  │
+│  │  • Contest problem patterns                               │  │
+│  │  • Verification techniques                                │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### AIME Dataset Setup (From Official Tutorial)
+
+```python
+import dspy
+from datasets import load_dataset
+import random
+
+# Load AIME datasets - 2022-2024 for training, 2025 for testing
+def init_aime_dataset():
+    # Training data: AIME validation set (2022-2024)
+    train_split = load_dataset("AI-MO/aimo-validation-aime")['train']
+    train_split = [
+        dspy.Example({
+            "problem": x['problem'],
+            'solution': x['solution'],
+            'answer': x['answer'],
+        }).with_inputs("problem")
+        for x in train_split
+    ]
+
+    # Shuffle for consistent splits
+    random.Random(0).shuffle(train_split)
+    total_problems = len(train_split)  # 90 problems total
+
+    # Test data: AIME 2025 (repeated 5x for statistical stability)
+    test_split = load_dataset("MathArena/aime_2025")['train']
+    test_split = [
+        dspy.Example({
+            "problem": x['problem'],
+            'answer': x['answer'],
+        }).with_inputs("problem")
+        for x in test_split
+    ]
+
+    # Split: 45 train, 45 validation, 150 test (5x repetition)
+    train_set = train_split[:int(0.5 * total_problems)]  # 45 examples
+    val_set = train_split[int(0.5 * total_problems):]    # 45 examples
+    test_set = test_split * 5                            # 150 examples
+
+    return train_set, val_set, test_set
+
+train_set, val_set, test_set = init_aime_dataset()
+print(f"Train: {len(train_set)}, Val: {len(val_set)}, Test: {len(test_set)}")
+# Output: Train: 45, Val: 45, Test: 150
+```
+
+### Mathematical Chain of Thought Program
+
+```python
+class GenerateResponse(dspy.Signature):
+    """Solve the problem and provide the answer in the correct format."""
+    problem = dspy.InputField()
+    answer = dspy.OutputField()
+
+# Base program for mathematical reasoning
+program = dspy.ChainOfThought(GenerateResponse)
+
+# Mathematical evaluation metric
+def metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+    correct_answer = int(example['answer'])
+    try:
+        llm_answer = int(prediction.answer)
+        return int(correct_answer == llm_answer)
+    except ValueError:
+        return 0
+```
+
+### Performance Results (From Official Tutorial)
+
+- **Baseline Performance**: 70/150 correct (46.7% accuracy)
+- **GEPA Optimized**: 85/150 correct (56.7% accuracy)
+- **Relative Improvement**: 21.4% increase in accuracy
+- **Optimization Budget**: "light" setting (minimal rollouts)
+- **Training Time**: ~2-3 hours for full optimization
+
+### GEPA Mathematical Feedback System
+
+```python
+def math_feedback_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+    """Enhanced feedback metric for mathematical reasoning"""
+    correct_answer = int(example['answer'])
+    solution_text = example.get('solution', '')
+
+    try:
+        llm_answer = int(prediction.answer)
+    except ValueError as e:
+        feedback_text = f"FORMATTING ERROR: Answer must be integer. Got '{prediction.answer}'. "
+        feedback_text += f"Correct answer: {correct_answer}. "
+        if solution_text:
+            feedback_text += f"Solution approach: {solution_text[:200]}..."
+        return dspy.Prediction(score=0, feedback=feedback_text)
+
+    score = int(correct_answer == llm_answer)
+
+    # Generate domain-specific mathematical feedback
+    feedback_components = []
+
+    if score == 1:
+        feedback_components.append("✅ CORRECT mathematical solution!")
+        feedback_components.append("Key success factors identified:")
+        if hasattr(prediction, 'reasoning'):
+            reasoning = prediction.reasoning.lower()
+            # Analyze successful reasoning patterns
+            if any(word in reasoning for word in ['modular', 'mod', 'remainder']):
+                feedback_components.append("• Effective use of modular arithmetic")
+            if any(word in reasoning for word in ['identity', 'formula', 'theorem']):
+                feedback_components.append("• Good application of mathematical identities")
+            if any(word in reasoning for word in ['systematic', 'case', 'enumerate']):
+                feedback_components.append("• Systematic case analysis approach")
+    else:
+        feedback_components.append(f"❌ INCORRECT. Expected: {correct_answer}, Got: {llm_answer}")
+        feedback_components.append("Mathematical guidance for improvement:")
+
+        # Provide solution-specific feedback
+        if solution_text:
+            feedback_components.append(f"Reference solution approach: {solution_text}")
+            feedback_components.append("Key takeaways from solution:")
+
+            # Extract mathematical strategies from solution
+            solution_lower = solution_text.lower()
+            if 'base' in solution_lower and 'digit' in solution_lower:
+                feedback_components.append("• Focus on base conversion and digit constraints")
+            if 'modular' in solution_lower or 'mod' in solution_lower:
+                feedback_components.append("• Apply modular arithmetic for constraint reduction")
+            if 'palindrome' in solution_lower:
+                feedback_components.append("• Consider palindrome structure properties")
+            if 'bound' in solution_lower or 'inequality' in solution_lower:
+                feedback_components.append("• Establish tight bounds before enumeration")
+
+    feedback_text = " ".join(feedback_components)
+    return dspy.Prediction(score=score, feedback=feedback_text)
+```
+
+### Production Mathematical GEPA System
+
+```python
+import mlflow
+from typing import Dict, List, Any
+import logging
+import numpy as np
+
+class MathematicalGEPAOptimizer:
+    def __init__(
+        self,
+        base_lm: str = "openai/gpt-4.1-mini",
+        reflection_lm: str = "openai/gpt-5",
+        budget: str = "light",
+        api_key: str = None
+    ):
+        # Configure models for mathematical reasoning
+        self.base_lm = dspy.LM(
+            base_lm,
+            temperature=1.0,  # Higher temperature for diverse reasoning
+            max_tokens=32000,
+            api_key=api_key
+        )
+        self.reflection_lm = dspy.LM(
+            reflection_lm,
+            temperature=1.0,
+            max_tokens=32000,
+            api_key=api_key
+        )
+        self.budget = budget
+
+        # Setup mathematical domain tracking
+        mlflow.set_experiment("GEPA-Mathematical-Reasoning")
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+    def create_mathematical_program(self) -> dspy.Module:
+        """Create optimized mathematical reasoning program"""
+
+        class MathematicalReasoning(dspy.Signature):
+            """
+            Solve advanced mathematical problems with systematic reasoning.
+            Focus on identifying problem structure, applying relevant techniques, and verification.
+            """
+            problem = dspy.InputField(desc="Mathematical problem requiring systematic solution")
+            answer = dspy.OutputField(desc="Final numerical answer only (integer)")
+
+        return dspy.ChainOfThought(MathematicalReasoning)
+
+    def optimize_for_mathematics(
+        self,
+        train_set: List[dspy.Example],
+        val_set: List[dspy.Example],
+        test_set: List[dspy.Example]
+    ) -> dspy.Module:
+        """Run GEPA optimization specifically tuned for mathematical reasoning"""
+
+        with mlflow.start_run(run_name="GEPA-AIME-Mathematics"):
+            # Log dataset characteristics
+            mlflow.log_params({
+                "domain": "mathematics",
+                "problem_type": "AIME_competition",
+                "train_size": len(train_set),
+                "val_size": len(val_set),
+                "test_size": len(test_set),
+                "optimizer": "GEPA",
+                "budget": self.budget
+            })
+
+            # Create mathematical program
+            program = self.create_mathematical_program()
+
+            # Enhanced mathematical feedback metric
+            def enhanced_math_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+                return self.comprehensive_math_feedback(example, prediction, trace, pred_name, pred_trace)
+
+            # Configure GEPA for mathematical domain
+            optimizer = dspy.GEPA(
+                metric=enhanced_math_metric,
+                auto=self.budget,
+                num_threads=32,  # High parallelism for faster optimization
+                track_stats=True,
+                track_best_outputs=True,
+                reflection_minibatch_size=3,  # Small batches for focused reflection
+                reflection_lm=self.reflection_lm
+            )
+
+            # Baseline evaluation
+            baseline_evaluator = dspy.Evaluate(
+                devset=test_set,
+                metric=self.simple_accuracy_metric,
+                num_threads=32,
+                display_table=True,
+                display_progress=True
+            )
+
+            baseline_score = baseline_evaluator(program)
+            mlflow.log_metric("baseline_accuracy", baseline_score)
+            logging.info(f"Baseline AIME accuracy: {baseline_score:.1%}")
+
+            # Run GEPA optimization
+            logging.info("Starting GEPA optimization for mathematical reasoning...")
+            optimized_program = optimizer.compile(
+                program,
+                trainset=train_set,
+                valset=val_set,
+            )
+
+            # Final evaluation on test set
+            final_score = baseline_evaluator(optimized_program)
+            improvement = ((final_score - baseline_score) / baseline_score) * 100
+
+            # Log optimization results
+            mlflow.log_metrics({
+                "final_accuracy": final_score,
+                "accuracy_improvement_percent": improvement,
+                "absolute_improvement": final_score - baseline_score,
+                "optimization_success": 1 if improvement > 0 else 0
+            })
+
+            # Analyze mathematical reasoning improvements
+            self.analyze_reasoning_improvements(program, optimized_program, test_set)
+
+            logging.info(f"GEPA Mathematical Optimization Complete:")
+            logging.info(f"  Baseline: {baseline_score:.1%}")
+            logging.info(f"  Optimized: {final_score:.1%}")
+            logging.info(f"  Improvement: {improvement:.1f}%")
+
+            return optimized_program
+
+    def comprehensive_math_feedback(self, example, prediction, trace=None, pred_name=None, pred_trace=None):
+        """Generate comprehensive mathematical reasoning feedback"""
+
+        try:
+            correct_answer = int(example['answer'])
+            solution_text = example.get('solution', '')
+            problem_text = example.get('problem', '')
+
+            # Parse prediction
+            try:
+                predicted_answer = int(prediction.answer)
+                parsing_success = True
+            except (ValueError, AttributeError):
+                predicted_answer = None
+                parsing_success = False
+
+            # Calculate base score
+            if parsing_success and predicted_answer == correct_answer:
+                score = 1.0
+                feedback_type = "SUCCESS"
+            else:
+                score = 0.0
+                feedback_type = "NEEDS_IMPROVEMENT"
+
+            # Generate detailed feedback
+            feedback_sections = []
+
+            # 1. Overall assessment
+            if score == 1.0:
+                feedback_sections.append(f"✅ EXCELLENT: Correct answer {correct_answer}")
+            else:
+                if not parsing_success:
+                    feedback_sections.append(f"❌ FORMAT ERROR: Answer must be integer. Got: '{prediction.answer}'")
+                else:
+                    feedback_sections.append(f"❌ INCORRECT: Expected {correct_answer}, got {predicted_answer}")
+
+            # 2. Problem type analysis
+            problem_type = self.identify_problem_type(problem_text)
+            feedback_sections.append(f"📋 Problem Type: {problem_type}")
+
+            # 3. Mathematical techniques needed
+            if solution_text:
+                techniques = self.extract_mathematical_techniques(solution_text)
+                feedback_sections.append(f"🔧 Key Techniques: {', '.join(techniques)}")
+
+            # 4. Reasoning quality analysis (if available)
+            if hasattr(prediction, 'reasoning'):
+                reasoning_feedback = self.analyze_reasoning_quality(prediction.reasoning, problem_type)
+                feedback_sections.append(f"🧠 Reasoning Analysis: {reasoning_feedback}")
+
+            # 5. Solution guidance (for incorrect answers)
+            if score == 0.0 and solution_text:
+                guidance = self.extract_solution_guidance(solution_text, problem_type)
+                feedback_sections.append(f"💡 Solution Guidance: {guidance}")
+
+            # 6. Mathematical best practices
+            best_practices = self.get_mathematical_best_practices(problem_type)
+            feedback_sections.append(f"📚 Best Practices: {best_practices}")
+
+            feedback_text = " | ".join(feedback_sections)
+
+            return dspy.Prediction(score=score, feedback=feedback_text)
+
+        except Exception as e:
+            error_feedback = f"FEEDBACK_ERROR: {str(e)} | Ensure answer is integer format."
+            return dspy.Prediction(score=0.0, feedback=error_feedback)
+
+    def identify_problem_type(self, problem_text: str) -> str:
+        """Identify mathematical problem type for targeted feedback"""
+        problem_lower = problem_text.lower()
+
+        if 'base' in problem_lower and ('digit' in problem_lower or 'representation' in problem_lower):
+            return "Base Conversion & Digit Analysis"
+        elif 'palindrome' in problem_lower:
+            return "Palindrome Analysis"
+        elif any(word in problem_lower for word in ['sequence', 'recursive', 'recurrence']):
+            return "Sequences & Recurrence Relations"
+        elif any(word in problem_lower for word in ['triangle', 'geometry', 'angle']):
+            return "Geometry"
+        elif any(word in problem_lower for word in ['mod', 'modular', 'remainder', 'divisible']):
+            return "Number Theory & Modular Arithmetic"
+        elif any(word in problem_lower for word in ['polynomial', 'equation', 'roots']):
+            return "Algebra & Polynomials"
+        elif any(word in problem_lower for word in ['probability', 'combinatorics', 'choose']):
+            return "Combinatorics & Probability"
+        else:
+            return "General Problem Solving"
+
+    def extract_mathematical_techniques(self, solution_text: str) -> List[str]:
+        """Extract key mathematical techniques from solution"""
+        techniques = []
+        solution_lower = solution_text.lower()
+
+        technique_patterns = {
+            'Modular Arithmetic': ['mod', 'modular', 'remainder', 'congruence'],
+            'Case Analysis': ['case', 'cases', 'consider', 'separately'],
+            'Algebraic Manipulation': ['equation', 'solve', 'substitute', 'factor'],
+            'Bounds & Inequalities': ['bound', 'inequality', 'at most', 'at least'],
+            'Systematic Enumeration': ['enumerate', 'list', 'count', 'systematic'],
+            'Mathematical Identities': ['identity', 'formula', 'theorem', 'lemma'],
+            'Pigeonhole Principle': ['pigeonhole', 'must exist', 'at least one'],
+            'Geometric Reasoning': ['geometric', 'coordinate', 'distance', 'angle']
+        }
+
+        for technique, keywords in technique_patterns.items():
+            if any(keyword in solution_lower for keyword in keywords):
+                techniques.append(technique)
+
+        return techniques if techniques else ['General Problem Solving']
+
+    def analyze_reasoning_quality(self, reasoning_text: str, problem_type: str) -> str:
+        """Analyze quality of mathematical reasoning"""
+        quality_indicators = []
+        reasoning_lower = reasoning_text.lower()
+
+        # Length assessment
+        word_count = len(reasoning_text.split())
+        if word_count < 20:
+            quality_indicators.append("Too brief - needs more detailed steps")
+        elif word_count > 500:
+            quality_indicators.append("Very detailed - good thoroughness")
+        else:
+            quality_indicators.append("Appropriate length")
+
+        # Mathematical rigor indicators
+        if any(word in reasoning_lower for word in ['therefore', 'thus', 'hence', 'so']):
+            quality_indicators.append("Good logical flow")
+
+        if any(word in reasoning_lower for word in ['verify', 'check', 'confirm']):
+            quality_indicators.append("Includes verification steps")
+
+        if problem_type == "Base Conversion & Digit Analysis":
+            if 'constraint' in reasoning_lower or 'bound' in reasoning_lower:
+                quality_indicators.append("Considers digit constraints")
+
+        return " • ".join(quality_indicators)
+
+    def extract_solution_guidance(self, solution_text: str, problem_type: str) -> str:
+        """Extract actionable guidance from reference solution"""
+        guidance_parts = []
+
+        # Extract first strategic insight
+        sentences = solution_text.split('.')[:3]  # First 3 sentences
+        if sentences:
+            strategic_insight = sentences[0].strip()
+            if len(strategic_insight) > 20:
+                guidance_parts.append(f"Strategy: {strategic_insight}")
+
+        # Type-specific guidance
+        if problem_type == "Base Conversion & Digit Analysis":
+            guidance_parts.append("Focus on digit bounds and positional notation")
+        elif problem_type == "Modular Arithmetic":
+            guidance_parts.append("Apply modular reduction to simplify constraints")
+        elif problem_type == "Combinatorics & Probability":
+            guidance_parts.append("Consider systematic counting and symmetry")
+
+        return " | ".join(guidance_parts) if guidance_parts else "Analyze problem structure systematically"
+
+    def get_mathematical_best_practices(self, problem_type: str) -> str:
+        """Get best practices for specific problem types"""
+        practices = {
+            "Base Conversion & Digit Analysis": "Enforce digit constraints strictly, use modular arithmetic",
+            "Number Theory & Modular Arithmetic": "Reduce early with modular arithmetic, check divisibility",
+            "Geometry": "Set up coordinates, use distance formulas, verify with special cases",
+            "Combinatorics & Probability": "Count systematically, avoid double counting, use symmetry",
+            "Sequences & Recurrence Relations": "Find pattern, verify with initial terms, check boundary conditions",
+            "General Problem Solving": "Read carefully, identify constraints, verify final answer"
+        }
+        return practices.get(problem_type, "Apply systematic mathematical reasoning")
+
+    def simple_accuracy_metric(self, example, prediction, trace=None):
+        """Simple accuracy metric for evaluation"""
+        try:
+            correct_answer = int(example['answer'])
+            predicted_answer = int(prediction.answer)
+            return int(correct_answer == predicted_answer)
+        except:
+            return 0
+
+    def analyze_reasoning_improvements(self, baseline_program, optimized_program, test_set):
+        """Analyze improvements in mathematical reasoning"""
+        sample_problems = test_set[:5]  # Analyze first 5 problems
+
+        improvements = []
+        for i, example in enumerate(sample_problems):
+            try:
+                baseline_pred = baseline_program(**example.inputs())
+                optimized_pred = optimized_program(**example.inputs())
+
+                baseline_correct = self.simple_accuracy_metric(example, baseline_pred)
+                optimized_correct = self.simple_accuracy_metric(example, optimized_pred)
+
+                if optimized_correct > baseline_correct:
+                    improvements.append(f"Problem {i+1}: Improved from incorrect to correct")
+                elif optimized_correct == baseline_correct == 1:
+                    improvements.append(f"Problem {i+1}: Maintained correct answer")
+            except:
+                continue
+
+        mlflow.log_text("\n".join(improvements), "reasoning_improvements.txt")
+
+# Usage Example
+def run_aime_optimization():
+    """Complete AIME optimization pipeline"""
+
+    # Initialize optimizer
+    optimizer = MathematicalGEPAOptimizer(
+        budget="light",  # As used in tutorial
+        api_key="your-api-key"
+    )
+
+    # Load AIME dataset
+    train_set, val_set, test_set = init_aime_dataset()
+
+    # Run optimization
+    optimized_program = optimizer.optimize_for_mathematics(
+        train_set=train_set,
+        val_set=val_set,
+        test_set=test_set
+    )
+
+    return optimized_program
+
+# Production deployment
+optimized_aime_solver = run_aime_optimization()
+```
+
+## Production Enhancements
+
+### Enhanced Mathematical Feedback
+
+```python
+class AdvancedMathematicalFeedback:
+    def __init__(self):
+        self.problem_patterns = {
+            'base_conversion': r'base\s+\d+|digit|representation',
+            'modular_arithmetic': r'mod\s+\d+|remainder|divisible|congruent',
+            'palindrome': r'palindrome|reads?\s+the\s+same',
+            'geometry': r'triangle|angle|coordinate|distance|geometric',
+            'combinatorics': r'ways?|combinations?|arrangements?|choose',
+            'number_theory': r'prime|factor|gcd|lcm|integer'
+        }
+
+    def generate_contextual_feedback(
+        self,
+        problem: str,
+        prediction: dspy.Prediction,
+        solution: str = None
+    ) -> str:
+        """Generate context-aware mathematical feedback"""
+
+        feedback_components = []
+
+        # Identify problem domain
+        domain = self.identify_mathematical_domain(problem)
+        feedback_components.append(f"Domain: {domain}")
+
+        # Analyze mathematical reasoning
+        if hasattr(prediction, 'reasoning'):
+            reasoning_analysis = self.analyze_mathematical_reasoning(
+                prediction.reasoning, domain
+            )
+            feedback_components.append(f"Reasoning Quality: {reasoning_analysis}")
+
+        # Domain-specific improvement suggestions
+        improvements = self.suggest_domain_improvements(domain, prediction)
+        if improvements:
+            feedback_components.append(f"Improvements: {improvements}")
+
+        return " | ".join(feedback_components)
+
+    def identify_mathematical_domain(self, problem: str) -> str:
+        """Identify the mathematical domain of the problem"""
+        import re
+
+        for domain, pattern in self.problem_patterns.items():
+            if re.search(pattern, problem.lower()):
+                return domain.replace('_', ' ').title()
+
+        return "General Mathematics"
+
+    def analyze_mathematical_reasoning(self, reasoning: str, domain: str) -> str:
+        """Analyze the quality of mathematical reasoning"""
+        reasoning_lower = reasoning.lower()
+        quality_score = 0
+        feedback_parts = []
+
+        # Check for systematic approach
+        if any(word in reasoning_lower for word in ['first', 'then', 'next', 'finally']):
+            quality_score += 1
+            feedback_parts.append("systematic approach")
+
+        # Check for verification
+        if any(word in reasoning_lower for word in ['verify', 'check', 'confirm']):
+            quality_score += 1
+            feedback_parts.append("includes verification")
+
+        # Domain-specific checks
+        if domain.lower() == 'base conversion':
+            if 'constraint' in reasoning_lower or 'bound' in reasoning_lower:
+                quality_score += 1
+                feedback_parts.append("considers constraints")
+
+        # Overall assessment
+        if quality_score >= 2:
+            return f"High ({'/'.join(feedback_parts)})"
+        elif quality_score == 1:
+            return f"Moderate ({'/'.join(feedback_parts) if feedback_parts else 'basic structure'})"
+        else:
+            return "Needs improvement (lacks systematic approach)"
+```
+
+### MLflow Mathematical Tracking
+
+```python
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+class MathematicalExperimentTracking:
+    def __init__(self):
+        self.problem_type_performance = {}
+        self.optimization_progression = []
+
+    def track_mathematical_optimization(
+        self,
+        optimizer_run: callable,
+        test_problems: List[dspy.Example]
+    ):
+        """Track mathematical optimization with detailed analytics"""
+
+        with mlflow.start_run(run_name="GEPA-Mathematical-Analysis"):
+            # Run optimization
+            optimized_program = optimizer_run()
+
+            # Analyze performance by problem type
+            type_performance = self.analyze_performance_by_type(
+                optimized_program, test_problems
+            )
+
+            # Log problem type breakdown
+            for prob_type, metrics in type_performance.items():
+                mlflow.log_metrics({
+                    f"{prob_type}_accuracy": metrics['accuracy'],
+                    f"{prob_type}_count": metrics['count']
+                })
+
+            # Create performance visualization
+            self.create_performance_visualizations(type_performance)
+
+            # Log mathematical insights
+            insights = self.extract_mathematical_insights(optimized_program)
+            mlflow.log_text(insights, "mathematical_insights.txt")
+
+    def analyze_performance_by_type(
+        self,
+        program: dspy.Module,
+        test_problems: List[dspy.Example]
+    ) -> Dict[str, Dict]:
+        """Analyze performance breakdown by mathematical problem type"""
+
+        type_results = {}
+
+        for example in test_problems:
+            # Identify problem type
+            prob_type = self.classify_problem_type(example.problem)
+
+            if prob_type not in type_results:
+                type_results[prob_type] = {'correct': 0, 'total': 0}
+
+            # Evaluate prediction
+            try:
+                prediction = program(**example.inputs())
+                correct = int(example.answer) == int(prediction.answer)
+                type_results[prob_type]['correct'] += int(correct)
+            except:
+                pass
+
+            type_results[prob_type]['total'] += 1
+
+        # Calculate accuracies
+        for prob_type in type_results:
+            results = type_results[prob_type]
+            results['accuracy'] = results['correct'] / results['total'] if results['total'] > 0 else 0
+
+        return type_results
+
+    def create_performance_visualizations(self, type_performance: Dict):
+        """Create visualizations for mathematical performance analysis"""
+
+        # Performance by problem type
+        types = list(type_performance.keys())
+        accuracies = [type_performance[t]['accuracy'] for t in types]
+
+        plt.figure(figsize=(12, 6))
+        plt.bar(types, accuracies)
+        plt.title('GEPA Performance by Mathematical Problem Type')
+        plt.ylabel('Accuracy')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+
+        plt.savefig('math_performance_by_type.png', dpi=300, bbox_inches='tight')
+        mlflow.log_artifact('math_performance_by_type.png')
+        plt.close()
+```
+
+## Optimization Strategies
+
+### When to Use GEPA for Mathematics
+
+- **Complex reasoning tasks** requiring multi-step solutions
+- **Contest mathematics** where solution strategies matter
+- **Domain expertise** can be encoded in feedback
+- **Sample efficiency** needed with limited training data
+- **Interpretability** important for educational applications
+
+### Mathematical Domain Tuning
+
+```python
+# Mathematics-specific GEPA configuration
+def configure_math_gepa(problem_difficulty: str = "competition") -> dspy.GEPA:
+    """Configure GEPA specifically for mathematical problems"""
+
+    config_map = {
+        "basic": {
+            "budget": "light",
+            "reflection_minibatch_size": 5,
+            "temperature": 0.8
+        },
+        "intermediate": {
+            "budget": "medium",
+            "reflection_minibatch_size": 3,
+            "temperature": 1.0
+        },
+        "competition": {  # AIME level
+            "budget": "light",  # Proven effective in tutorial
+            "reflection_minibatch_size": 3,
+            "temperature": 1.0
+        },
+        "research": {
+            "budget": "heavy",
+            "reflection_minibatch_size": 2,
+            "temperature": 1.2
+        }
+    }
+
+    config = config_map[problem_difficulty]
+
+    return dspy.GEPA(
+        auto=config["budget"],
+        reflection_minibatch_size=config["reflection_minibatch_size"],
+        reflection_lm=dspy.LM(
+            "openai/gpt-5",
+            temperature=config["temperature"]
+        ),
+        num_threads=32,
+        track_stats=True,
+        track_best_outputs=True
+    )
+```
+
+## Speed Tips
+
+- **Use "light" budget**: Proven effective in AIME tutorial (46.7% → 56.7%)
+- **Optimize reflection batch size**: 3 examples work well for math problems
+- **Leverage mathematical structure**: Include problem type in feedback
+- **Cache mathematical computations**: Store intermediate results
+- **Parallel evaluation**: Use high thread counts (32+ for AIME problems)
+- **Focused validation sets**: 45 examples sufficient for AIME optimization
+
+## Common Issues
+
+### Mathematical Answer Formatting
+
+```python
+def robust_answer_extraction(prediction: dspy.Prediction) -> int:
+    """Robust extraction of numerical answers from predictions"""
+    import re
+
+    answer_text = str(prediction.answer).strip()
+
+    # Try direct integer conversion
+    try:
+        return int(answer_text)
+    except ValueError:
+        pass
+
+    # Extract integers from text
+    numbers = re.findall(r'-?\d+', answer_text)
+    if numbers:
+        return int(numbers[-1])  # Take the last number
+
+    # Handle common formatting issues
+    if '=' in answer_text:
+        after_equals = answer_text.split('=')[-1].strip()
+        numbers = re.findall(r'-?\d+', after_equals)
+        if numbers:
+            return int(numbers[0])
+
+    raise ValueError(f"Could not extract integer from: {answer_text}")
+```
+
+### Optimization Convergence for Math
+
+```python
+def monitor_math_convergence(optimizer_stats: Dict) -> List[str]:
+    """Monitor convergence issues specific to mathematical optimization"""
+
+    issues = []
+
+    # Check for mathematical reasoning diversity
+    if optimizer_stats.get('candidate_diversity', 0) < 0.3:
+        issues.append("Low diversity in mathematical approaches - need more reflection variety")
+
+    # Check for consistent improvement
+    scores = optimizer_stats.get('iteration_scores', [])
+    if len(scores) > 3:
+        recent_improvement = scores[-1] - scores[-3]
+        if recent_improvement < 0.01:
+            issues.append("Mathematical optimization plateauing - consider stronger reflection model")
+
+    return issues
+```
+
+## Best Practices Summary
+
+### Mathematical GEPA Optimization
+
+1. **Rich Mathematical Feedback**: Include problem type, solution strategies, and verification steps
+2. **Domain-Specific Reflection**: Use mathematical terminology and concepts in feedback
+3. **Structured Solutions**: Encourage step-by-step mathematical reasoning
+4. **Answer Format Validation**: Ensure numerical answers are properly formatted
+5. **Problem Type Analysis**: Tailor feedback to specific mathematical domains
+6. **Solution Strategy Guidance**: Reference standard mathematical approaches
+7. **Verification Emphasis**: Include answer checking in reasoning process
+
+### Production Mathematical Systems
+
+- **Robust Answer Parsing**: Handle various numerical answer formats
+- **Mathematical Domain Classification**: Automatically identify problem types
+- **Performance Monitoring**: Track accuracy by mathematical domain
+- **Educational Integration**: Provide explanations for learning contexts
+- **Competition Preparation**: Optimize for contest-style problems
+
+### Quality Assurance for Mathematics
+
+- **Cross-Validation**: Test on multiple mathematical datasets
+- **Expert Review**: Have mathematicians validate improved reasoning
+- **Consistency Checks**: Ensure stable performance across problem types
+- **Error Analysis**: Identify systematic mathematical reasoning errors
+
+## References
+
+- [GEPA AIME Tutorial](https://dspy.ai/docs/tutorials/gepa_aime/) - Official tutorial with 46.7% → 56.7% results
+- [AI-MO AIME Validation Dataset](https://huggingface.co/datasets/AI-MO/aimo-validation-aime)
+- [AIME 2025 Dataset](https://huggingface.co/datasets/MathArena/aime_2025)
+- [GEPA Paper](https://arxiv.org/abs/2507.19457) - Reflective Prompt Evolution methodology
+- [Mathematical Reasoning Best Practices](https://dspy.ai/docs/deep-dive/mathematical-reasoning/)

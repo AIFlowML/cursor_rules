@@ -1,0 +1,450 @@
+---
+description: DSPy BootstrapFinetune - Advanced weight optimization for maximum performance
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 BootstrapFinetune advanced weight optimization for maximum development speed.
+
+## BootstrapFinetune Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Bootstrap       │───▶│ Trace Data       │───▶│ Fine-tune       │
+│ Examples        │    │ Collection       │    │ Local Models    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Teacher         │    │ Format           │    │ Optimized       │
+│ Execution       │    │ Conversion       │    │ Student         │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant BootstrapFinetune Patterns
+
+### Quick Start
+
+```python
+import dspy
+
+# Initialize BootstrapFinetune for weight optimization
+def task_metric(gold, pred):
+    """Metric for filtering training data"""
+    return float(gold.answer.strip() == pred.answer.strip())
+
+# Setup local models for fine-tuning
+local_lm = dspy.LM(
+    'local/llama-3.2-1b',  # Local model
+    api_base='http://localhost:8080/v1',
+    supports_finetuning=True
+)
+
+# Configure student with local model
+student = dspy.ChainOfThought("question -> answer")
+student.set_lm(local_lm)
+
+bootstrap_ft = dspy.BootstrapFinetune(
+    metric=task_metric,
+    multitask=True,         # Single model for all predictors
+    exclude_demos=False,    # Include few-shot demos
+    num_threads=4
+)
+
+# Optimize with weight fine-tuning
+optimized = bootstrap_ft.compile(
+    student=student,
+    trainset=trainset,
+    teacher=teacher_program  # Optional teacher for data generation
+)
+```
+
+### Production Configuration
+
+```python
+# Enterprise BootstrapFinetune setup
+bootstrap_ft = dspy.BootstrapFinetune(
+    metric=comprehensive_metric,
+
+    # Multi-task configuration
+    multitask=True,  # Share weights across predictors
+
+    # Training configuration
+    train_kwargs={
+        'epochs': 3,
+        'learning_rate': 5e-5,
+        'batch_size': 8,
+        'max_length': 512,
+        'warmup_steps': 100,
+        'save_steps': 500,
+        'eval_steps': 100,
+        'logging_steps': 50
+    },
+
+    # Data formatting
+    adapter=dspy.ChatAdapter(),  # Format for chat models
+    exclude_demos=False,         # Include context demos
+
+    # Performance optimization
+    num_threads=16
+)
+
+# Per-model configuration for complex setups
+per_model_config = {
+    reasoning_lm: {
+        'epochs': 5,           # More epochs for reasoning
+        'learning_rate': 3e-5,
+        'batch_size': 4        # Smaller batch for complex reasoning
+    },
+    classification_lm: {
+        'epochs': 2,           # Fewer epochs for classification
+        'learning_rate': 1e-4,
+        'batch_size': 16       # Larger batch for classification
+    }
+}
+
+bootstrap_ft_advanced = dspy.BootstrapFinetune(
+    metric=task_metric,
+    train_kwargs=per_model_config,
+    multitask=False,  # Separate training per model
+    num_threads=8
+)
+```
+
+## Core BootstrapFinetune Patterns
+
+### Teacher-Student Bootstrap Training
+
+```python
+def create_teacher_student_pipeline(base_program, strong_lm, weak_lm):
+    """Teacher-student fine-tuning pipeline"""
+
+    # Create teacher with strong model
+    teacher = base_program.deepcopy()
+    teacher.set_lm(strong_lm)
+
+    # Create student with weak/local model
+    student = base_program.deepcopy()
+    student.set_lm(weak_lm)
+
+    def distillation_metric(gold, pred):
+        """Metric for knowledge distillation"""
+        # Primary metric: task accuracy
+        task_accuracy = compute_task_accuracy(gold, pred)
+
+        # Secondary: teacher alignment (if available)
+        teacher_alignment = 1.0  # Could compute teacher-student agreement
+
+        return 0.8 * task_accuracy + 0.2 * teacher_alignment
+
+    bootstrap_ft = dspy.BootstrapFinetune(
+        metric=distillation_metric,
+        multitask=True,
+        train_kwargs={
+            'epochs': 4,
+            'learning_rate': 2e-5,
+            'gradient_accumulation_steps': 4,
+            'warmup_ratio': 0.1
+        },
+        num_threads=8
+    )
+
+    return bootstrap_ft.compile(
+        student=student,
+        trainset=trainset,
+        teacher=teacher
+    )
+
+def multi_teacher_bootstrap(student, teachers, trainset):
+    """Bootstrap with multiple teachers for data diversity"""
+
+    def ensemble_metric(gold, pred):
+        """Ensemble-aware metric"""
+        base_score = accuracy_metric(gold, pred)
+
+        # Bonus for confident predictions
+        confidence_bonus = getattr(pred, 'confidence', 0.0) * 0.1
+
+        return min(1.0, base_score + confidence_bonus)
+
+    bootstrap_ft = dspy.BootstrapFinetune(
+        metric=ensemble_metric,
+        multitask=True,
+        exclude_demos=True,  # Focus on weight learning
+        train_kwargs={
+            'epochs': 3,
+            'learning_rate': 3e-5,
+            'save_strategy': 'steps',
+            'save_total_limit': 2
+        }
+    )
+
+    # Use multiple teachers (list)
+    return bootstrap_ft.compile(
+        student=student,
+        trainset=trainset,
+        teacher=teachers  # List of teacher programs
+    )
+```
+
+### Advanced Adapter Configuration
+
+```python
+def setup_custom_adapters(model_types):
+    """Configure adapters for different model types"""
+
+    adapters = {}
+
+    for model_name, model_type in model_types.items():
+        if model_type == 'chat':
+            adapters[model_name] = dspy.ChatAdapter(
+                system_message="You are an expert assistant.",
+                add_instruction_to_system=True,
+                max_tokens=1024
+            )
+        elif model_type == 'completion':
+            adapters[model_name] = dspy.JSONAdapter(
+                strict=True,
+                error_handling='raise'
+            )
+        else:  # base completion
+            adapters[model_name] = None  # Use default
+
+    return adapters
+
+def advanced_bootstrap_finetune(student, trainset, model_configs):
+    """Advanced bootstrap fine-tuning with custom adapters"""
+
+    # Setup adapters
+    adapters = setup_custom_adapters(model_configs)
+
+    # Per-predictor training configuration
+    def quality_metric(gold, pred):
+        """Quality-aware metric for fine-tuning"""
+
+        correctness = accuracy_metric(gold, pred)
+
+        # Quality factors
+        length_penalty = 0.0
+        if hasattr(pred, 'reasoning') and len(pred.reasoning) > 1000:
+            length_penalty = 0.1  # Penalize overly long reasoning
+
+        coherence_score = compute_coherence(pred) if hasattr(pred, 'reasoning') else 1.0
+
+        return max(0.0, correctness - length_penalty + 0.1 * coherence_score)
+
+    bootstrap_ft = dspy.BootstrapFinetune(
+        metric=quality_metric,
+        adapter=adapters,
+        multitask=False,  # Per-predictor optimization
+
+        train_kwargs={
+            'epochs': 4,
+            'learning_rate': 1e-5,
+            'weight_decay': 0.01,
+            'fp16': True,           # Memory optimization
+            'dataloader_num_workers': 4,
+            'remove_unused_columns': False,
+            'load_best_model_at_end': True,
+            'metric_for_best_model': 'eval_loss',
+            'greater_is_better': False
+        },
+
+        exclude_demos=False,
+        num_threads=12
+    )
+
+    return bootstrap_ft.compile(student, trainset=trainset)
+```
+
+### Memory-Efficient Fine-tuning
+
+```python
+def memory_efficient_bootstrap(student, trainset, memory_budget='medium'):
+    """Memory-efficient bootstrap fine-tuning"""
+
+    memory_configs = {
+        'low': {
+            'batch_size': 2,
+            'gradient_accumulation_steps': 8,
+            'fp16': True,
+            'dataloader_num_workers': 1
+        },
+        'medium': {
+            'batch_size': 4,
+            'gradient_accumulation_steps': 4,
+            'fp16': True,
+            'dataloader_num_workers': 2
+        },
+        'high': {
+            'batch_size': 8,
+            'gradient_accumulation_steps': 2,
+            'fp16': False,
+            'dataloader_num_workers': 4
+        }
+    }
+
+    config = memory_configs[memory_budget]
+
+    bootstrap_ft = dspy.BootstrapFinetune(
+        metric=accuracy_metric,
+        multitask=True,  # Share weights to reduce memory
+
+        train_kwargs={
+            **config,
+            'epochs': 3,
+            'learning_rate': 2e-5,
+            'save_strategy': 'no',  # Don't save checkpoints
+            'logging_steps': 100,
+            'eval_steps': 500,
+            'max_grad_norm': 1.0
+        },
+
+        exclude_demos=True,  # Reduce context length
+        num_threads=2  # Fewer threads for memory
+    )
+
+    return bootstrap_ft.compile(student, trainset=trainset)
+
+def checkpoint_management(bootstrap_ft, output_dir):
+    """Advanced checkpoint management for fine-tuning"""
+
+    checkpoint_config = {
+        'output_dir': output_dir,
+        'save_strategy': 'steps',
+        'save_steps': 500,
+        'save_total_limit': 3,
+        'load_best_model_at_end': True,
+        'metric_for_best_model': 'eval_accuracy',
+        'greater_is_better': True,
+        'evaluation_strategy': 'steps',
+        'eval_steps': 250
+    }
+
+    bootstrap_ft.train_kwargs.update(checkpoint_config)
+
+    return bootstrap_ft
+```
+
+### Fine-tuning Analysis and Monitoring
+
+```python
+def analyze_finetuning_results(optimized_program, original_program, valset):
+    """Analyze fine-tuning effectiveness"""
+
+    # Evaluate both programs
+    evaluator = dspy.Evaluate(metric=accuracy_metric, num_threads=4)
+
+    original_score = evaluator(original_program, valset)
+    optimized_score = evaluator(optimized_program, valset)
+
+    improvement = optimized_score - original_score
+
+    analysis = {
+        'original_accuracy': original_score,
+        'optimized_accuracy': optimized_score,
+        'absolute_improvement': improvement,
+        'relative_improvement': improvement / original_score if original_score > 0 else 0,
+        'statistical_significance': compute_significance(original_score, optimized_score, len(valset))
+    }
+
+    # Model comparison
+    if hasattr(optimized_program, 'training_stats'):
+        analysis['training_stats'] = optimized_program.training_stats
+
+    return analysis
+
+def monitor_training_progress(train_kwargs, wandb_project=None):
+    """Add training monitoring to bootstrap fine-tuning"""
+
+    monitoring_config = {
+        'logging_steps': 10,
+        'eval_steps': 100,
+        'logging_strategy': 'steps',
+        'evaluation_strategy': 'steps',
+        'report_to': ['wandb'] if wandb_project else [],
+        'run_name': f"bootstrap_finetune_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    }
+
+    if wandb_project:
+        monitoring_config['wandb_project'] = wandb_project
+        monitoring_config['wandb_tags'] = ['dspy', 'bootstrap_finetune']
+
+    train_kwargs.update(monitoring_config)
+
+    return train_kwargs
+```
+
+## Performance Insights
+
+### BootstrapFinetune vs Other Optimizers
+
+- **Local Model Performance**: 50-80% improvement over base local models
+- **Cost Efficiency**: 10-100x cheaper than API calls after fine-tuning
+- **Latency**: 2-5x faster inference with local models
+- **Quality Retention**: 85-95% of teacher performance with proper distillation
+
+### Configuration Guidelines
+
+```python
+def finetune_config_recommendations(model_size, task_complexity, dataset_size):
+    """Configuration recommendations for BootstrapFinetune"""
+
+    size_configs = {
+        'small': {'epochs': 3, 'lr': 5e-5, 'batch_size': 8},    # <1B params
+        'medium': {'epochs': 2, 'lr': 2e-5, 'batch_size': 4},   # 1B-7B params
+        'large': {'epochs': 1, 'lr': 1e-5, 'batch_size': 2}     # >7B params
+    }
+
+    complexity_multipliers = {
+        'simple': 1.0,      # Classification
+        'medium': 1.5,      # QA, reasoning
+        'complex': 2.0      # Long-form generation
+    }
+
+    base_config = size_configs[model_size]
+    complexity_factor = complexity_multipliers[task_complexity]
+
+    # Adjust based on dataset size
+    if dataset_size < 500:
+        base_config['epochs'] = max(1, int(base_config['epochs'] * 1.5))
+    elif dataset_size > 5000:
+        base_config['epochs'] = max(1, int(base_config['epochs'] * 0.8))
+
+    base_config['epochs'] = int(base_config['epochs'] * complexity_factor)
+
+    return base_config
+```
+
+## Speed Tips
+
+- Use `multitask=True` to share weights across predictors
+- `exclude_demos=True` for pure weight optimization
+- Start with 2-3 epochs and adjust based on validation performance
+- Use gradient accumulation for larger effective batch sizes
+- Enable fp16 for memory and speed improvements
+- Monitor training loss for early stopping
+
+## Common Pitfalls
+
+- **Overfitting**: Too many epochs with small datasets
+- **Memory Issues**: Batch size too large for available GPU memory
+- **Poor Teacher**: Weak teacher programs generate low-quality training data
+- **Wrong Adapter**: Mismatched data format for target model
+- **Insufficient Filtering**: Poor metric allows bad examples in training data
+
+## Best Practices Summary
+
+- Use strong teacher models for high-quality bootstrap data
+- Filter training data with meaningful metrics
+- Configure memory settings based on available hardware
+- Monitor training metrics for overfitting
+- Save checkpoints for model recovery
+- Validate fine-tuned models on held-out data
+- Consider multi-teacher approaches for data diversity
+
+## References
+
+- DSPy BootstrapFinetune Source: `/docs/dspy/dspy/teleprompt/bootstrap_finetune.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/BootstrapFinetune.md`
+- Fine-tuning Utils: `/docs/dspy/dspy/clients/utils_finetune.py`
+- Tutorial Examples: `/docs/dspy/docs/tutorials/classification_finetuning/`

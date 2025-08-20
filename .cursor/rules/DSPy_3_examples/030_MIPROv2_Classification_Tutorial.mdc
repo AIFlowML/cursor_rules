@@ -1,0 +1,1124 @@
+---
+description: DSPY 3  MIPROv2 Classification Optimization - Zero-shot and few-shot classification optimization from official DSPy tutorial
+alwaysApply: false
+---
+
+> You are an expert in MIPROv2 optimization for classification systems using DSPy 3.0.1 based on official tutorials.
+
+## MIPROv2 Classification Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Unoptimized   │    │    MIPROv2       │    │   Optimized     │
+│ Classification  │────│   Optimizer      │────│ Classification  │
+│   - Generic     │    │   - Instruction  │    │   - Domain-     │
+│     Instructions│    │     Optimization │    │     Specific    │
+│   - No Demos    │    │   - Demo         │    │     Instructions│
+│   - Basic       │    │     Selection    │    │   - Best Demos  │
+│     Accuracy    │    │   - Multi-stage  │    │   - Enhanced    │
+└─────────────────┘    │     Search       │    │     Performance │
+                       └──────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │   Performance    │
+                       │   Analysis       │
+                       │   - Confusion    │
+                       │     Matrix       │
+                       │   - F1 Scores    │
+                       │   - ROC Curves   │
+                       └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial MIPROv2 Classification System (From Official Examples)
+
+```python
+import dspy
+from dspy.datasets import HotPotQA
+from dspy.evaluate import Evaluate
+from dspy.teleprompt import MIPROv2
+from typing import Literal
+import random
+
+# Configure DSPy
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+
+# Classification signature with typed output
+class SentimentClassification(dspy.Signature):
+    """Classify the sentiment of a given text as positive, negative, or neutral."""
+
+    text: str = dspy.InputField(desc="The text to classify")
+    sentiment: Literal["positive", "negative", "neutral"] = dspy.OutputField(desc="The sentiment classification")
+    confidence: float = dspy.OutputField(desc="Confidence score between 0 and 1")
+
+# Basic classification module (before optimization)
+class BasicSentimentClassifier(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.classify = dspy.Predict(SentimentClassification)
+
+    def forward(self, text):
+        return self.classify(text=text)
+
+# Create sample dataset for classification
+def create_sentiment_dataset():
+    """Create sample sentiment classification dataset"""
+    examples = [
+        dspy.Example(text="I love this product! It's amazing.", sentiment="positive", confidence=0.9),
+        dspy.Example(text="This is terrible. Worst purchase ever.", sentiment="negative", confidence=0.95),
+        dspy.Example(text="It's okay, nothing special.", sentiment="neutral", confidence=0.7),
+        dspy.Example(text="Absolutely fantastic! Highly recommend.", sentiment="positive", confidence=0.9),
+        dspy.Example(text="Completely disappointed with this.", sentiment="negative", confidence=0.85),
+        dspy.Example(text="Average quality, meets expectations.", sentiment="neutral", confidence=0.75),
+        dspy.Example(text="Outstanding service and quality!", sentiment="positive", confidence=0.95),
+        dspy.Example(text="Waste of money, poor quality.", sentiment="negative", confidence=0.9),
+        dspy.Example(text="Not bad, but not great either.", sentiment="neutral", confidence=0.6),
+        dspy.Example(text="Exceeded all my expectations!", sentiment="positive", confidence=0.95)
+    ]
+
+    # Add input specification
+    for ex in examples:
+        ex = ex.with_inputs('text')
+
+    random.shuffle(examples)
+    train_size = int(0.7 * len(examples))
+
+    return examples[:train_size], examples[train_size:]
+
+# Load dataset
+trainset, devset = create_sentiment_dataset()
+
+# Create baseline classifier
+classifier = BasicSentimentClassifier()
+
+# Define evaluation metric
+def classification_accuracy(example, pred, trace=None):
+    """Calculate classification accuracy"""
+    return pred.sentiment.lower() == example.sentiment.lower()
+
+# Evaluate baseline performance
+evaluate = Evaluate(
+    devset=devset,
+    metric=classification_accuracy,
+    num_threads=4,
+    display_progress=True
+)
+
+baseline_score = evaluate(classifier)
+print(f"Baseline classification accuracy: {baseline_score}%")
+
+# MIPROv2 Optimization - Zero-shot (Instructions Only)
+print("Starting MIPROv2 zero-shot optimization...")
+mipro_zeroshot = MIPROv2(
+    metric=classification_accuracy,
+    auto="light",  # Fast optimization for zero-shot
+    num_threads=4
+)
+
+zeroshot_optimized = mipro_zeroshot.compile(
+    classifier,
+    trainset=trainset,
+    max_bootstrapped_demos=0,  # Zero-shot: no demos
+    max_labeled_demos=0
+)
+
+zeroshot_score = evaluate(zeroshot_optimized)
+print(f"Zero-shot optimized accuracy: {zeroshot_score}%")
+print(f"Zero-shot improvement: {((zeroshot_score - baseline_score) / baseline_score) * 100:.1f}%")
+
+# MIPROv2 Optimization - Few-shot (Instructions + Demos)
+print("Starting MIPROv2 few-shot optimization...")
+mipro_fewshot = MIPROv2(
+    metric=classification_accuracy,
+    auto="medium",  # More thorough optimization for few-shot
+    num_threads=4
+)
+
+fewshot_optimized = mipro_fewshot.compile(
+    classifier,
+    trainset=trainset,
+    max_bootstrapped_demos=3,  # Few-shot: include demos
+    max_labeled_demos=2
+)
+
+fewshot_score = evaluate(fewshot_optimized)
+print(f"Few-shot optimized accuracy: {fewshot_score}%")
+print(f"Few-shot improvement: {((fewshot_score - baseline_score) / baseline_score) * 100:.1f}%")
+
+# Save optimized models
+zeroshot_optimized.save("mipro_zeroshot_classifier.json")
+fewshot_optimized.save("mipro_fewshot_classifier.json")
+
+print("=== Results Summary ===")
+print(f"Baseline: {baseline_score}%")
+print(f"Zero-shot: {zeroshot_score}% ({((zeroshot_score - baseline_score) / baseline_score) * 100:+.1f}%)")
+print(f"Few-shot: {fewshot_score}% ({((fewshot_score - baseline_score) / baseline_score) * 100:+.1f}%)")
+```
+
+### Performance Results (From Tutorial)
+
+- **Baseline Classifier**: ~60-70% accuracy on simple sentiment tasks
+- **Zero-shot MIPROv2**: ~75-85% accuracy (+15-25% relative improvement)
+- **Few-shot MIPROv2**: ~85-95% accuracy (+25-35% relative improvement)
+- **Optimization Time**: 5-10 minutes for light mode, 15-25 minutes for medium
+
+### Production MIPROv2 Classification System
+
+```python
+import logging
+import mlflow
+import numpy as np
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from typing import Dict, List, Optional, Any, Union, Tuple
+from dataclasses import dataclass, asdict
+from enum import Enum
+import dspy
+from dspy.teleprompt import MIPROv2
+from dspy.evaluate import Evaluate
+
+class OptimizationStrategy(Enum):
+    ZERO_SHOT = "zero_shot"
+    FEW_SHOT = "few_shot"
+    HYBRID = "hybrid"
+
+@dataclass
+class ClassificationMIPROv2Config:
+    """Configuration for MIPROv2 classification optimization"""
+    strategy: OptimizationStrategy = OptimizationStrategy.FEW_SHOT
+    optimization_level: str = "medium"  # light, medium, heavy
+    max_bootstrapped_demos: int = 3
+    max_labeled_demos: int = 2
+    num_threads: int = 8
+
+    # Strategy-specific settings
+    zeroshot_focus: bool = True  # Focus on instruction optimization
+    fewshot_demo_selection: str = "diverse"  # diverse, similar, random
+
+    # Evaluation settings
+    cross_validation_folds: int = 3
+    test_split_ratio: float = 0.2
+    stratify_splits: bool = True
+
+    # Performance thresholds
+    min_accuracy_threshold: float = 0.8
+    min_f1_threshold: float = 0.75
+    class_imbalance_threshold: float = 0.3
+
+@dataclass
+class ClassificationOptimizationResult:
+    """Results from MIPROv2 classification optimization"""
+    strategy: OptimizationStrategy
+    baseline_metrics: Dict[str, float]
+    optimized_metrics: Dict[str, float]
+    improvement_metrics: Dict[str, float]
+    optimization_time_minutes: float
+    final_instructions: Dict[str, str]
+    demo_examples: List[Dict[str, Any]]
+    confusion_matrix: List[List[int]]
+    classification_report: Dict[str, Any]
+    cross_validation_scores: List[float]
+    metadata: Dict[str, Any]
+
+class ProductionClassificationSystem(dspy.Module):
+    """Production classification system with enhanced features"""
+
+    def __init__(self, signature_class, enable_confidence=True, enable_caching=True):
+        super().__init__()
+        self.signature_class = signature_class
+        self.enable_confidence = enable_confidence
+        self.enable_caching = enable_caching
+        self.logger = logging.getLogger("ProductionClassifier")
+
+        # Create predictor with enhanced signature
+        if enable_confidence:
+            # Add confidence field to signature if not present
+            enhanced_signature = self._add_confidence_field(signature_class)
+            self.classify = dspy.ChainOfThought(enhanced_signature)
+        else:
+            self.classify = dspy.ChainOfThought(signature_class)
+
+        # Performance tracking
+        self.prediction_count = 0
+        self.cache_hits = 0
+        self.class_counts = {}
+        self.confidence_scores = []
+
+        # Prediction cache
+        self.prediction_cache = {} if enable_caching else None
+
+    def _add_confidence_field(self, signature_class):
+        """Add confidence field to signature if not present"""
+        import inspect
+
+        # Check if confidence field already exists
+        sig_fields = signature_class.__annotations__
+        if 'confidence' not in sig_fields:
+            # Create enhanced signature with confidence
+            class EnhancedSignature(signature_class):
+                confidence: float = dspy.OutputField(desc="Confidence score between 0 and 1")
+
+            return EnhancedSignature
+
+        return signature_class
+
+    def _get_cache_key(self, text: str) -> str:
+        """Generate cache key for text"""
+        import hashlib
+        return hashlib.md5(text.lower().strip().encode()).hexdigest()
+
+    def forward(self, text: str, **kwargs) -> dspy.Prediction:
+        self.prediction_count += 1
+
+        # Check cache first
+        if self.prediction_cache:
+            cache_key = self._get_cache_key(text)
+            if cache_key in self.prediction_cache:
+                self.cache_hits += 1
+                self.logger.debug(f"Cache hit for text: {text[:50]}...")
+                return self.prediction_cache[cache_key]
+
+        try:
+            # Make prediction
+            result = self.classify(text=text, **kwargs)
+
+            # Track predictions
+            if hasattr(result, 'sentiment'):
+                predicted_class = result.sentiment
+            elif hasattr(result, 'category'):
+                predicted_class = result.category
+            elif hasattr(result, 'label'):
+                predicted_class = result.label
+            else:
+                predicted_class = "unknown"
+
+            self.class_counts[predicted_class] = self.class_counts.get(predicted_class, 0) + 1
+
+            if hasattr(result, 'confidence') and result.confidence is not None:
+                try:
+                    confidence_val = float(result.confidence)
+                    self.confidence_scores.append(confidence_val)
+                except (ValueError, TypeError):
+                    pass
+
+            # Cache result
+            if self.prediction_cache:
+                cache_key = self._get_cache_key(text)
+                self.prediction_cache[cache_key] = result
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Classification failed: {e}")
+            # Return safe fallback
+            if hasattr(self.signature_class, 'sentiment'):
+                return dspy.Prediction(sentiment="neutral", confidence=0.0)
+            else:
+                return dspy.Prediction(category="unknown", confidence=0.0)
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get comprehensive performance statistics"""
+        cache_hit_rate = self.cache_hits / max(self.prediction_count, 1)
+        avg_confidence = np.mean(self.confidence_scores) if self.confidence_scores else 0.0
+
+        return {
+            "total_predictions": self.prediction_count,
+            "cache_hit_rate": cache_hit_rate,
+            "class_distribution": dict(self.class_counts),
+            "average_confidence": avg_confidence,
+            "confidence_std": np.std(self.confidence_scores) if self.confidence_scores else 0.0,
+            "cache_size": len(self.prediction_cache) if self.prediction_cache else 0
+        }
+
+class MIPROv2ClassificationOptimizer:
+    """Production MIPROv2 optimizer for classification tasks"""
+
+    def __init__(self, config: ClassificationMIPROv2Config):
+        self.config = config
+        self.logger = logging.getLogger("MIPROv2ClassificationOptimizer")
+
+        # Initialize MLflow tracking
+        mlflow.set_experiment("DSPy-MIPROv2-Classification")
+
+    def optimize_classifier(
+        self,
+        classifier: ProductionClassificationSystem,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example],
+        metric: callable = None
+    ) -> Tuple[ProductionClassificationSystem, ClassificationOptimizationResult]:
+        """
+        Optimize classification system using MIPROv2 with comprehensive evaluation
+        """
+        if not metric:
+            metric = self._default_classification_metric
+
+        optimization_start = time.time()
+
+        try:
+            with mlflow.start_run():
+                # Log configuration
+                mlflow.log_params(asdict(self.config))
+                mlflow.log_param("trainset_size", len(trainset))
+                mlflow.log_param("devset_size", len(devset))
+                mlflow.log_param("strategy", self.config.strategy.value)
+
+                self.logger.info(f"Starting MIPROv2 classification optimization with {self.config.strategy.value} strategy")
+
+                # Evaluate baseline performance
+                baseline_metrics = self._comprehensive_evaluation(classifier, devset, "baseline")
+                self.logger.info(f"Baseline accuracy: {baseline_metrics['accuracy']:.3f}")
+
+                # Configure optimization based on strategy
+                if self.config.strategy == OptimizationStrategy.ZERO_SHOT:
+                    optimized_classifier = self._optimize_zero_shot(classifier, trainset, metric)
+                elif self.config.strategy == OptimizationStrategy.FEW_SHOT:
+                    optimized_classifier = self._optimize_few_shot(classifier, trainset, metric)
+                else:  # HYBRID
+                    optimized_classifier = self._optimize_hybrid(classifier, trainset, metric)
+
+                # Evaluate optimized performance
+                optimized_metrics = self._comprehensive_evaluation(optimized_classifier, devset, "optimized")
+                self.logger.info(f"Optimized accuracy: {optimized_metrics['accuracy']:.3f}")
+
+                # Calculate improvements
+                improvement_metrics = self._calculate_improvements(baseline_metrics, optimized_metrics)
+
+                # Cross-validation evaluation
+                cv_scores = self._cross_validation_evaluation(
+                    optimized_classifier, trainset + devset, metric
+                )
+
+                # Extract optimization details
+                final_instructions, demo_examples = self._extract_optimization_details(optimized_classifier)
+
+                # Generate classification report and confusion matrix
+                confusion_mat, class_report = self._generate_detailed_report(optimized_classifier, devset)
+
+                optimization_time = (time.time() - optimization_start) / 60
+
+                # Create result object
+                result = ClassificationOptimizationResult(
+                    strategy=self.config.strategy,
+                    baseline_metrics=baseline_metrics,
+                    optimized_metrics=optimized_metrics,
+                    improvement_metrics=improvement_metrics,
+                    optimization_time_minutes=optimization_time,
+                    final_instructions=final_instructions,
+                    demo_examples=demo_examples,
+                    confusion_matrix=confusion_mat,
+                    classification_report=class_report,
+                    cross_validation_scores=cv_scores,
+                    metadata={
+                        "config": asdict(self.config),
+                        "trainset_size": len(trainset),
+                        "devset_size": len(devset)
+                    }
+                )
+
+                # Log comprehensive results
+                self._log_results_to_mlflow(result)
+
+                # Save optimized classifier
+                model_path = f"mipro_classifier_{self.config.strategy.value}_{int(time.time())}.json"
+                optimized_classifier.save(model_path)
+                mlflow.log_artifact(model_path)
+
+                self.logger.info(
+                    f"MIPROv2 {self.config.strategy.value} optimization completed: "
+                    f"{baseline_metrics['accuracy']:.3f} → {optimized_metrics['accuracy']:.3f} "
+                    f"({improvement_metrics['accuracy_improvement_percent']:+.1f}%) "
+                    f"in {optimization_time:.1f} minutes"
+                )
+
+                return optimized_classifier, result
+
+        except Exception as e:
+            self.logger.error(f"MIPROv2 classification optimization failed: {e}")
+            raise
+
+    def _optimize_zero_shot(self, classifier, trainset, metric):
+        """Optimize with zero-shot strategy (instructions only)"""
+        optimizer = MIPROv2(
+            metric=metric,
+            auto=self.config.optimization_level,
+            num_threads=self.config.num_threads
+        )
+
+        return optimizer.compile(
+            classifier,
+            trainset=trainset,
+            max_bootstrapped_demos=0,  # No demos for zero-shot
+            max_labeled_demos=0
+        )
+
+    def _optimize_few_shot(self, classifier, trainset, metric):
+        """Optimize with few-shot strategy (instructions + demos)"""
+        optimizer = MIPROv2(
+            metric=metric,
+            auto=self.config.optimization_level,
+            num_threads=self.config.num_threads
+        )
+
+        return optimizer.compile(
+            classifier,
+            trainset=trainset,
+            max_bootstrapped_demos=self.config.max_bootstrapped_demos,
+            max_labeled_demos=self.config.max_labeled_demos
+        )
+
+    def _optimize_hybrid(self, classifier, trainset, metric):
+        """Optimize with hybrid strategy (progressive optimization)"""
+        # First optimize zero-shot
+        self.logger.info("Phase 1: Zero-shot optimization")
+        zeroshot_classifier = self._optimize_zero_shot(classifier, trainset, metric)
+
+        # Then optimize with few-shot using the zero-shot as base
+        self.logger.info("Phase 2: Few-shot optimization")
+        optimizer = MIPROv2(
+            metric=metric,
+            auto=self.config.optimization_level,
+            num_threads=self.config.num_threads
+        )
+
+        return optimizer.compile(
+            zeroshot_classifier,
+            trainset=trainset,
+            max_bootstrapped_demos=self.config.max_bootstrapped_demos,
+            max_labeled_demos=self.config.max_labeled_demos
+        )
+
+    def _comprehensive_evaluation(self, classifier, devset, phase_name):
+        """Comprehensive evaluation with multiple metrics"""
+        predictions = []
+        true_labels = []
+        confidences = []
+
+        for example in devset:
+            try:
+                pred = classifier(text=example.text)
+
+                # Extract predicted label
+                if hasattr(pred, 'sentiment'):
+                    pred_label = pred.sentiment
+                elif hasattr(pred, 'category'):
+                    pred_label = pred.category
+                elif hasattr(pred, 'label'):
+                    pred_label = pred.label
+                else:
+                    pred_label = str(pred)
+
+                predictions.append(pred_label)
+
+                # Extract true label
+                if hasattr(example, 'sentiment'):
+                    true_label = example.sentiment
+                elif hasattr(example, 'category'):
+                    true_label = example.category
+                elif hasattr(example, 'label'):
+                    true_label = example.label
+                else:
+                    true_label = "unknown"
+
+                true_labels.append(true_label)
+
+                # Extract confidence if available
+                if hasattr(pred, 'confidence') and pred.confidence is not None:
+                    try:
+                        confidences.append(float(pred.confidence))
+                    except (ValueError, TypeError):
+                        confidences.append(0.0)
+                else:
+                    confidences.append(0.0)
+
+            except Exception as e:
+                self.logger.warning(f"Evaluation failed for example: {e}")
+                predictions.append("error")
+                true_labels.append("unknown")
+                confidences.append(0.0)
+
+        # Calculate metrics
+        accuracy = sum(p == t for p, t in zip(predictions, true_labels)) / len(predictions)
+        avg_confidence = np.mean(confidences) if confidences else 0.0
+
+        metrics = {
+            "accuracy": accuracy,
+            "average_confidence": avg_confidence,
+            "total_predictions": len(predictions),
+            "error_count": predictions.count("error")
+        }
+
+        # Log to MLflow
+        for metric_name, value in metrics.items():
+            mlflow.log_metric(f"{phase_name}_{metric_name}", value)
+
+        return metrics
+
+    def _default_classification_metric(self, example, pred, trace=None):
+        """Default classification metric (accuracy)"""
+        # Handle different label field names
+        true_label = None
+        pred_label = None
+
+        # Extract true label
+        for attr in ['sentiment', 'category', 'label']:
+            if hasattr(example, attr):
+                true_label = getattr(example, attr)
+                break
+
+        # Extract predicted label
+        for attr in ['sentiment', 'category', 'label']:
+            if hasattr(pred, attr):
+                pred_label = getattr(pred, attr)
+                break
+
+        if true_label is None or pred_label is None:
+            return False
+
+        return str(pred_label).lower() == str(true_label).lower()
+
+    def _calculate_improvements(self, baseline_metrics, optimized_metrics):
+        """Calculate improvement metrics"""
+        improvements = {}
+
+        for metric_name in baseline_metrics:
+            if metric_name in optimized_metrics:
+                baseline_val = baseline_metrics[metric_name]
+                optimized_val = optimized_metrics[metric_name]
+
+                if baseline_val > 0:
+                    relative_improvement = ((optimized_val - baseline_val) / baseline_val) * 100
+                    improvements[f"{metric_name}_improvement_percent"] = relative_improvement
+                    improvements[f"{metric_name}_absolute_improvement"] = optimized_val - baseline_val
+
+        return improvements
+
+    def _cross_validation_evaluation(self, classifier, dataset, metric):
+        """Perform cross-validation evaluation"""
+        from sklearn.model_selection import StratifiedKFold
+        import random
+
+        if self.config.cross_validation_folds <= 1:
+            return []
+
+        # Prepare data for stratification
+        texts = []
+        labels = []
+
+        for example in dataset:
+            texts.append(example.text)
+            # Extract label for stratification
+            label = None
+            for attr in ['sentiment', 'category', 'label']:
+                if hasattr(example, attr):
+                    label = getattr(example, attr)
+                    break
+            labels.append(label or "unknown")
+
+        # Perform stratified k-fold
+        skf = StratifiedKFold(n_splits=self.config.cross_validation_folds, shuffle=True, random_state=42)
+        cv_scores = []
+
+        for fold, (train_idx, val_idx) in enumerate(skf.split(texts, labels)):
+            self.logger.info(f"Cross-validation fold {fold + 1}/{self.config.cross_validation_folds}")
+
+            # Create fold datasets
+            val_fold = [dataset[i] for i in val_idx]
+
+            # Evaluate on this fold
+            fold_score = 0
+            for example in val_fold:
+                try:
+                    pred = classifier(text=example.text)
+                    if metric(example, pred):
+                        fold_score += 1
+                except Exception:
+                    pass
+
+            fold_accuracy = fold_score / len(val_fold) if val_fold else 0
+            cv_scores.append(fold_accuracy)
+
+        return cv_scores
+
+    def _extract_optimization_details(self, optimized_classifier):
+        """Extract optimization details from optimized classifier"""
+        final_instructions = {}
+        demo_examples = []
+
+        if hasattr(optimized_classifier, 'predictors'):
+            for i, predictor in enumerate(optimized_classifier.predictors()):
+                if hasattr(predictor, 'signature') and hasattr(predictor.signature, 'instructions'):
+                    final_instructions[f"predictor_{i}"] = predictor.signature.instructions
+
+                if hasattr(predictor, 'demos'):
+                    for j, demo in enumerate(predictor.demos):
+                        demo_examples.append({
+                            "predictor": i,
+                            "demo_index": j,
+                            "demo_content": str(demo)[:200]  # Truncate for storage
+                        })
+
+        return final_instructions, demo_examples
+
+    def _generate_detailed_report(self, classifier, devset):
+        """Generate detailed classification report and confusion matrix"""
+        predictions = []
+        true_labels = []
+
+        for example in devset:
+            try:
+                pred = classifier(text=example.text)
+                pred_label = getattr(pred, 'sentiment', getattr(pred, 'category', getattr(pred, 'label', 'unknown')))
+                true_label = getattr(example, 'sentiment', getattr(example, 'category', getattr(example, 'label', 'unknown')))
+
+                predictions.append(str(pred_label))
+                true_labels.append(str(true_label))
+            except Exception:
+                predictions.append("error")
+                true_labels.append("unknown")
+
+        # Generate confusion matrix
+        unique_labels = list(set(true_labels + predictions))
+        confusion_mat = [[0 for _ in unique_labels] for _ in unique_labels]
+
+        for true_label, pred_label in zip(true_labels, predictions):
+            true_idx = unique_labels.index(true_label)
+            pred_idx = unique_labels.index(pred_label)
+            confusion_mat[true_idx][pred_idx] += 1
+
+        # Generate classification report (simplified)
+        class_report = {}
+        for label in unique_labels:
+            true_positives = sum(1 for t, p in zip(true_labels, predictions) if t == label and p == label)
+            predicted_positives = sum(1 for p in predictions if p == label)
+            actual_positives = sum(1 for t in true_labels if t == label)
+
+            precision = true_positives / predicted_positives if predicted_positives > 0 else 0
+            recall = true_positives / actual_positives if actual_positives > 0 else 0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+            class_report[label] = {
+                "precision": precision,
+                "recall": recall,
+                "f1_score": f1,
+                "support": actual_positives
+            }
+
+        return confusion_mat, class_report
+
+    def _log_results_to_mlflow(self, result: ClassificationOptimizationResult):
+        """Log comprehensive results to MLflow"""
+        # Log metrics
+        for metric_name, value in result.baseline_metrics.items():
+            mlflow.log_metric(f"baseline_{metric_name}", value)
+
+        for metric_name, value in result.optimized_metrics.items():
+            mlflow.log_metric(f"optimized_{metric_name}", value)
+
+        for metric_name, value in result.improvement_metrics.items():
+            mlflow.log_metric(metric_name, value)
+
+        # Log cross-validation results
+        if result.cross_validation_scores:
+            mlflow.log_metric("cv_mean_accuracy", np.mean(result.cross_validation_scores))
+            mlflow.log_metric("cv_std_accuracy", np.std(result.cross_validation_scores))
+
+        # Log optimization metadata
+        mlflow.log_metric("optimization_time_minutes", result.optimization_time_minutes)
+        mlflow.log_param("optimization_strategy", result.strategy.value)
+
+# Example usage for different classification tasks
+def optimize_sentiment_classifier():
+    """Example: Optimize sentiment classifier with MIPROv2"""
+
+    # Create sentiment classification system
+    class SentimentSignature(dspy.Signature):
+        """Classify sentiment as positive, negative, or neutral with confidence."""
+        text: str = dspy.InputField()
+        sentiment: Literal["positive", "negative", "neutral"] = dspy.OutputField()
+        confidence: float = dspy.OutputField()
+
+    classifier = ProductionClassificationSystem(SentimentSignature)
+
+    # Configure optimization
+    config = ClassificationMIPROv2Config(
+        strategy=OptimizationStrategy.FEW_SHOT,
+        optimization_level="medium",
+        max_bootstrapped_demos=4,
+        max_labeled_demos=3
+    )
+
+    # Load dataset (placeholder)
+    trainset, devset = create_sentiment_dataset()
+
+    # Run optimization
+    optimizer = MIPROv2ClassificationOptimizer(config)
+    optimized_classifier, results = optimizer.optimize_classifier(
+        classifier, trainset, devset
+    )
+
+    return optimized_classifier, results
+
+def optimize_topic_classifier():
+    """Example: Optimize topic classifier with MIPROv2"""
+
+    # Create topic classification system
+    class TopicSignature(dspy.Signature):
+        """Classify text into topic categories."""
+        text: str = dspy.InputField()
+        topic: Literal["technology", "sports", "politics", "entertainment", "business"] = dspy.OutputField()
+        confidence: float = dspy.OutputField()
+
+    classifier = ProductionClassificationSystem(TopicSignature)
+
+    # Configure for zero-shot optimization
+    config = ClassificationMIPROv2Config(
+        strategy=OptimizationStrategy.ZERO_SHOT,
+        optimization_level="light",
+        num_threads=8
+    )
+
+    # Would need actual topic dataset here
+    # trainset, devset = load_topic_dataset()
+
+    optimizer = MIPROv2ClassificationOptimizer(config)
+    # optimized_classifier, results = optimizer.optimize_classifier(classifier, trainset, devset)
+
+    return classifier, config
+
+if __name__ == "__main__":
+    optimized_classifier, results = optimize_sentiment_classifier()
+    print(f"Optimization completed with {results.improvement_metrics['accuracy_improvement_percent']:.1f}% improvement")
+```
+
+## Performance Optimization Techniques
+
+### Batch Processing for Classification
+
+```python
+class BatchClassificationSystem(ProductionClassificationSystem):
+    """Optimized batch processing for classification tasks"""
+
+    def __init__(self, signature_class, batch_size=32):
+        super().__init__(signature_class)
+        self.batch_size = batch_size
+
+    async def forward_batch(self, texts: List[str]) -> List[dspy.Prediction]:
+        """Process multiple texts in optimized batches"""
+        import asyncio
+
+        results = []
+
+        # Process in batches
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+
+            # Process batch concurrently
+            batch_tasks = [
+                asyncio.create_task(asyncio.to_thread(self.forward, text))
+                for text in batch
+            ]
+
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # Handle exceptions
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    # Fallback prediction for errors
+                    results.append(dspy.Prediction(sentiment="neutral", confidence=0.0))
+                else:
+                    results.append(result)
+
+        return results
+
+# Streaming classification system
+class StreamingClassificationSystem:
+    """Real-time streaming classification with MIPROv2 optimized models"""
+
+    def __init__(self, optimized_classifier, buffer_size=100):
+        self.classifier = optimized_classifier
+        self.buffer_size = buffer_size
+        self.prediction_buffer = []
+        self.results_buffer = []
+
+    def add_text(self, text: str, callback=None):
+        """Add text to processing buffer"""
+        self.prediction_buffer.append((text, callback))
+
+        if len(self.prediction_buffer) >= self.buffer_size:
+            self._process_buffer()
+
+    def _process_buffer(self):
+        """Process accumulated predictions"""
+        batch_texts = [item[0] for item in self.prediction_buffer]
+        callbacks = [item[1] for item in self.prediction_buffer]
+
+        # Process batch
+        for text, callback in zip(batch_texts, callbacks):
+            try:
+                result = self.classifier(text=text)
+                if callback:
+                    callback(text, result)
+                self.results_buffer.append(result)
+            except Exception as e:
+                if callback:
+                    callback(text, None, error=str(e))
+
+        # Clear buffer
+        self.prediction_buffer.clear()
+
+    def flush(self):
+        """Process any remaining items in buffer"""
+        if self.prediction_buffer:
+            self._process_buffer()
+```
+
+## Speed Tips
+
+### MIPROv2 Classification Acceleration
+
+```python
+# Fast dataset sampling for classification
+def create_balanced_sample(dataset: List[dspy.Example], target_size: int = 200) -> List[dspy.Example]:
+    """Create balanced sample maintaining class distribution"""
+    from collections import defaultdict
+    import random
+
+    # Group by class
+    class_examples = defaultdict(list)
+    for example in dataset:
+        label = getattr(example, 'sentiment', getattr(example, 'category', getattr(example, 'label', 'unknown')))
+        class_examples[label].append(example)
+
+    # Calculate samples per class
+    num_classes = len(class_examples)
+    samples_per_class = target_size // num_classes
+
+    balanced_sample = []
+    for class_label, examples in class_examples.items():
+        sample_size = min(samples_per_class, len(examples))
+        balanced_sample.extend(random.sample(examples, sample_size))
+
+    return balanced_sample[:target_size]
+
+# Efficient hyperparameter search
+class MIPROv2HyperparameterSearch:
+    """Efficient hyperparameter search for MIPROv2 classification"""
+
+    def __init__(self, base_config: ClassificationMIPROv2Config):
+        self.base_config = base_config
+        self.best_score = 0.0
+        self.best_params = {}
+
+    def search(self, classifier, trainset, devset, metric):
+        """Search for optimal hyperparameters"""
+
+        # Define search space
+        param_grid = {
+            'optimization_level': ['light', 'medium'],
+            'max_bootstrapped_demos': [2, 3, 4],
+            'max_labeled_demos': [1, 2, 3],
+            'strategy': [OptimizationStrategy.ZERO_SHOT, OptimizationStrategy.FEW_SHOT]
+        }
+
+        # Grid search with early stopping
+        for strategy in param_grid['strategy']:
+            for opt_level in param_grid['optimization_level']:
+                for max_demos in param_grid['max_bootstrapped_demos']:
+                    for max_labeled in param_grid['max_labeled_demos']:
+
+                        # Skip invalid combinations
+                        if strategy == OptimizationStrategy.ZERO_SHOT and (max_demos > 0 or max_labeled > 0):
+                            continue
+
+                        # Create config
+                        config = ClassificationMIPROv2Config(
+                            strategy=strategy,
+                            optimization_level=opt_level,
+                            max_bootstrapped_demos=max_demos,
+                            max_labeled_demos=max_labeled
+                        )
+
+                        try:
+                            # Quick evaluation on subset
+                            subset_size = min(50, len(devset))
+                            eval_subset = devset[:subset_size]
+
+                            optimizer = MIPROv2ClassificationOptimizer(config)
+                            optimized_classifier, results = optimizer.optimize_classifier(
+                                classifier, trainset, eval_subset, metric
+                            )
+
+                            score = results.optimized_metrics['accuracy']
+
+                            if score > self.best_score:
+                                self.best_score = score
+                                self.best_params = {
+                                    'strategy': strategy,
+                                    'optimization_level': opt_level,
+                                    'max_bootstrapped_demos': max_demos,
+                                    'max_labeled_demos': max_labeled
+                                }
+
+                                print(f"New best score: {score:.3f} with params: {self.best_params}")
+
+                        except Exception as e:
+                            print(f"Configuration failed: {e}")
+                            continue
+
+        return self.best_params, self.best_score
+
+# Progressive optimization
+class ProgressiveMIPROv2Optimizer:
+    """Progressive optimization starting with simple approaches"""
+
+    def __init__(self, classifier, trainset, devset, metric):
+        self.classifier = classifier
+        self.trainset = trainset
+        self.devset = devset
+        self.metric = metric
+        self.optimization_history = []
+
+    def optimize_progressively(self):
+        """Optimize using progressive complexity"""
+
+        # Stage 1: Zero-shot light
+        print("Stage 1: Zero-shot light optimization")
+        stage1_config = ClassificationMIPROv2Config(
+            strategy=OptimizationStrategy.ZERO_SHOT,
+            optimization_level="light"
+        )
+
+        optimizer1 = MIPROv2ClassificationOptimizer(stage1_config)
+        classifier1, results1 = optimizer1.optimize_classifier(
+            self.classifier, self.trainset, self.devset, self.metric
+        )
+
+        self.optimization_history.append(("zero_shot_light", results1))
+
+        # Stage 2: Few-shot medium (using Stage 1 as base)
+        print("Stage 2: Few-shot medium optimization")
+        stage2_config = ClassificationMIPROv2Config(
+            strategy=OptimizationStrategy.FEW_SHOT,
+            optimization_level="medium",
+            max_bootstrapped_demos=3,
+            max_labeled_demos=2
+        )
+
+        optimizer2 = MIPROv2ClassificationOptimizer(stage2_config)
+        classifier2, results2 = optimizer2.optimize_classifier(
+            classifier1, self.trainset, self.devset, self.metric
+        )
+
+        self.optimization_history.append(("few_shot_medium", results2))
+
+        # Stage 3: Heavy optimization if improvement is significant
+        if results2.improvement_metrics['accuracy_improvement_percent'] > 10:
+            print("Stage 3: Heavy optimization (significant improvement detected)")
+            stage3_config = ClassificationMIPROv2Config(
+                strategy=OptimizationStrategy.FEW_SHOT,
+                optimization_level="heavy",
+                max_bootstrapped_demos=5,
+                max_labeled_demos=4
+            )
+
+            optimizer3 = MIPROv2ClassificationOptimizer(stage3_config)
+            classifier3, results3 = optimizer3.optimize_classifier(
+                classifier2, self.trainset, self.devset, self.metric
+            )
+
+            self.optimization_history.append(("few_shot_heavy", results3))
+            return classifier3, results3
+
+        return classifier2, results2
+```
+
+## Common Issues
+
+### Classification-Specific Troubleshooting
+
+1. **Class Imbalance**: Use stratified sampling and balanced metrics
+2. **Low Confidence**: Increase max_bootstrapped_demos for better examples
+3. **Overfitting**: Use cross-validation and early stopping
+4. **Poor Generalization**: Increase training data diversity
+
+### Production Solutions
+
+```python
+# Robust classification with fallback
+class RobustClassificationSystem(ProductionClassificationSystem):
+    """Classification system with robust error handling"""
+
+    def __init__(self, signature_class, fallback_strategy="neutral"):
+        super().__init__(signature_class)
+        self.fallback_strategy = fallback_strategy
+        self.error_count = 0
+        self.fallback_count = 0
+
+    def forward(self, text: str, **kwargs) -> dspy.Prediction:
+        try:
+            result = super().forward(text, **kwargs)
+
+            # Validate result
+            if self._is_valid_prediction(result):
+                return result
+            else:
+                return self._get_fallback_prediction()
+
+        except Exception as e:
+            self.error_count += 1
+            self.logger.warning(f"Classification error: {e}")
+            return self._get_fallback_prediction()
+
+    def _is_valid_prediction(self, result) -> bool:
+        """Validate prediction result"""
+        # Check if prediction has required fields
+        required_fields = ['sentiment', 'category', 'label']
+        has_prediction = any(hasattr(result, field) for field in required_fields)
+
+        # Check confidence if available
+        if hasattr(result, 'confidence'):
+            try:
+                confidence = float(result.confidence)
+                if confidence < 0 or confidence > 1:
+                    return False
+            except (ValueError, TypeError):
+                pass
+
+        return has_prediction
+
+    def _get_fallback_prediction(self) -> dspy.Prediction:
+        """Generate fallback prediction"""
+        self.fallback_count += 1
+
+        if self.fallback_strategy == "neutral":
+            return dspy.Prediction(sentiment="neutral", confidence=0.1)
+        elif self.fallback_strategy == "unknown":
+            return dspy.Prediction(category="unknown", confidence=0.0)
+        else:
+            return dspy.Prediction(label=self.fallback_strategy, confidence=0.0)
+```
+
+## Best Practices Summary
+
+### MIPROv2 Classification Guidelines
+
+- **Start with zero-shot** for instruction optimization, then add few-shot
+- **Use balanced datasets** to avoid class bias in optimization
+- **Monitor cross-validation** scores to detect overfitting
+- **Progressive optimization** from light to heavy for best results
+
+### Production Guidelines
+
+- **Implement confidence thresholds** for quality control
+- **Use batch processing** for high-throughput scenarios
+- **Monitor class distribution** to detect data drift
+- **Maintain fallback strategies** for robust error handling
+
+## References
+
+- [Official MIPROv2 Documentation](https://dspy.ai/api/optimizers/MIPROv2/)
+- [DSPy Classification Tutorial](https://dspy.ai/tutorials/classification/)
+- [Sentiment Analysis Best Practices](https://dspy.ai/examples/sentiment/)
+- [MLflow Classification Tracking](https://mlflow.org/docs/latest/llms/dspy/classification.html)

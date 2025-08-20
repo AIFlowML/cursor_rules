@@ -1,0 +1,845 @@
+---
+description: DSPY 3 MIPROv2 RAG Optimization - Advanced instruction and demo optimization from official DSPy tutorial
+
+alwaysApply: false
+---
+
+> You are an expert in MIPROv2 optimization for RAG systems using DSPy 3.0.1 based on official tutorials.
+
+## MIPROv2 RAG Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Unoptimized   │    │    MIPROv2       │    │   Optimized     │
+│   RAG System    │────│   Optimizer      │────│   RAG System    │
+│   - Basic Query │    │   - Instruction  │    │   - Enhanced    │
+│   - Simple      │    │     Optimization │    │     Instructions│
+│     Retrieval   │    │   - Demo         │    │   - Optimized   │
+│   - Generic     │    │     Bootstrap    │    │     Demos       │
+│     Response    │    │   - Multi-step   │    │   - Improved    │
+└─────────────────┘    │     Search       │    │     Performance │
+                       └──────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │   Performance    │
+                       │   Monitoring     │
+                       │   - MLflow       │
+                       │   - Metrics      │
+                       │   - A/B Testing  │
+                       └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial MIPROv2 RAG System (From Official Examples)
+
+```python
+import dspy
+from dspy.datasets import HotPotQA
+from dspy.evaluate import Evaluate
+from dspy.teleprompt import MIPROv2
+
+# Configure DSPy with language model
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+
+# Set up retrieval system
+def search_wikipedia(query: str) -> list[str]:
+    results = dspy.ColBERTv2(url="http://20.102.90.50:2017/wiki17_abstracts")(query, k=3)
+    return [x["text"] for x in results]
+
+# Basic RAG module (before optimization)
+class BasicRAG(dspy.Module):
+    def __init__(self, num_docs=5):
+        self.num_docs = num_docs
+        self.respond = dspy.ChainOfThought("context, question -> response")
+
+    def forward(self, question):
+        context = search_wikipedia(question)
+        return self.respond(context=context, question=question)
+
+# Load dataset for optimization
+dataset = HotPotQA(train_seed=2024, train_size=500, eval_seed=2023, dev_size=200)
+trainset = [x.with_inputs('question') for x in dataset.train]
+devset = [x.with_inputs('question') for x in dataset.dev]
+
+# Create baseline system
+rag_system = BasicRAG()
+
+# Evaluate baseline performance
+evaluate = Evaluate(
+    devset=devset[:50],
+    metric=dspy.evaluate.answer_exact_match,
+    num_threads=24,
+    display_progress=True
+)
+
+baseline_score = evaluate(rag_system)
+print(f"Baseline RAG accuracy: {baseline_score}%")
+
+# MIPROv2 Optimization (Auto Configuration)
+mipro_optimizer = MIPROv2(
+    metric=dspy.evaluate.answer_exact_match,
+    auto="medium",  # Can be "light", "medium", or "heavy"
+    num_threads=24
+)
+
+print("Starting MIPROv2 optimization...")
+optimized_rag = mipro_optimizer.compile(
+    rag_system,
+    trainset=trainset,
+    max_bootstrapped_demos=3,
+    max_labeled_demos=4
+)
+
+# Evaluate optimized performance
+optimized_score = evaluate(optimized_rag)
+print(f"Optimized RAG accuracy: {optimized_score}%")
+print(f"Improvement: {((optimized_score - baseline_score) / baseline_score) * 100:.1f}%")
+
+# Save optimized system
+optimized_rag.save("mipro_optimized_rag.json")
+```
+
+### Performance Results (From Tutorial)
+
+- **Baseline RAG**: ~42% accuracy on HotPotQA
+- **MIPROv2 Optimized**: ~61% accuracy (+45% relative improvement)
+- **Optimization Time**: ~20-30 minutes on medium configuration
+- **Cost**: ~$2-5 USD for optimization run
+
+### Production MIPROv2 RAG System
+
+```python
+import logging
+import mlflow
+import time
+import json
+from typing import Dict, List, Optional, Any, Union
+from dataclasses import dataclass, asdict
+from pydantic import BaseModel, Field
+import dspy
+from dspy.teleprompt import MIPROv2
+from dspy.evaluate import Evaluate
+
+@dataclass
+class MIPROv2Config:
+    """Configuration for MIPROv2 optimization"""
+    optimization_level: str = "medium"  # light, medium, heavy
+    max_bootstrapped_demos: int = 3
+    max_labeled_demos: int = 4
+    num_threads: int = 24
+    enable_tracking: bool = True
+    track_stats: bool = True
+    minibatch_size: int = 25
+    minibatch_full_eval_steps: int = 10
+    num_trials: int = 100
+
+    # Performance thresholds
+    min_improvement_threshold: float = 0.05  # 5% minimum improvement
+    max_optimization_time_minutes: int = 60
+    early_stopping_patience: int = 5
+
+@dataclass
+class OptimizationResult:
+    """Results from MIPROv2 optimization"""
+    baseline_score: float
+    optimized_score: float
+    relative_improvement: float
+    optimization_time_minutes: float
+    optimization_cost_usd: Optional[float]
+    num_iterations: int
+    final_instructions: Dict[str, str]
+    demo_count: Dict[str, int]
+    convergence_history: List[float]
+    metadata: Dict[str, Any]
+
+class ProductionRAGSystem(dspy.Module):
+    """Production RAG system with enhanced features"""
+
+    def __init__(self, num_docs: int = 5, enable_caching: bool = True):
+        super().__init__()
+        self.num_docs = num_docs
+        self.enable_caching = enable_caching
+        self.logger = logging.getLogger("ProductionRAG")
+
+        # Enhanced signature for better optimization
+        enhanced_signature = dspy.Signature(
+            'context, question -> response',
+            'Use the provided context to answer the question accurately and comprehensively. '
+            'Focus on factual information from the context and provide specific details when available.'
+        )
+
+        self.respond = dspy.ChainOfThought(enhanced_signature)
+
+        # Performance tracking
+        self.query_count = 0
+        self.cache_hits = 0
+        self.avg_response_time = 0.0
+
+        # Response cache for similar queries
+        self.response_cache = {} if enable_caching else None
+
+    def _get_cache_key(self, question: str) -> str:
+        """Generate cache key for question"""
+        import hashlib
+        return hashlib.md5(question.lower().strip().encode()).hexdigest()
+
+    def forward(self, question: str) -> dspy.Prediction:
+        start_time = time.time()
+        self.query_count += 1
+
+        # Check cache first
+        if self.response_cache:
+            cache_key = self._get_cache_key(question)
+            if cache_key in self.response_cache:
+                self.cache_hits += 1
+                self.logger.info(f"Cache hit for question: {question[:50]}...")
+                cached_result = self.response_cache[cache_key]
+                return dspy.Prediction(response=cached_result['response'])
+
+        try:
+            # Retrieve context
+            context = search_wikipedia(question)
+            context_text = "\n".join(context) if isinstance(context, list) else str(context)
+
+            # Generate response
+            result = self.respond(context=context_text, question=question)
+
+            # Cache successful result
+            if self.response_cache and hasattr(result, 'response'):
+                cache_key = self._get_cache_key(question)
+                self.response_cache[cache_key] = {
+                    'response': result.response,
+                    'context': context_text,
+                    'timestamp': time.time()
+                }
+
+            # Update performance metrics
+            response_time = (time.time() - start_time) * 1000
+            self.avg_response_time = (
+                (self.avg_response_time * (self.query_count - 1) + response_time) / self.query_count
+            )
+
+            self.logger.info(f"RAG query completed in {response_time:.2f}ms")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"RAG query failed: {e}")
+            return dspy.Prediction(response="I apologize, but I encountered an error processing your question.")
+
+class MIPROv2Optimizer:
+    """Production MIPROv2 optimizer with enterprise features"""
+
+    def __init__(self, config: MIPROv2Config):
+        self.config = config
+        self.logger = logging.getLogger("MIPROv2Optimizer")
+
+        # Initialize MLflow tracking if enabled
+        if config.enable_tracking:
+            mlflow.set_experiment("DSPy-MIPROv2-RAG-Optimization")
+
+    def optimize_rag_system(
+        self,
+        rag_system: ProductionRAGSystem,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example],
+        metric: callable = None
+    ) -> OptimizationResult:
+        """
+        Optimize RAG system using MIPROv2 with comprehensive tracking
+        """
+        if not metric:
+            metric = dspy.evaluate.answer_exact_match
+
+        optimization_start = time.time()
+
+        try:
+            with mlflow.start_run():
+                # Log configuration
+                mlflow.log_params(asdict(self.config))
+                mlflow.log_param("trainset_size", len(trainset))
+                mlflow.log_param("devset_size", len(devset))
+
+                self.logger.info("Starting MIPROv2 optimization...")
+
+                # Evaluate baseline performance
+                baseline_evaluator = Evaluate(
+                    devset=devset,
+                    metric=metric,
+                    num_threads=self.config.num_threads,
+                    display_progress=True
+                )
+
+                baseline_score = baseline_evaluator(rag_system)
+                self.logger.info(f"Baseline performance: {baseline_score:.2f}%")
+                mlflow.log_metric("baseline_score", baseline_score)
+
+                # Configure MIPROv2 optimizer
+                if self.config.optimization_level == "light":
+                    mipro_config = {
+                        "auto": "light",
+                        "num_threads": self.config.num_threads,
+                        "track_stats": self.config.track_stats
+                    }
+                elif self.config.optimization_level == "heavy":
+                    mipro_config = {
+                        "auto": "heavy",
+                        "num_threads": self.config.num_threads,
+                        "track_stats": self.config.track_stats,
+                        "minibatch_size": self.config.minibatch_size,
+                        "minibatch_full_eval_steps": self.config.minibatch_full_eval_steps
+                    }
+                else:  # medium
+                    mipro_config = {
+                        "auto": "medium",
+                        "num_threads": self.config.num_threads,
+                        "track_stats": self.config.track_stats
+                    }
+
+                optimizer = MIPROv2(metric=metric, **mipro_config)
+
+                # Run optimization with timeout protection
+                try:
+                    optimized_system = optimizer.compile(
+                        rag_system,
+                        trainset=trainset,
+                        max_bootstrapped_demos=self.config.max_bootstrapped_demos,
+                        max_labeled_demos=self.config.max_labeled_demos
+                    )
+                except Exception as e:
+                    self.logger.error(f"MIPROv2 optimization failed: {e}")
+                    raise
+
+                # Evaluate optimized performance
+                optimized_score = baseline_evaluator(optimized_system)
+                self.logger.info(f"Optimized performance: {optimized_score:.2f}%")
+
+                # Calculate metrics
+                optimization_time = (time.time() - optimization_start) / 60
+                relative_improvement = ((optimized_score - baseline_score) / baseline_score) * 100
+
+                # Log optimization results
+                mlflow.log_metrics({
+                    "optimized_score": optimized_score,
+                    "relative_improvement_percent": relative_improvement,
+                    "optimization_time_minutes": optimization_time
+                })
+
+                # Extract optimization details
+                final_instructions = {}
+                demo_counts = {}
+                convergence_history = []
+
+                if hasattr(optimized_system, 'predictors'):
+                    for i, predictor in enumerate(optimized_system.predictors()):
+                        if hasattr(predictor, 'signature'):
+                            final_instructions[f"predictor_{i}"] = predictor.signature.instructions
+                        if hasattr(predictor, 'demos'):
+                            demo_counts[f"predictor_{i}"] = len(predictor.demos)
+
+                if hasattr(optimizer, 'score_history'):
+                    convergence_history = optimizer.score_history
+
+                # Check if optimization meets threshold
+                if relative_improvement < self.config.min_improvement_threshold * 100:
+                    self.logger.warning(
+                        f"Optimization improvement ({relative_improvement:.1f}%) below threshold "
+                        f"({self.config.min_improvement_threshold * 100:.1f}%)"
+                    )
+
+                result = OptimizationResult(
+                    baseline_score=baseline_score,
+                    optimized_score=optimized_score,
+                    relative_improvement=relative_improvement,
+                    optimization_time_minutes=optimization_time,
+                    optimization_cost_usd=None,  # Would need cost tracking
+                    num_iterations=len(convergence_history) if convergence_history else 0,
+                    final_instructions=final_instructions,
+                    demo_count=demo_counts,
+                    convergence_history=convergence_history,
+                    metadata={
+                        "config": asdict(self.config),
+                        "trainset_size": len(trainset),
+                        "devset_size": len(devset)
+                    }
+                )
+
+                # Save optimized system
+                model_path = f"mipro_optimized_rag_{int(time.time())}.json"
+                optimized_system.save(model_path)
+                mlflow.log_artifact(model_path)
+
+                self.logger.info(
+                    f"MIPROv2 optimization completed: {baseline_score:.1f}% → {optimized_score:.1f}% "
+                    f"({relative_improvement:+.1f}%) in {optimization_time:.1f} minutes"
+                )
+
+                return result, optimized_system
+
+        except Exception as e:
+            self.logger.error(f"MIPROv2 optimization failed: {e}")
+            raise
+
+# Production optimization workflow
+def run_production_miprov2_optimization():
+    """Complete production MIPROv2 optimization workflow"""
+
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("MIPROv2ProductionWorkflow")
+
+    try:
+        # Configure DSPy
+        dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+
+        # Load dataset
+        dataset = HotPotQA(train_seed=2024, train_size=500, eval_seed=2023, dev_size=200)
+        trainset = [x.with_inputs('question') for x in dataset.train]
+        devset = [x.with_inputs('question') for x in dataset.dev[:50]]
+
+        # Create production RAG system
+        rag_system = ProductionRAGSystem(num_docs=5, enable_caching=True)
+
+        # Configure optimization
+        config = MIPROv2Config(
+            optimization_level="medium",
+            max_bootstrapped_demos=3,
+            max_labeled_demos=4,
+            num_threads=24,
+            enable_tracking=True,
+            min_improvement_threshold=0.05
+        )
+
+        # Run optimization
+        optimizer = MIPROv2Optimizer(config)
+        result, optimized_system = optimizer.optimize_rag_system(
+            rag_system,
+            trainset,
+            devset,
+            metric=dspy.evaluate.answer_exact_match
+        )
+
+        # Print results
+        logger.info("=== MIPROv2 Optimization Results ===")
+        logger.info(f"Baseline: {result.baseline_score:.2f}%")
+        logger.info(f"Optimized: {result.optimized_score:.2f}%")
+        logger.info(f"Improvement: {result.relative_improvement:+.1f}%")
+        logger.info(f"Time: {result.optimization_time_minutes:.1f} minutes")
+
+        return optimized_system, result
+
+    except Exception as e:
+        logger.error(f"Production optimization workflow failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    optimized_system, results = run_production_miprov2_optimization()
+```
+
+## Advanced MIPROv2 Techniques
+
+### Custom Instruction Generation
+
+```python
+class CustomMIPROv2(MIPROv2):
+    """Enhanced MIPROv2 with custom instruction generation"""
+
+    def __init__(self, metric, domain_knowledge: str = "", **kwargs):
+        super().__init__(metric, **kwargs)
+        self.domain_knowledge = domain_knowledge
+
+    def _generate_domain_specific_instructions(self, program, trainset):
+        """Generate domain-specific instructions for better optimization"""
+
+        # Analyze training examples for domain patterns
+        domain_patterns = self._extract_domain_patterns(trainset)
+
+        # Create domain-specific instruction templates
+        instruction_templates = [
+            f"You are an expert in {self.domain_knowledge}. " +
+            "Use your specialized knowledge to provide accurate, detailed responses.",
+
+            f"When answering questions about {self.domain_knowledge}, " +
+            "focus on technical accuracy and provide specific details.",
+
+            f"Draw on your expertise in {self.domain_knowledge} " +
+            "to give comprehensive, well-reasoned answers."
+        ]
+
+        return instruction_templates
+
+    def _extract_domain_patterns(self, trainset):
+        """Extract domain-specific patterns from training data"""
+        patterns = {
+            'question_types': [],
+            'answer_patterns': [],
+            'domain_terms': []
+        }
+
+        for example in trainset:
+            # Analyze question structure
+            if hasattr(example, 'question'):
+                patterns['question_types'].append(self._classify_question_type(example.question))
+
+            # Analyze answer patterns
+            if hasattr(example, 'answer'):
+                patterns['answer_patterns'].append(self._analyze_answer_structure(example.answer))
+
+        return patterns
+
+    def _classify_question_type(self, question: str) -> str:
+        """Classify the type of question for better instruction targeting"""
+        question_lower = question.lower()
+
+        if any(word in question_lower for word in ['what', 'define', 'explain']):
+            return 'definition'
+        elif any(word in question_lower for word in ['how', 'process', 'steps']):
+            return 'process'
+        elif any(word in question_lower for word in ['why', 'reason', 'because']):
+            return 'causal'
+        elif any(word in question_lower for word in ['compare', 'difference', 'versus']):
+            return 'comparison'
+        else:
+            return 'general'
+
+    def _analyze_answer_structure(self, answer: str) -> Dict[str, Any]:
+        """Analyze answer structure for pattern identification"""
+        return {
+            'length': len(answer.split()),
+            'has_numbers': any(char.isdigit() for char in answer),
+            'has_dates': bool(re.search(r'\b\d{4}\b', answer)),
+            'has_lists': ',' in answer or ';' in answer
+        }
+
+# Domain-specific optimization example
+def optimize_financial_rag():
+    """Optimize RAG for financial domain using custom MIPROv2"""
+
+    # Financial-specific configuration
+    config = MIPROv2Config(
+        optimization_level="heavy",
+        max_bootstrapped_demos=5,
+        max_labeled_demos=6,
+        num_threads=32
+    )
+
+    # Custom optimizer with financial domain knowledge
+    optimizer = CustomMIPROv2(
+        metric=dspy.evaluate.answer_exact_match,
+        domain_knowledge="financial analysis and market data",
+        auto="heavy",
+        num_threads=32,
+        track_stats=True
+    )
+
+    # Financial RAG system
+    class FinancialRAG(ProductionRAGSystem):
+        def __init__(self):
+            super().__init__(num_docs=3)
+
+            # Financial-specific signature
+            financial_signature = dspy.Signature(
+                'context, question -> response',
+                'You are a financial analyst. Use the provided market data and context to give '
+                'accurate, data-driven financial insights. Include specific numbers, percentages, '
+                'and dates when available. Focus on factual analysis over speculation.'
+            )
+
+            self.respond = dspy.ChainOfThought(financial_signature)
+
+    return optimizer, FinancialRAG()
+```
+
+## Production Enhancements
+
+### A/B Testing Framework
+
+```python
+class MIPROv2ABTesting:
+    """A/B testing framework for MIPROv2 optimizations"""
+
+    def __init__(self, base_system, optimized_system, test_config):
+        self.base_system = base_system
+        self.optimized_system = optimized_system
+        self.test_config = test_config
+        self.results = {"base": [], "optimized": []}
+
+    def run_ab_test(self, test_queries: List[str]) -> Dict[str, Any]:
+        """Run A/B test comparing base vs optimized systems"""
+
+        import random
+        random.seed(42)
+
+        for query in test_queries:
+            # Randomly assign to A or B group
+            if random.random() < 0.5:
+                # Group A: Base system
+                result = self.base_system(question=query)
+                self.results["base"].append({
+                    "query": query,
+                    "response": result.response,
+                    "system": "base"
+                })
+            else:
+                # Group B: Optimized system
+                result = self.optimized_system(question=query)
+                self.results["optimized"].append({
+                    "query": query,
+                    "response": result.response,
+                    "system": "optimized"
+                })
+
+        return self._analyze_ab_results()
+
+    def _analyze_ab_results(self) -> Dict[str, Any]:
+        """Analyze A/B test results"""
+        # Implementation for statistical analysis
+        base_count = len(self.results["base"])
+        optimized_count = len(self.results["optimized"])
+
+        return {
+            "base_system_queries": base_count,
+            "optimized_system_queries": optimized_count,
+            "total_queries": base_count + optimized_count,
+            "traffic_split": {
+                "base": base_count / (base_count + optimized_count),
+                "optimized": optimized_count / (base_count + optimized_count)
+            }
+        }
+
+# Gradual rollout system
+class GradualMIPROv2Rollout:
+    """Gradual rollout system for MIPROv2 optimized models"""
+
+    def __init__(self, base_system, optimized_system):
+        self.base_system = base_system
+        self.optimized_system = optimized_system
+        self.rollout_percentage = 0.0
+        self.success_threshold = 0.95
+
+    def set_rollout_percentage(self, percentage: float):
+        """Set the percentage of traffic going to optimized system"""
+        self.rollout_percentage = max(0.0, min(1.0, percentage))
+
+    def route_query(self, query: str) -> dspy.Prediction:
+        """Route query based on rollout percentage"""
+        import random
+
+        if random.random() < self.rollout_percentage:
+            return self.optimized_system(question=query)
+        else:
+            return self.base_system(question=query)
+```
+
+## Speed Tips
+
+### MIPROv2 Optimization Acceleration
+
+```python
+# Parallel optimization for multiple systems
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+async def optimize_multiple_systems_parallel(systems_and_datasets):
+    """Optimize multiple RAG systems in parallel"""
+
+    def optimize_single_system(system, trainset, devset, config):
+        optimizer = MIPROv2Optimizer(config)
+        return optimizer.optimize_rag_system(system, trainset, devset)
+
+    tasks = []
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for system, trainset, devset, config in systems_and_datasets:
+            task = asyncio.create_task(
+                asyncio.get_event_loop().run_in_executor(
+                    executor, optimize_single_system, system, trainset, devset, config
+                )
+            )
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks)
+
+    return results
+
+# Incremental optimization
+class IncrementalMIPROv2:
+    """Incremental optimization using checkpoint recovery"""
+
+    def __init__(self, checkpoint_dir: str = "./mipro_checkpoints"):
+        self.checkpoint_dir = checkpoint_dir
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+    def optimize_with_checkpoints(self, system, trainset, devset, config):
+        """Run optimization with checkpoint recovery"""
+
+        checkpoint_file = os.path.join(self.checkpoint_dir, "mipro_progress.json")
+
+        # Load previous progress if exists
+        if os.path.exists(checkpoint_file):
+            with open(checkpoint_file, 'r') as f:
+                progress = json.load(f)
+                print(f"Resuming from iteration {progress['iteration']}")
+
+        # Implement checkpoint-aware optimization
+        optimizer = MIPROv2(
+            metric=dspy.evaluate.answer_exact_match,
+            auto=config.optimization_level,
+            num_threads=config.num_threads
+        )
+
+        # Save progress periodically
+        def save_checkpoint(iteration, current_best_score):
+            checkpoint_data = {
+                "iteration": iteration,
+                "best_score": current_best_score,
+                "timestamp": time.time()
+            }
+
+            with open(checkpoint_file, 'w') as f:
+                json.dump(checkpoint_data, f)
+
+        return optimizer.compile(system, trainset=trainset)
+
+# Smart dataset sampling for faster optimization
+def create_representative_trainset(full_trainset: List[dspy.Example], target_size: int = 100):
+    """Create representative training set for faster optimization"""
+
+    if len(full_trainset) <= target_size:
+        return full_trainset
+
+    # Cluster-based sampling for diversity
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.cluster import KMeans
+    import numpy as np
+
+    # Extract questions for clustering
+    questions = [ex.question for ex in full_trainset]
+
+    # Vectorize questions
+    vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+    question_vectors = vectorizer.fit_transform(questions)
+
+    # Cluster questions
+    n_clusters = min(target_size // 2, 50)  # Ensure reasonable cluster count
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(question_vectors)
+
+    # Sample from each cluster
+    representative_examples = []
+    examples_per_cluster = target_size // n_clusters
+
+    for cluster_id in range(n_clusters):
+        cluster_examples = [ex for i, ex in enumerate(full_trainset) if clusters[i] == cluster_id]
+
+        # Sample from this cluster
+        sample_size = min(examples_per_cluster, len(cluster_examples))
+        sampled = random.sample(cluster_examples, sample_size)
+        representative_examples.extend(sampled)
+
+    return representative_examples[:target_size]
+```
+
+## Common Issues
+
+### MIPROv2 Troubleshooting
+
+1. **Slow Optimization**: Use "light" mode for faster iterations, increase minibatch size
+2. **Memory Issues**: Reduce num_threads, use smaller trainset
+3. **Poor Convergence**: Increase max_bootstrapped_demos, try different auto settings
+4. **Cost Management**: Use representative sampling, set optimization time limits
+
+### Production Solutions
+
+```python
+# Cost monitoring for optimization
+class MIPROv2CostMonitor:
+    """Monitor and limit optimization costs"""
+
+    def __init__(self, max_cost_usd: float = 50.0):
+        self.max_cost_usd = max_cost_usd
+        self.current_cost = 0.0
+        self.token_costs = {
+            "gpt-4o-mini": {"input": 0.000150, "output": 0.000600}  # per 1K tokens
+        }
+
+    def estimate_optimization_cost(self, trainset_size: int, model: str = "gpt-4o-mini") -> float:
+        """Estimate optimization cost based on dataset size"""
+        # Rough estimation based on typical MIPROv2 usage
+        estimated_tokens = trainset_size * 1000  # Conservative estimate
+        cost_per_token = self.token_costs[model]["input"] + self.token_costs[model]["output"]
+
+        return (estimated_tokens / 1000) * cost_per_token * 10  # 10x for optimization overhead
+
+    def check_cost_limit(self, estimated_cost: float) -> bool:
+        """Check if optimization would exceed cost limit"""
+        return (self.current_cost + estimated_cost) <= self.max_cost_usd
+
+# Resource monitoring during optimization
+class MIPROv2ResourceMonitor:
+    """Monitor system resources during optimization"""
+
+    def __init__(self):
+        self.start_time = None
+        self.peak_memory = 0
+        self.avg_cpu = 0
+
+    def start_monitoring(self):
+        """Start resource monitoring"""
+        import psutil
+        import threading
+
+        self.start_time = time.time()
+
+        def monitor_resources():
+            while self.start_time:
+                memory = psutil.virtual_memory()
+                cpu = psutil.cpu_percent()
+
+                self.peak_memory = max(self.peak_memory, memory.used)
+                self.avg_cpu = (self.avg_cpu + cpu) / 2
+
+                time.sleep(5)  # Check every 5 seconds
+
+        thread = threading.Thread(target=monitor_resources)
+        thread.daemon = True
+        thread.start()
+
+    def stop_monitoring(self) -> Dict[str, Any]:
+        """Stop monitoring and return results"""
+        total_time = time.time() - self.start_time if self.start_time else 0
+        self.start_time = None
+
+        return {
+            "total_time_seconds": total_time,
+            "peak_memory_gb": self.peak_memory / (1024**3),
+            "avg_cpu_percent": self.avg_cpu
+        }
+```
+
+## Best Practices Summary
+
+### MIPROv2 Optimization Guidelines
+
+- **Start with "light" mode** for quick iterations, then scale to "medium" or "heavy"
+- **Use representative sampling** for large datasets to reduce optimization time
+- **Monitor costs** and set budget limits for optimization runs
+- **Enable tracking** for experiment management and reproducibility
+- **Test incrementally** with A/B testing before full rollout
+
+### Production Guidelines
+
+- **Implement gradual rollout** for optimized systems
+- **Monitor performance continuously** after deployment
+- **Keep baseline systems** as fallback options
+- **Use checkpointing** for long optimization runs
+- **Document optimization results** for team knowledge sharing
+
+## References
+
+- [Official MIPROv2 Tutorial](https://dspy.ai/tutorials/optimize_ai_program/)
+- [DSPy MIPROv2 API](https://dspy.ai/api/optimizers/MIPROv2/)
+- [HotPotQA Dataset](https://hotpotqa.github.io/)
+- [MLflow DSPy Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

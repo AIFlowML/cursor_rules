@@ -1,0 +1,1216 @@
+# DSPy 3.0.1 MIPROv2 Multi-Hop Reasoning Tutorial
+
+Comprehensive example of using MIPROv2 to optimize complex multi-hop reasoning systems with DSPy 3.0.1. This tutorial demonstrates advanced reasoning chain optimization, knowledge graph traversal, and production-ready multi-step inference systems.
+
+## Core Concepts
+
+### Multi-Hop Reasoning Fundamentals
+- **Chain-of-Thought Reasoning**: Sequential logical steps toward a final answer
+- **Evidence Aggregation**: Combining information from multiple sources and reasoning steps
+- **Context Preservation**: Maintaining relevant information across reasoning hops
+- **Dynamic Path Planning**: Adaptively determining next reasoning steps based on intermediate results
+
+### Advanced Multi-Hop Patterns
+- **Breadth-First Exploration**: Exploring multiple reasoning paths simultaneously
+- **Depth-First Investigation**: Deep diving into specific reasoning branches
+- **Hybrid Reasoning**: Combining different reasoning strategies based on query complexity
+- **Self-Verification**: Validating reasoning chains for consistency and accuracy
+
+### Production Multi-Hop System Architecture
+
+```python
+import dspy
+import asyncio
+from typing import Dict, List, Any, Optional, Tuple, Set
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+import json
+import logging
+import networkx as nx
+from collections import defaultdict
+import numpy as np
+
+# Configure DSPy with unified LM interface
+lm = dspy.LM(model="gpt-4o-mini", max_tokens=2000, temperature=0.2)
+dspy.configure(lm=lm)
+
+class ReasoningStrategy(Enum):
+    """Different strategies for multi-hop reasoning."""
+    BREADTH_FIRST = "breadth_first"
+    DEPTH_FIRST = "depth_first"
+    BEST_FIRST = "best_first"
+    HYBRID = "hybrid"
+
+@dataclass
+class ReasoningStep:
+    """Individual step in multi-hop reasoning chain."""
+    step_id: str
+    query: str
+    evidence: str
+    reasoning: str
+    confidence: float
+    hop_number: int
+    parent_steps: List[str] = field(default_factory=list)
+    child_steps: List[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class ReasoningChain:
+    """Complete reasoning chain with metadata."""
+    chain_id: str
+    query: str
+    steps: List[ReasoningStep]
+    final_answer: str
+    total_confidence: float
+    strategy_used: ReasoningStrategy
+    execution_time: float
+    success: bool = True
+
+class KnowledgeBase:
+    """Simulated knowledge base for multi-hop reasoning."""
+    
+    def __init__(self):
+        # Simulated knowledge graph
+        self.knowledge_graph = nx.DiGraph()
+        self.facts = {}
+        self.entities = set()
+        self._build_sample_knowledge()
+    
+    def _build_sample_knowledge(self):
+        """Build sample knowledge base for demonstration."""
+        # Scientific facts
+        facts = [
+            ("Einstein", "proposed", "Theory of Relativity"),
+            ("Theory of Relativity", "includes", "Special Relativity"),
+            ("Theory of Relativity", "includes", "General Relativity"),
+            ("Special Relativity", "describes", "space-time relationship"),
+            ("General Relativity", "explains", "gravity"),
+            ("gravity", "affects", "planetary motion"),
+            ("planetary motion", "determines", "orbital mechanics"),
+            ("Newton", "formulated", "Laws of Motion"),
+            ("Laws of Motion", "govern", "mechanical systems"),
+            ("mechanical systems", "include", "planetary motion"),
+            ("quantum mechanics", "describes", "atomic behavior"),
+            ("atomic behavior", "influences", "chemical reactions"),
+            ("chemical reactions", "power", "biological processes"),
+            ("DNA", "contains", "genetic information"),
+            ("genetic information", "determines", "protein synthesis"),
+            ("protein synthesis", "enables", "cellular functions"),
+            ("cellular functions", "support", "organism survival"),
+            ("evolution", "explains", "species adaptation"),
+            ("species adaptation", "results_from", "natural selection"),
+            ("natural selection", "favors", "advantageous traits"),
+            ("climate change", "affects", "environmental conditions"),
+            ("environmental conditions", "influence", "species adaptation"),
+            ("technology", "advances", "human capabilities"),
+            ("human capabilities", "enable", "scientific research"),
+            ("scientific research", "leads_to", "new discoveries"),
+            ("new discoveries", "expand", "human knowledge"),
+            ("artificial intelligence", "processes", "complex data"),
+            ("complex data", "reveals", "hidden patterns"),
+            ("hidden patterns", "inform", "decision making"),
+            ("decision making", "drives", "technological progress")
+        ]
+        
+        # Build knowledge graph
+        for subject, relation, obj in facts:
+            self.knowledge_graph.add_edge(subject, obj, relation=relation)
+            self.entities.update([subject, obj])
+            
+            # Store facts for retrieval
+            fact_key = f"{subject}_{relation}_{obj}"
+            self.facts[fact_key] = {
+                "subject": subject,
+                "relation": relation,
+                "object": obj,
+                "relevance_score": np.random.uniform(0.7, 1.0)
+            }
+    
+    def search_facts(self, query: str, max_results: int = 5) -> List[Dict]:
+        """Search for relevant facts based on query."""
+        query_lower = query.lower()
+        relevant_facts = []
+        
+        for fact_key, fact_data in self.facts.items():
+            # Simple relevance scoring based on keyword matching
+            relevance = 0.0
+            for word in query_lower.split():
+                if word in fact_data["subject"].lower():
+                    relevance += 0.4
+                if word in fact_data["relation"].lower():
+                    relevance += 0.2
+                if word in fact_data["object"].lower():
+                    relevance += 0.4
+            
+            if relevance > 0:
+                fact_copy = fact_data.copy()
+                fact_copy["relevance"] = relevance * fact_data["relevance_score"]
+                relevant_facts.append(fact_copy)
+        
+        # Sort by relevance and return top results
+        relevant_facts.sort(key=lambda x: x["relevance"], reverse=True)
+        return relevant_facts[:max_results]
+    
+    def get_connected_entities(self, entity: str, max_hops: int = 2) -> List[Tuple[str, List[str]]]:
+        """Get entities connected to a given entity within max_hops."""
+        if entity not in self.entities:
+            return []
+        
+        connected = []
+        visited = set()
+        
+        def dfs(current_entity, path, remaining_hops):
+            if remaining_hops == 0 or current_entity in visited:
+                return
+            
+            visited.add(current_entity)
+            
+            # Get neighbors
+            if current_entity in self.knowledge_graph:
+                for neighbor in self.knowledge_graph.neighbors(current_entity):
+                    if neighbor not in path:
+                        new_path = path + [current_entity]
+                        connected.append((neighbor, new_path))
+                        if remaining_hops > 1:
+                            dfs(neighbor, new_path, remaining_hops - 1)
+        
+        dfs(entity, [], max_hops)
+        return connected
+
+# Initialize knowledge base
+knowledge_base = KnowledgeBase()
+```
+
+### Multi-Hop Reasoning Signatures
+
+```python
+class InitialQuery(dspy.Signature):
+    """Analyze initial query and plan reasoning approach."""
+    question: str = dspy.InputField(desc="The main question to answer")
+    context: str = dspy.InputField(desc="Available context or background information")
+    
+    reasoning_strategy: str = dspy.OutputField(desc="Recommended reasoning strategy: breadth_first, depth_first, best_first, or hybrid")
+    key_concepts: List[str] = dspy.OutputField(desc="Key concepts to investigate")
+    expected_hops: int = dspy.OutputField(desc="Expected number of reasoning steps needed")
+    decomposed_questions: List[str] = dspy.OutputField(desc="Sub-questions to investigate")
+
+class RetrieveEvidence(dspy.Signature):
+    """Retrieve relevant evidence for a specific reasoning step."""
+    query: str = dspy.InputField(desc="Specific query for this reasoning step")
+    previous_evidence: str = dspy.InputField(desc="Evidence from previous reasoning steps")
+    hop_number: int = dspy.InputField(desc="Current hop number in the reasoning chain")
+    
+    retrieved_facts: List[str] = dspy.OutputField(desc="Relevant facts retrieved from knowledge base")
+    evidence_summary: str = dspy.OutputField(desc="Summary of retrieved evidence")
+    confidence_score: float = dspy.OutputField(desc="Confidence in retrieved evidence (0-1)")
+
+class ReasoningStep(dspy.Signature):
+    """Perform reasoning based on current evidence."""
+    current_query: str = dspy.InputField(desc="Current sub-question being investigated")
+    evidence: str = dspy.InputField(desc="Available evidence for reasoning")
+    previous_reasoning: str = dspy.InputField(desc="Reasoning from previous steps")
+    target_question: str = dspy.InputField(desc="Original target question")
+    
+    reasoning_chain: str = dspy.OutputField(desc="Logical reasoning based on evidence")
+    intermediate_conclusion: str = dspy.OutputField(desc="Conclusion for this reasoning step")
+    next_questions: List[str] = dspy.OutputField(desc="Follow-up questions to investigate")
+    confidence: float = dspy.OutputField(desc="Confidence in this reasoning step (0-1)")
+
+class SynthesizeAnswer(dspy.Signature):
+    """Synthesize final answer from all reasoning steps."""
+    original_question: str = dspy.InputField(desc="The original question to answer")
+    reasoning_steps: str = dspy.InputField(desc="All reasoning steps and their conclusions")
+    evidence_summary: str = dspy.InputField(desc="Summary of all evidence gathered")
+    
+    final_answer: str = dspy.OutputField(desc="Final comprehensive answer to the question")
+    supporting_evidence: List[str] = dspy.OutputField(desc="Key evidence supporting the answer")
+    confidence_level: float = dspy.OutputField(desc="Overall confidence in the final answer (0-1)")
+    reasoning_quality: str = dspy.OutputField(desc="Assessment of reasoning chain quality")
+
+class VerifyReasoning(dspy.Signature):
+    """Verify consistency and quality of reasoning chain."""
+    original_question: str = dspy.InputField()
+    reasoning_chain: str = dspy.InputField()
+    final_answer: str = dspy.InputField()
+    
+    consistency_score: float = dspy.OutputField(desc="Consistency score of reasoning chain (0-1)")
+    logical_gaps: List[str] = dspy.OutputField(desc="Identified logical gaps or inconsistencies")
+    improvement_suggestions: List[str] = dspy.OutputField(desc="Suggestions for improving reasoning")
+    verification_passed: bool = dspy.OutputField(desc="Whether reasoning passes verification")
+```
+
+### Advanced Multi-Hop Reasoning Module
+
+```python
+class MultiHopReasoner(dspy.Module):
+    """Advanced multi-hop reasoning system with strategy selection."""
+    
+    def __init__(self, max_hops: int = 5, knowledge_base: KnowledgeBase = None):
+        super().__init__()
+        self.max_hops = max_hops
+        self.knowledge_base = knowledge_base or KnowledgeBase()
+        
+        # Reasoning components
+        self.initial_query = dspy.ChainOfThought(InitialQuery)
+        self.retrieve_evidence = dspy.ChainOfThought(RetrieveEvidence)
+        self.reasoning_step = dspy.ChainOfThought(ReasoningStep)
+        self.synthesize_answer = dspy.ChainOfThought(SynthesizeAnswer)
+        self.verify_reasoning = dspy.ChainOfThought(VerifyReasoning)
+        
+        # Execution tracking
+        self.reasoning_chains = []
+        self.performance_metrics = {}
+    
+    def forward(self, question: str, context: str = "", strategy: Optional[ReasoningStrategy] = None):
+        """Execute multi-hop reasoning for a given question."""
+        
+        start_time = datetime.now()
+        
+        # Step 1: Analyze initial query and plan approach
+        initial_analysis = self.initial_query(
+            question=question,
+            context=context
+        )
+        
+        # Determine strategy
+        if strategy is None:
+            strategy_name = initial_analysis.reasoning_strategy
+            strategy = ReasoningStrategy(strategy_name) if strategy_name in [s.value for s in ReasoningStrategy] else ReasoningStrategy.HYBRID
+        
+        # Step 2: Execute reasoning based on strategy
+        reasoning_steps = []
+        if strategy == ReasoningStrategy.BREADTH_FIRST:
+            reasoning_steps = self._execute_breadth_first(question, initial_analysis)
+        elif strategy == ReasoningStrategy.DEPTH_FIRST:
+            reasoning_steps = self._execute_depth_first(question, initial_analysis)
+        elif strategy == ReasoningStrategy.BEST_FIRST:
+            reasoning_steps = self._execute_best_first(question, initial_analysis)
+        else:  # HYBRID
+            reasoning_steps = self._execute_hybrid(question, initial_analysis)
+        
+        # Step 3: Synthesize final answer
+        evidence_summary = self._compile_evidence_summary(reasoning_steps)
+        reasoning_summary = self._compile_reasoning_summary(reasoning_steps)
+        
+        synthesis = self.synthesize_answer(
+            original_question=question,
+            reasoning_steps=reasoning_summary,
+            evidence_summary=evidence_summary
+        )
+        
+        # Step 4: Verify reasoning quality
+        verification = self.verify_reasoning(
+            original_question=question,
+            reasoning_chain=reasoning_summary,
+            final_answer=synthesis.final_answer
+        )
+        
+        # Calculate execution metrics
+        execution_time = (datetime.now() - start_time).total_seconds()
+        total_confidence = self._calculate_total_confidence(reasoning_steps, synthesis.confidence_level)
+        
+        # Create reasoning chain record
+        chain = ReasoningChain(
+            chain_id=f"chain_{len(self.reasoning_chains)}",
+            query=question,
+            steps=reasoning_steps,
+            final_answer=synthesis.final_answer,
+            total_confidence=total_confidence,
+            strategy_used=strategy,
+            execution_time=execution_time,
+            success=verification.verification_passed
+        )
+        
+        self.reasoning_chains.append(chain)
+        
+        return dspy.Prediction(
+            initial_analysis=initial_analysis,
+            reasoning_steps=reasoning_steps,
+            final_answer=synthesis.final_answer,
+            supporting_evidence=synthesis.supporting_evidence,
+            confidence_level=synthesis.confidence_level,
+            verification=verification,
+            execution_time=execution_time,
+            strategy_used=strategy.value,
+            success=verification.verification_passed
+        )
+    
+    def _execute_breadth_first(self, question: str, initial_analysis) -> List[ReasoningStep]:
+        """Execute breadth-first multi-hop reasoning."""
+        reasoning_steps = []
+        current_questions = initial_analysis.decomposed_questions
+        previous_evidence = ""
+        
+        for hop in range(min(self.max_hops, initial_analysis.expected_hops)):
+            hop_steps = []
+            next_questions = []
+            
+            for i, query in enumerate(current_questions[:3]):  # Limit breadth
+                # Retrieve evidence
+                evidence = self.retrieve_evidence(
+                    query=query,
+                    previous_evidence=previous_evidence,
+                    hop_number=hop + 1
+                )
+                
+                # Knowledge base search
+                kb_facts = self.knowledge_base.search_facts(query, max_results=3)
+                kb_evidence = "; ".join([
+                    f"{fact['subject']} {fact['relation']} {fact['object']}"
+                    for fact in kb_facts
+                ])
+                
+                combined_evidence = f"{evidence.evidence_summary}; {kb_evidence}"
+                
+                # Perform reasoning
+                reasoning = self.reasoning_step(
+                    current_query=query,
+                    evidence=combined_evidence,
+                    previous_reasoning=self._compile_reasoning_summary(reasoning_steps),
+                    target_question=question
+                )
+                
+                # Create reasoning step
+                step = ReasoningStep(
+                    step_id=f"step_{hop}_{i}",
+                    query=query,
+                    evidence=combined_evidence,
+                    reasoning=reasoning.reasoning_chain,
+                    confidence=reasoning.confidence,
+                    hop_number=hop + 1
+                )
+                
+                hop_steps.append(step)
+                next_questions.extend(reasoning.next_questions[:2])  # Limit expansion
+            
+            reasoning_steps.extend(hop_steps)
+            current_questions = list(set(next_questions))  # Remove duplicates
+            previous_evidence = self._compile_evidence_summary(reasoning_steps)
+            
+            if not current_questions:
+                break
+        
+        return reasoning_steps
+    
+    def _execute_depth_first(self, question: str, initial_analysis) -> List[ReasoningStep]:
+        """Execute depth-first multi-hop reasoning."""
+        reasoning_steps = []
+        current_query = initial_analysis.decomposed_questions[0] if initial_analysis.decomposed_questions else question
+        previous_evidence = ""
+        
+        for hop in range(min(self.max_hops, initial_analysis.expected_hops)):
+            # Retrieve evidence
+            evidence = self.retrieve_evidence(
+                query=current_query,
+                previous_evidence=previous_evidence,
+                hop_number=hop + 1
+            )
+            
+            # Knowledge base search
+            kb_facts = self.knowledge_base.search_facts(current_query, max_results=5)
+            kb_evidence = "; ".join([
+                f"{fact['subject']} {fact['relation']} {fact['object']}"
+                for fact in kb_facts
+            ])
+            
+            combined_evidence = f"{evidence.evidence_summary}; {kb_evidence}"
+            
+            # Perform reasoning
+            reasoning = self.reasoning_step(
+                current_query=current_query,
+                evidence=combined_evidence,
+                previous_reasoning=self._compile_reasoning_summary(reasoning_steps),
+                target_question=question
+            )
+            
+            # Create reasoning step
+            step = ReasoningStep(
+                step_id=f"depth_step_{hop}",
+                query=current_query,
+                evidence=combined_evidence,
+                reasoning=reasoning.reasoning_chain,
+                confidence=reasoning.confidence,
+                hop_number=hop + 1
+            )
+            
+            reasoning_steps.append(step)
+            
+            # Select next question (deepest/most specific)
+            if reasoning.next_questions:
+                current_query = max(reasoning.next_questions, key=lambda x: len(x.split()))
+            else:
+                break
+            
+            previous_evidence = combined_evidence
+        
+        return reasoning_steps
+    
+    def _execute_best_first(self, question: str, initial_analysis) -> List[ReasoningStep]:
+        """Execute best-first multi-hop reasoning using confidence scores."""
+        reasoning_steps = []
+        question_queue = [(q, 1.0) for q in initial_analysis.decomposed_questions]  # (question, confidence)
+        previous_evidence = ""
+        
+        for hop in range(min(self.max_hops, initial_analysis.expected_hops)):
+            if not question_queue:
+                break
+            
+            # Sort by confidence and select best question
+            question_queue.sort(key=lambda x: x[1], reverse=True)
+            current_query, _ = question_queue.pop(0)
+            
+            # Retrieve evidence
+            evidence = self.retrieve_evidence(
+                query=current_query,
+                previous_evidence=previous_evidence,
+                hop_number=hop + 1
+            )
+            
+            # Knowledge base search
+            kb_facts = self.knowledge_base.search_facts(current_query, max_results=4)
+            kb_evidence = "; ".join([
+                f"{fact['subject']} {fact['relation']} {fact['object']}"
+                for fact in kb_facts
+            ])
+            
+            combined_evidence = f"{evidence.evidence_summary}; {kb_evidence}"
+            
+            # Perform reasoning
+            reasoning = self.reasoning_step(
+                current_query=current_query,
+                evidence=combined_evidence,
+                previous_reasoning=self._compile_reasoning_summary(reasoning_steps),
+                target_question=question
+            )
+            
+            # Create reasoning step
+            step = ReasoningStep(
+                step_id=f"best_step_{hop}",
+                query=current_query,
+                evidence=combined_evidence,
+                reasoning=reasoning.reasoning_chain,
+                confidence=reasoning.confidence,
+                hop_number=hop + 1
+            )
+            
+            reasoning_steps.append(step)
+            
+            # Add new questions to queue with confidence scores
+            for next_q in reasoning.next_questions:
+                question_queue.append((next_q, reasoning.confidence * 0.9))  # Decay confidence
+            
+            previous_evidence = self._compile_evidence_summary(reasoning_steps)
+        
+        return reasoning_steps
+    
+    def _execute_hybrid(self, question: str, initial_analysis) -> List[ReasoningStep]:
+        """Execute hybrid reasoning combining multiple strategies."""
+        # Start with breadth-first for exploration
+        breadth_steps = self._execute_breadth_first(question, initial_analysis)
+        
+        # If we have good intermediate results, switch to depth-first
+        if breadth_steps and any(step.confidence > 0.7 for step in breadth_steps):
+            # Find the highest confidence step and continue depth-first from there
+            best_step = max(breadth_steps, key=lambda x: x.confidence)
+            
+            # Create new initial analysis for depth-first continuation
+            depth_analysis = type(initial_analysis)(
+                reasoning_strategy="depth_first",
+                key_concepts=[best_step.query],
+                expected_hops=max(1, initial_analysis.expected_hops - best_step.hop_number),
+                decomposed_questions=[best_step.query]
+            )
+            
+            depth_steps = self._execute_depth_first(question, depth_analysis)
+            
+            # Combine results
+            return breadth_steps + depth_steps
+        else:
+            # Fall back to best-first if breadth-first didn't yield confident results
+            return self._execute_best_first(question, initial_analysis)
+    
+    def _compile_evidence_summary(self, steps: List[ReasoningStep]) -> str:
+        """Compile evidence from all reasoning steps."""
+        evidence_pieces = []
+        for step in steps:
+            if step.evidence:
+                evidence_pieces.append(f"Hop {step.hop_number}: {step.evidence}")
+        return "; ".join(evidence_pieces)
+    
+    def _compile_reasoning_summary(self, steps: List[ReasoningStep]) -> str:
+        """Compile reasoning chain from all steps."""
+        reasoning_pieces = []
+        for step in steps:
+            if step.reasoning:
+                reasoning_pieces.append(f"Step {step.step_id}: {step.reasoning}")
+        return " -> ".join(reasoning_pieces)
+    
+    def _calculate_total_confidence(self, steps: List[ReasoningStep], synthesis_confidence: float) -> float:
+        """Calculate overall confidence for the reasoning chain."""
+        if not steps:
+            return synthesis_confidence
+        
+        step_confidences = [step.confidence for step in steps]
+        avg_step_confidence = sum(step_confidences) / len(step_confidences)
+        
+        # Weighted combination of step confidences and synthesis confidence
+        return (avg_step_confidence * 0.6) + (synthesis_confidence * 0.4)
+
+# Initialize the multi-hop reasoner
+multi_hop_reasoner = MultiHopReasoner(max_hops=6, knowledge_base=knowledge_base)
+```
+
+### MIPROv2 Optimization Setup
+
+```python
+class MultiHopReasoningMetric(dspy.Metric):
+    """Comprehensive metric for evaluating multi-hop reasoning performance."""
+    
+    def __init__(self, weight_accuracy: float = 0.3, weight_completeness: float = 0.25, 
+                 weight_efficiency: float = 0.2, weight_coherence: float = 0.25):
+        self.weight_accuracy = weight_accuracy
+        self.weight_completeness = weight_completeness
+        self.weight_efficiency = weight_efficiency
+        self.weight_coherence = weight_coherence
+    
+    def __call__(self, gold, pred, trace=None):
+        """Evaluate multi-hop reasoning performance."""
+        if not pred or not hasattr(pred, 'success'):
+            return 0.0
+        
+        # Accuracy score (whether the reasoning succeeded and verification passed)
+        accuracy_score = 1.0 if (pred.success and pred.verification.verification_passed) else 0.0
+        
+        # Completeness score (based on evidence coverage and reasoning depth)
+        completeness_score = 0.0
+        if hasattr(pred, 'reasoning_steps'):
+            num_steps = len(pred.reasoning_steps)
+            evidence_quality = sum([step.confidence for step in pred.reasoning_steps]) / max(num_steps, 1)
+            completeness_score = min(1.0, (num_steps / 4.0) * evidence_quality)  # Normalize to 4 ideal steps
+        
+        # Efficiency score (fewer steps with high confidence is better)
+        efficiency_score = 0.0
+        if hasattr(pred, 'reasoning_steps') and pred.reasoning_steps:
+            avg_confidence = sum([step.confidence for step in pred.reasoning_steps]) / len(pred.reasoning_steps)
+            step_penalty = max(0, len(pred.reasoning_steps) - 3) * 0.1  # Penalty for excessive steps
+            efficiency_score = max(0, avg_confidence - step_penalty)
+        
+        # Coherence score (logical consistency and flow)
+        coherence_score = 0.0
+        if hasattr(pred, 'confidence_level'):
+            coherence_score = pred.confidence_level
+            
+            # Bonus for verification passing
+            if pred.verification.verification_passed:
+                coherence_score = min(1.0, coherence_score + 0.1)
+            
+            # Penalty for logical gaps
+            if hasattr(pred.verification, 'logical_gaps') and pred.verification.logical_gaps:
+                gap_penalty = len(pred.verification.logical_gaps) * 0.05
+                coherence_score = max(0, coherence_score - gap_penalty)
+        
+        # Combined score
+        final_score = (
+            accuracy_score * self.weight_accuracy +
+            completeness_score * self.weight_completeness +
+            efficiency_score * self.weight_efficiency +
+            coherence_score * self.weight_coherence
+        )
+        
+        return final_score
+
+# Create evaluation metric
+multihop_metric = MultiHopReasoningMetric()
+
+def create_multihop_training_data():
+    """Create comprehensive training examples for multi-hop reasoning optimization."""
+    
+    training_examples = [
+        {
+            "question": "How does Einstein's theory of relativity connect to modern space exploration?",
+            "context": "Consider both theoretical foundations and practical applications",
+            "expected_concepts": ["Einstein", "relativity", "space-time", "GPS", "satellites", "navigation"]
+        },
+        {
+            "question": "What is the relationship between quantum mechanics and biological processes?",
+            "context": "Explore connections between quantum physics and living systems",
+            "expected_concepts": ["quantum mechanics", "atomic behavior", "chemical reactions", "biological processes", "DNA", "proteins"]
+        },
+        {
+            "question": "How do Newton's laws relate to planetary motion and modern orbital mechanics?",
+            "context": "Trace the connection from fundamental physics to space technology",
+            "expected_concepts": ["Newton", "laws of motion", "gravity", "planetary motion", "orbital mechanics", "satellites"]
+        },
+        {
+            "question": "What connects artificial intelligence to scientific discovery?",
+            "context": "Examine how AI contributes to advancing scientific research",
+            "expected_concepts": ["artificial intelligence", "data processing", "pattern recognition", "scientific research", "discoveries"]
+        },
+        {
+            "question": "How does climate change affect evolutionary processes?",
+            "context": "Explore the relationship between environmental changes and species adaptation",
+            "expected_concepts": ["climate change", "environmental conditions", "evolution", "species adaptation", "natural selection"]
+        },
+        {
+            "question": "What is the connection between genetic information and organism survival?",
+            "context": "Trace the path from DNA to survival mechanisms",
+            "expected_concepts": ["DNA", "genetic information", "protein synthesis", "cellular functions", "survival"]
+        }
+    ]
+    
+    examples = []
+    for data in training_examples:
+        # Execute reasoning to get baseline performance
+        result = multi_hop_reasoner(
+            question=data["question"],
+            context=data["context"]
+        )
+        
+        # Create training example
+        example = dspy.Example(
+            question=data["question"],
+            context=data["context"]
+        ).with_inputs("question", "context")
+        
+        examples.append(example)
+    
+    return examples
+
+# Create training data
+training_data = create_multihop_training_data()
+```
+
+### MIPROv2 Optimization Process
+
+```python
+from dspy.teleprompt import MIPROv2
+
+# Configure MIPROv2 with multi-hop specific settings
+optimizer = MIPROv2(
+    metric=multihop_metric,
+    auto="heavy",  # Use heavy auto-configuration for complex reasoning
+    num_threads=6,
+    verbose=True,
+    track_stats=True
+)
+
+# Specialized configuration for multi-hop reasoning
+multihop_optimization_config = {
+    "max_bootstrapped_demos": 12,
+    "max_labeled_demos": 16,
+    "num_candidates": 35,
+    "init_temperature": 0.9,
+    "minibatch_size": 3,
+    "minibatch_full_eval_steps": 4,
+    "num_trials": 20,
+    "metric_threshold": 0.80,
+    "max_errors": 8
+}
+
+# Apply configuration
+for key, value in multihop_optimization_config.items():
+    if hasattr(optimizer, key):
+        setattr(optimizer, key, value)
+
+print("Starting MIPROv2 multi-hop reasoning optimization...")
+print(f"Training examples: {len(training_data)}")
+print(f"Optimization configuration: {multihop_optimization_config}")
+
+# Run optimization
+optimized_reasoner = optimizer.compile(
+    student=multi_hop_reasoner,
+    trainset=training_data,
+    valset=training_data[-2:],
+    requires_permission_to_run=False
+)
+
+print("Multi-hop reasoning optimization completed!")
+```
+
+### Advanced Evaluation and Analysis
+
+```python
+class MultiHopEvaluator:
+    """Comprehensive evaluator for multi-hop reasoning systems."""
+    
+    def __init__(self, metric: MultiHopReasoningMetric):
+        self.metric = metric
+        self.evaluation_results = []
+    
+    def evaluate_reasoning_system(self, reasoner, test_questions: List[Dict], name: str = "Reasoner") -> Dict:
+        """Evaluate multi-hop reasoning system performance."""
+        results = []
+        total_score = 0.0
+        successful_chains = 0
+        
+        print(f"\nEvaluating {name}...")
+        
+        for i, test_case in enumerate(test_questions):
+            print(f"Question {i+1}/{len(test_questions)}: {test_case['question'][:60]}...")
+            
+            try:
+                start_time = datetime.now()
+                result = reasoner(
+                    question=test_case["question"],
+                    context=test_case.get("context", "")
+                )
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Calculate score
+                score = self.metric(gold=None, pred=result)
+                total_score += score
+                
+                if result.success:
+                    successful_chains += 1
+                
+                # Analyze reasoning chain quality
+                reasoning_analysis = self._analyze_reasoning_chain(result)
+                
+                test_result = {
+                    "question": test_case["question"],
+                    "context": test_case.get("context", ""),
+                    "success": result.success,
+                    "score": score,
+                    "execution_time": execution_time,
+                    "num_reasoning_steps": len(result.reasoning_steps),
+                    "strategy_used": result.strategy_used,
+                    "final_confidence": result.confidence_level,
+                    "verification_passed": result.verification.verification_passed,
+                    "logical_gaps": len(result.verification.logical_gaps),
+                    "reasoning_analysis": reasoning_analysis
+                }
+                
+                results.append(test_result)
+                print(f"  Score: {score:.3f}, Success: {result.success}, Strategy: {result.strategy_used}")
+                
+            except Exception as e:
+                print(f"  Error: {str(e)}")
+                results.append({
+                    "question": test_case["question"],
+                    "success": False,
+                    "score": 0.0,
+                    "error": str(e)
+                })
+        
+        # Calculate summary metrics
+        avg_score = total_score / len(test_questions)
+        success_rate = successful_chains / len(test_questions)
+        avg_execution_time = sum([r.get('execution_time', 0) for r in results]) / len(results)
+        avg_reasoning_steps = sum([r.get('num_reasoning_steps', 0) for r in results]) / len(results)
+        
+        summary = {
+            "reasoner_name": name,
+            "total_questions": len(test_questions),
+            "successful_chains": successful_chains,
+            "success_rate": success_rate,
+            "average_score": avg_score,
+            "average_execution_time": avg_execution_time,
+            "average_reasoning_steps": avg_reasoning_steps,
+            "strategy_distribution": self._analyze_strategy_distribution(results),
+            "test_results": results
+        }
+        
+        self.evaluation_results.append(summary)
+        return summary
+    
+    def _analyze_reasoning_chain(self, result) -> Dict:
+        """Analyze the quality of a reasoning chain."""
+        if not hasattr(result, 'reasoning_steps') or not result.reasoning_steps:
+            return {"quality": "no_steps", "depth": 0, "coherence": 0.0}
+        
+        steps = result.reasoning_steps
+        
+        # Calculate depth (unique reasoning hops)
+        depth = max([step.hop_number for step in steps])
+        
+        # Calculate coherence (average step confidence)
+        coherence = sum([step.confidence for step in steps]) / len(steps)
+        
+        # Assess reasoning quality
+        if coherence > 0.8 and depth >= 3:
+            quality = "excellent"
+        elif coherence > 0.6 and depth >= 2:
+            quality = "good"
+        elif coherence > 0.4:
+            quality = "fair"
+        else:
+            quality = "poor"
+        
+        return {
+            "quality": quality,
+            "depth": depth,
+            "coherence": coherence,
+            "step_count": len(steps)
+        }
+    
+    def _analyze_strategy_distribution(self, results: List[Dict]) -> Dict:
+        """Analyze distribution of reasoning strategies used."""
+        strategy_counts = defaultdict(int)
+        for result in results:
+            if 'strategy_used' in result:
+                strategy_counts[result['strategy_used']] += 1
+        
+        total = sum(strategy_counts.values())
+        return {strategy: count/total for strategy, count in strategy_counts.items()}
+
+# Create comprehensive test cases
+complex_test_cases = [
+    {
+        "question": "How does the evolution of human intelligence relate to technological advancement and artificial intelligence development?",
+        "context": "Consider biological evolution, cognitive development, and technological progress",
+    },
+    {
+        "question": "What is the connection between quantum mechanics, chemical reactions, and biological evolution?",
+        "context": "Explore the multi-level relationship from quantum physics to evolutionary biology",
+    },
+    {
+        "question": "How do Newton's laws of motion connect to Einstein's relativity and modern GPS technology?",
+        "context": "Trace the scientific and technological progression from classical to modern physics",
+    },
+    {
+        "question": "What links climate change, species adaptation, and genetic information transfer?",
+        "context": "Examine the relationship between environmental pressures and biological responses",
+    },
+    {
+        "question": "How does protein synthesis connect to cellular functions, organism survival, and evolutionary fitness?",
+        "context": "Explore the chain from molecular biology to evolutionary success",
+    }
+]
+
+# Evaluate both reasoners
+evaluator = MultiHopEvaluator(multihop_metric)
+
+# Baseline reasoner evaluation
+baseline_results = evaluator.evaluate_reasoning_system(
+    multi_hop_reasoner, 
+    complex_test_cases, 
+    "Baseline Multi-Hop Reasoner"
+)
+
+# Optimized reasoner evaluation
+optimized_results = evaluator.evaluate_reasoning_system(
+    optimized_reasoner, 
+    complex_test_cases, 
+    "MIPROv2 Optimized Multi-Hop Reasoner"
+)
+```
+
+### Results Visualization and Analysis
+
+```python
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+def create_comprehensive_analysis(baseline_results: Dict, optimized_results: Dict):
+    """Create comprehensive analysis of optimization improvements."""
+    
+    print("\n" + "="*80)
+    print("MULTI-HOP REASONING OPTIMIZATION ANALYSIS")
+    print("="*80)
+    
+    # Performance comparison
+    print(f"\nOVERALL PERFORMANCE COMPARISON:")
+    print(f"{'Metric':<30} {'Baseline':<15} {'Optimized':<15} {'Improvement':<15}")
+    print("-" * 75)
+    
+    metrics = [
+        ("Success Rate", "success_rate"),
+        ("Average Score", "average_score"),
+        ("Avg Execution Time (s)", "average_execution_time"),
+        ("Avg Reasoning Steps", "average_reasoning_steps")
+    ]
+    
+    for metric_name, metric_key in metrics:
+        baseline_val = baseline_results[metric_key]
+        optimized_val = optimized_results[metric_key]
+        
+        if metric_key == "average_execution_time":
+            improvement = f"{((baseline_val - optimized_val) / baseline_val * 100):+.1f}%"
+        else:
+            improvement = f"{((optimized_val - baseline_val) / baseline_val * 100):+.1f}%"
+        
+        print(f"{metric_name:<30} {baseline_val:<15.3f} {optimized_val:<15.3f} {improvement:<15}")
+    
+    # Question-by-question analysis
+    print(f"\nQUESTION-BY-QUESTION ANALYSIS:")
+    print(f"{'Question':<50} {'Base Score':<12} {'Opt Score':<12} {'Improvement':<12}")
+    print("-" * 86)
+    
+    for i, baseline_test in enumerate(baseline_results["test_results"]):
+        optimized_test = optimized_results["test_results"][i]
+        
+        question = baseline_test["question"][:47] + "..."
+        baseline_score = baseline_test["score"]
+        optimized_score = optimized_test["score"]
+        improvement = f"{((optimized_score - baseline_score) / max(baseline_score, 0.001) * 100):+.1f}%"
+        
+        print(f"{question:<50} {baseline_score:<12.3f} {optimized_score:<12.3f} {improvement:<12}")
+    
+    # Strategy analysis
+    print(f"\nREASONING STRATEGY ANALYSIS:")
+    baseline_strategies = baseline_results["strategy_distribution"]
+    optimized_strategies = optimized_results["strategy_distribution"]
+    
+    print(f"{'Strategy':<20} {'Baseline Usage':<15} {'Optimized Usage':<15} {'Change':<15}")
+    print("-" * 65)
+    
+    all_strategies = set(list(baseline_strategies.keys()) + list(optimized_strategies.keys()))
+    for strategy in sorted(all_strategies):
+        baseline_pct = baseline_strategies.get(strategy, 0) * 100
+        optimized_pct = optimized_strategies.get(strategy, 0) * 100
+        change = optimized_pct - baseline_pct
+        
+        print(f"{strategy:<20} {baseline_pct:<15.1f}% {optimized_pct:<15.1f}% {change:+.1f}%")
+    
+    # Reasoning quality analysis
+    print(f"\nREASONING QUALITY ANALYSIS:")
+    baseline_quality = analyze_reasoning_quality(baseline_results["test_results"])
+    optimized_quality = analyze_reasoning_quality(optimized_results["test_results"])
+    
+    print(f"{'Quality Level':<15} {'Baseline':<12} {'Optimized':<12} {'Change':<12}")
+    print("-" * 51)
+    
+    for quality in ["excellent", "good", "fair", "poor"]:
+        baseline_count = baseline_quality.get(quality, 0)
+        optimized_count = optimized_quality.get(quality, 0)
+        change = optimized_count - baseline_count
+        
+        print(f"{quality.title():<15} {baseline_count:<12} {optimized_count:<12} {change:+d}")
+
+def analyze_reasoning_quality(test_results: List[Dict]) -> Dict:
+    """Analyze reasoning quality distribution."""
+    quality_counts = defaultdict(int)
+    for result in test_results:
+        if 'reasoning_analysis' in result:
+            quality = result['reasoning_analysis'].get('quality', 'unknown')
+            quality_counts[quality] += 1
+    return dict(quality_counts)
+
+def create_performance_visualizations(baseline_results: Dict, optimized_results: Dict):
+    """Create visualizations for performance comparison."""
+    
+    # Prepare data for visualization
+    baseline_scores = [result['score'] for result in baseline_results['test_results']]
+    optimized_scores = [result['score'] for result in optimized_results['test_results']]
+    
+    baseline_times = [result.get('execution_time', 0) for result in baseline_results['test_results']]
+    optimized_times = [result.get('execution_time', 0) for result in optimized_results['test_results']]
+    
+    # Create subplots
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    
+    # Score comparison
+    axes[0, 0].scatter(range(len(baseline_scores)), baseline_scores, alpha=0.7, label='Baseline', color='red')
+    axes[0, 0].scatter(range(len(optimized_scores)), optimized_scores, alpha=0.7, label='Optimized', color='blue')
+    axes[0, 0].set_title('Score Comparison by Question')
+    axes[0, 0].set_xlabel('Question Index')
+    axes[0, 0].set_ylabel('Score')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Execution time comparison
+    axes[0, 1].bar(range(len(baseline_times)), baseline_times, alpha=0.7, label='Baseline', color='red')
+    axes[0, 1].bar([x + 0.4 for x in range(len(optimized_times))], optimized_times, alpha=0.7, label='Optimized', color='blue', width=0.4)
+    axes[0, 1].set_title('Execution Time Comparison')
+    axes[0, 1].set_xlabel('Question Index')
+    axes[0, 1].set_ylabel('Execution Time (s)')
+    axes[0, 1].legend()
+    
+    # Score distribution
+    axes[1, 0].hist(baseline_scores, bins=10, alpha=0.7, label='Baseline', color='red', density=True)
+    axes[1, 0].hist(optimized_scores, bins=10, alpha=0.7, label='Optimized', color='blue', density=True)
+    axes[1, 0].set_title('Score Distribution')
+    axes[1, 0].set_xlabel('Score')
+    axes[1, 0].set_ylabel('Density')
+    axes[1, 0].legend()
+    
+    # Strategy usage
+    baseline_strategies = baseline_results["strategy_distribution"]
+    optimized_strategies = optimized_results["strategy_distribution"]
+    
+    strategies = list(set(list(baseline_strategies.keys()) + list(optimized_strategies.keys())))
+    baseline_values = [baseline_strategies.get(s, 0) for s in strategies]
+    optimized_values = [optimized_strategies.get(s, 0) for s in strategies]
+    
+    x = np.arange(len(strategies))
+    width = 0.35
+    
+    axes[1, 1].bar(x - width/2, baseline_values, width, label='Baseline', alpha=0.7, color='red')
+    axes[1, 1].bar(x + width/2, optimized_values, width, label='Optimized', alpha=0.7, color='blue')
+    axes[1, 1].set_title('Strategy Usage Distribution')
+    axes[1, 1].set_xlabel('Strategy')
+    axes[1, 1].set_ylabel('Usage Proportion')
+    axes[1, 1].set_xticks(x)
+    axes[1, 1].set_xticklabels(strategies, rotation=45)
+    axes[1, 1].legend()
+    
+    plt.tight_layout()
+    plt.savefig('multihop_optimization_results.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+# Run comprehensive analysis
+create_comprehensive_analysis(baseline_results, optimized_results)
+create_performance_visualizations(baseline_results, optimized_results)
+```
+
+### Production Deployment
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+import uuid
+from typing import Dict, Any, Optional
+import asyncio
+import mlflow
+import pickle
+
+app = FastAPI(title="Multi-Hop Reasoning API", version="1.0.0")
+
+# Global reasoner instance
+production_reasoner = optimized_reasoner
+
+class ReasoningRequest(BaseModel):
+    question: str
+    context: str = ""
+    strategy: Optional[str] = None
+    max_hops: int = 5
+
+class ReasoningResponse(BaseModel):
+    reasoning_id: str
+    status: str
+    result: Dict[str, Any] = {}
+    message: str = ""
+
+# Task tracking
+active_reasoning_tasks: Dict[str, Dict] = {}
+
+@app.post("/reasoning/execute", response_model=ReasoningResponse)
+async def execute_multihop_reasoning(request: ReasoningRequest, background_tasks: BackgroundTasks):
+    """Execute multi-hop reasoning asynchronously."""
+    
+    reasoning_id = str(uuid.uuid4())
+    
+    # Track reasoning task
+    active_reasoning_tasks[reasoning_id] = {
+        "status": "running",
+        "started_at": datetime.now(),
+        "request": request
+    }
+    
+    # Execute in background
+    background_tasks.add_task(execute_reasoning_background, reasoning_id, request)
+    
+    return ReasoningResponse(
+        reasoning_id=reasoning_id,
+        status="running",
+        message="Multi-hop reasoning started"
+    )
+
+async def execute_reasoning_background(reasoning_id: str, request: ReasoningRequest):
+    """Execute reasoning in background."""
+    try:
+        # Convert strategy string to enum if provided
+        strategy = None
+        if request.strategy:
+            try:
+                strategy = ReasoningStrategy(request.strategy)
+            except ValueError:
+                strategy = ReasoningStrategy.HYBRID
+        
+        # Execute reasoning
+        result = production_reasoner(
+            question=request.question,
+            context=request.context
+        )
+        
+        # Update task status
+        active_reasoning_tasks[reasoning_id].update({
+            "status": "completed" if result.success else "failed",
+            "completed_at": datetime.now(),
+            "result": {
+                "success": result.success,
+                "final_answer": result.final_answer,
+                "supporting_evidence": result.supporting_evidence,
+                "confidence_level": result.confidence_level,
+                "strategy_used": result.strategy_used,
+                "execution_time": result.execution_time,
+                "reasoning_steps": [
+                    {
+                        "step_id": step.step_id,
+                        "query": step.query,
+                        "reasoning": step.reasoning,
+                        "confidence": step.confidence,
+                        "hop_number": step.hop_number
+                    }
+                    for step in result.reasoning_steps
+                ],
+                "verification": {
+                    "passed": result.verification.verification_passed,
+                    "consistency_score": result.verification.consistency_score,
+                    "logical_gaps": result.verification.logical_gaps
+                }
+            }
+        })
+        
+    except Exception as e:
+        active_reasoning_tasks[reasoning_id].update({
+            "status": "error",
+            "completed_at": datetime.now(),
+            "error": str(e)
+        })
+
+@app.get("/reasoning/status/{reasoning_id}", response_model=ReasoningResponse)
+async def get_reasoning_status(reasoning_id: str):
+    """Get the status of a specific reasoning task."""
+    
+    if reasoning_id not in active_reasoning_tasks:
+        raise HTTPException(status_code=404, detail="Reasoning task not found")
+    
+    task_info = active_reasoning_tasks[reasoning_id]
+    
+    return ReasoningResponse(
+        reasoning_id=reasoning_id,
+        status=task_info["status"],
+        result=task_info.get("result", {}),
+        message=task_info.get("error", "")
+    )
+
+@app.get("/reasoning/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "reasoner_loaded": production_reasoner is not None,
+        "active_tasks": len(active_reasoning_tasks),
+        "knowledge_base_facts": len(knowledge_base.facts),
+        "timestamp": datetime.now()
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+## Key Learning Points
+
+### MIPROv2 Multi-Hop Optimization Benefits
+1. **Improved Reasoning Chains**: Better logical flow and coherence across multiple steps
+2. **Enhanced Strategy Selection**: More appropriate choice of reasoning strategies based on question complexity
+3. **Better Evidence Integration**: More effective combination of evidence across reasoning hops
+4. **Increased Accuracy**: Higher success rates on complex multi-step reasoning tasks
+
+### Multi-Hop Reasoning Strategies
+1. **Breadth-First**: Effective for exploratory questions with multiple valid paths
+2. **Depth-First**: Best for questions requiring deep investigation of specific concepts
+3. **Best-First**: Optimal for questions where confidence-guided exploration is valuable
+4. **Hybrid**: Combines multiple strategies for robust performance across question types
+
+### Production Deployment Considerations
+1. **Scalability**: Async processing for handling multiple reasoning requests
+2. **Monitoring**: Comprehensive tracking of reasoning quality and performance
+3. **Flexibility**: Support for different reasoning strategies and configurations
+4. **Error Handling**: Robust error recovery and detailed error reporting
+
+This tutorial demonstrates how MIPROv2 can significantly enhance multi-hop reasoning systems, leading to more coherent, accurate, and efficient complex reasoning capabilities.

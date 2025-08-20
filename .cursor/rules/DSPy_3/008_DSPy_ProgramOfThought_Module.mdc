@@ -1,0 +1,542 @@
+---
+description: DSPy 3.0.1 ProgramOfThought Module - Master code-based reasoning for computational problem solving
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's ProgramOfThought module. Master computational reasoning through executable code generation for mathematical, logical, and analytical problem solving.
+
+## ProgramOfThought Development Flow
+
+```
+Problem Definition → Code Generation → Execution → Result Extraction → Answer Synthesis
+        ↓                ↓               ↓             ↓                 ↓
+Computational      Python Code      Interpreter    Structured       Final Answer
+Task Analysis      Generation       Execution      Output           with Reasoning
+        ↓                ↓               ↓             ↓                 ↓
+Algorithm          Executable       Error         JSON Results     Validated
+Requirements       Solution         Handling      Parsing          Response
+```
+
+## Instant Patterns
+
+### Quick Start - Basic ProgramOfThought
+
+```python
+import dspy
+
+# Configure LM (requires Deno installation)
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.2)
+dspy.configure(lm=lm)
+
+# Create ProgramOfThought module
+math_solver = dspy.ProgramOfThought("problem -> answer")
+
+# Solve mathematical problems with code
+result = math_solver(problem="Calculate compound interest on $1000 at 5% annually for 3 years")
+print(f"Answer: {result.answer}")
+
+# Access the generated code (if available)
+if hasattr(result, 'final_generated_code'):
+    print(f"Generated Code:\n{result.final_generated_code}")
+```
+
+### Production Ready - Advanced ProgramOfThought
+
+```python
+import dspy
+from typing import List, Dict
+from dspy.primitives.python_interpreter import PythonInterpreter
+
+class ComputationalAnalysisSignature(dspy.Signature):
+    """Solve complex computational problems using Python code."""
+
+    problem: str = dspy.InputField(desc="Computational problem requiring code solution")
+    constraints: str = dspy.InputField(desc="Constraints or requirements to consider")
+    data: List[Dict] = dspy.InputField(desc="Input data for analysis", default=[])
+
+    solution: str = dspy.OutputField(desc="Final computational solution")
+    approach: str = dspy.OutputField(desc="Problem-solving approach used")
+    validation: str = dspy.OutputField(desc="Validation of solution correctness")
+
+# Create advanced computational solver
+computational_solver = dspy.ProgramOfThought(
+    ComputationalAnalysisSignature,
+    max_iters=5,  # Allow up to 5 code generation attempts
+    interpreter=PythonInterpreter()  # Use custom interpreter if needed
+)
+
+# Solve complex problems
+result = computational_solver(
+    problem="Analyze sales data trends and predict next quarter revenue",
+    constraints="Must use statistical methods and handle outliers",
+    data=[
+        {"quarter": "Q1", "revenue": 100000},
+        {"quarter": "Q2", "revenue": 120000},
+        {"quarter": "Q3", "revenue": 110000}
+    ]
+)
+
+print(f"Solution: {result.solution}")
+print(f"Approach: {result.approach}")
+```
+
+## Core ProgramOfThought Patterns
+
+### Mathematical Problem Solving
+
+```python
+# Basic mathematical computations
+math_pot = dspy.ProgramOfThought("math_problem -> solution")
+
+# Statistical analysis
+stats_pot = dspy.ProgramOfThought(
+    "data: list[float], analysis_type: str -> result: float, interpretation: str"
+)
+
+# Financial calculations
+finance_pot = dspy.ProgramOfThought(
+    "principal: float, rate: float, time: float -> final_amount: float, breakdown: dict"
+)
+
+# Optimization problems
+optimization_pot = dspy.ProgramOfThought(
+    "objective: str, constraints: list[str] -> optimal_solution: dict"
+)
+```
+
+### Data Analysis and Processing
+
+```python
+# Data cleaning and preprocessing
+data_cleaner = dspy.ProgramOfThought(
+    "raw_data: list[dict], cleaning_rules: str -> cleaned_data: list[dict]"
+)
+
+# Pattern detection
+pattern_detector = dspy.ProgramOfThought(
+    "dataset: list, pattern_type: str -> patterns: list[dict], confidence: float"
+)
+
+# Correlation analysis
+correlation_analyzer = dspy.ProgramOfThought(
+    "variables: dict[str, list[float]] -> correlation_matrix: dict, insights: str"
+)
+```
+
+### Algorithm Implementation
+
+```python
+# Sorting and searching algorithms
+algorithm_solver = dspy.ProgramOfThought(
+    "problem_type: str, input_data: list -> algorithm: str, result: any, complexity: str"
+)
+
+# Graph algorithms
+graph_analyzer = dspy.ProgramOfThought(
+    "graph: dict, algorithm: str -> path: list, cost: float, explanation: str"
+)
+
+# Dynamic programming solutions
+dp_solver = dspy.ProgramOfThought(
+    "problem: str, parameters: dict -> solution: any, steps: list[str]"
+)
+```
+
+## Advanced Usage Patterns
+
+### Custom Interpreter Configuration
+
+```python
+from dspy.primitives.python_interpreter import PythonInterpreter
+
+# Configure custom interpreter with specific libraries
+class CustomInterpreter(PythonInterpreter):
+    def __init__(self):
+        super().__init__()
+        # Pre-load common libraries in the interpreter context
+        self.execute("""
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+import json
+from datetime import datetime, timedelta
+
+def final_answer(result):
+    '''Helper function to structure final answers'''
+    return result
+        """)
+
+# Use custom interpreter
+custom_pot = dspy.ProgramOfThought(
+    "data_analysis_problem -> analysis_result",
+    interpreter=CustomInterpreter(),
+    max_iters=3
+)
+```
+
+### Error-Resilient Code Generation
+
+```python
+class ResilientProgramOfThought(dspy.Module):
+    def __init__(self, signature, max_retries=5):
+        super().__init__()
+        self.pot = dspy.ProgramOfThought(signature, max_iters=max_retries)
+        self.code_validator = dspy.Predict(
+            "code: str, problem: str -> is_safe: bool, issues: str"
+        )
+        self.fallback_solver = dspy.ChainOfThought(signature)
+
+    def forward(self, **kwargs):
+        try:
+            # Attempt computational solution
+            result = self.pot(**kwargs)
+            return result
+        except Exception as e:
+            print(f"ProgramOfThought failed: {e}")
+
+            # Fallback to logical reasoning
+            print("Falling back to logical reasoning...")
+            return self.fallback_solver(**kwargs)
+
+# Usage
+resilient_solver = ResilientProgramOfThought("complex_problem -> solution")
+```
+
+### Multi-Step Computational Pipeline
+
+```python
+class ComputationalPipeline(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Sequential computational steps
+        self.data_preprocessor = dspy.ProgramOfThought(
+            "raw_data -> cleaned_data: dict, preprocessing_steps: list[str]"
+        )
+
+        self.feature_engineer = dspy.ProgramOfThought(
+            "cleaned_data: dict -> features: dict, feature_importance: dict"
+        )
+
+        self.model_builder = dspy.ProgramOfThought(
+            "features: dict, target: str -> model_code: str, predictions: list, metrics: dict"
+        )
+
+        self.result_interpreter = dspy.ChainOfThought(
+            "predictions: list, metrics: dict -> interpretation: str, recommendations: list[str]"
+        )
+
+    def forward(self, raw_data, target):
+        # Step 1: Preprocess data
+        preprocessed = self.data_preprocessor(raw_data=raw_data)
+
+        # Step 2: Engineer features
+        features = self.feature_engineer(cleaned_data=preprocessed.cleaned_data)
+
+        # Step 3: Build and evaluate model
+        model_results = self.model_builder(
+            features=features.features,
+            target=target
+        )
+
+        # Step 4: Interpret results
+        interpretation = self.result_interpreter(
+            predictions=model_results.predictions,
+            metrics=model_results.metrics
+        )
+
+        return dspy.Prediction(
+            raw_data=raw_data,
+            cleaned_data=preprocessed.cleaned_data,
+            features=features.features,
+            model_code=model_results.model_code,
+            predictions=model_results.predictions,
+            metrics=model_results.metrics,
+            interpretation=interpretation.interpretation,
+            recommendations=interpretation.recommendations
+        )
+```
+
+### Code Quality and Safety Validation
+
+```python
+class SafeProgramOfThought(dspy.Module):
+    def __init__(self, signature, max_iters=3):
+        super().__init__()
+        self.pot = dspy.ProgramOfThought(signature, max_iters=max_iters)
+
+        # Code safety checker
+        self.safety_checker = dspy.Predict(
+            "code: str -> is_safe: bool, safety_issues: list[str], risk_level: str"
+        )
+
+        # Performance estimator
+        self.performance_estimator = dspy.Predict(
+            "code: str, input_size: str -> complexity: str, runtime_estimate: str"
+        )
+
+    def forward(self, **kwargs):
+        # Generate solution with code
+        result = self.pot(**kwargs)
+
+        # Extract generated code
+        code = getattr(result, 'final_generated_code', '')
+
+        if code:
+            # Check code safety
+            safety_check = self.safety_checker(code=code)
+
+            # Estimate performance
+            perf_estimate = self.performance_estimator(
+                code=code,
+                input_size="medium"
+            )
+
+            # Add safety and performance metadata
+            return dspy.Prediction(
+                **{k: v for k, v in result.__dict__.items()},
+                code_safety=safety_check.is_safe,
+                safety_issues=safety_check.safety_issues,
+                complexity=perf_estimate.complexity,
+                runtime_estimate=perf_estimate.runtime_estimate
+            )
+
+        return result
+```
+
+## Domain-Specific Applications
+
+### Scientific Computing
+
+```python
+class ScientificComputing(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.physics_solver = dspy.ProgramOfThought(
+            "physics_problem: str, known_values: dict -> solution: float, derivation: str"
+        )
+        self.chemistry_analyzer = dspy.ProgramOfThought(
+            "chemical_equation: str, conditions: dict -> products: list, yield: float"
+        )
+        self.biology_modeler = dspy.ProgramOfThought(
+            "biological_system: str, parameters: dict -> simulation: dict, insights: str"
+        )
+
+    def solve_physics(self, problem, values):
+        return self.physics_solver(
+            physics_problem=problem,
+            known_values=values
+        )
+```
+
+### Financial Analysis
+
+```python
+class FinancialAnalyzer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Risk assessment
+        self.risk_calculator = dspy.ProgramOfThought(
+            "portfolio: dict, market_data: dict -> risk_metrics: dict, recommendations: list"
+        )
+
+        # Valuation models
+        self.valuation_model = dspy.ProgramOfThought(
+            "company_data: dict, assumptions: dict -> valuation: float, sensitivity: dict"
+        )
+
+        # Options pricing
+        self.options_pricer = dspy.ProgramOfThought(
+            "option_params: dict, market_conditions: dict -> price: float, greeks: dict"
+        )
+
+    def analyze_risk(self, portfolio, market_data):
+        return self.risk_calculator(
+            portfolio=portfolio,
+            market_data=market_data
+        )
+```
+
+### Engineering Optimization
+
+```python
+class EngineeringOptimizer(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Structural analysis
+        self.structural_analyzer = dspy.ProgramOfThought(
+            "structure: dict, loads: dict -> stress_analysis: dict, safety_factor: float"
+        )
+
+        # Process optimization
+        self.process_optimizer = dspy.ProgramOfThought(
+            "process_params: dict, constraints: dict -> optimal_settings: dict, efficiency: float"
+        )
+
+    def optimize_process(self, parameters, constraints):
+        return self.process_optimizer(
+            process_params=parameters,
+            constraints=constraints
+        )
+```
+
+## Integration and Workflow Patterns
+
+### Hybrid Reasoning (Code + Logic)
+
+```python
+class HybridReasoning(dspy.Module):
+    def __init__(self, signature):
+        super().__init__()
+        self.computational_solver = dspy.ProgramOfThought(signature)
+        self.logical_reasoner = dspy.ChainOfThought(signature)
+        self.synthesizer = dspy.ChainOfThought(
+            "computational_result, logical_analysis -> final_answer, confidence"
+        )
+
+    def forward(self, **kwargs):
+        # Get computational solution
+        comp_result = self.computational_solver(**kwargs)
+
+        # Get logical analysis
+        logic_result = self.logical_reasoner(**kwargs)
+
+        # Synthesize both approaches
+        final_result = self.synthesizer(
+            computational_result=str(comp_result),
+            logical_analysis=logic_result.reasoning
+        )
+
+        return dspy.Prediction(
+            computational_solution=comp_result,
+            logical_reasoning=logic_result.reasoning,
+            final_answer=final_result.final_answer,
+            confidence=final_result.confidence,
+            approach="hybrid"
+        )
+```
+
+## Speed Tips
+
+### Performance Optimization
+
+```python
+# Optimize for different problem types
+class OptimizedProgramOfThought:
+    def __init__(self):
+        # Light computational problems
+        self.light_pot = dspy.ProgramOfThought(
+            "simple_problem -> answer",
+            max_iters=2,  # Fewer retries for simple problems
+            temperature=0.1  # More deterministic
+        )
+
+        # Heavy computational problems
+        self.heavy_pot = dspy.ProgramOfThought(
+            "complex_problem -> solution",
+            max_iters=5,  # More retries for complex problems
+            temperature=0.3  # Allow more exploration
+        )
+
+        # Complexity classifier
+        self.classifier = dspy.Predict("problem -> complexity: str")
+
+    def solve(self, problem):
+        complexity = self.classifier(problem=problem)
+
+        if "simple" in complexity.complexity.lower():
+            return self.light_pot(simple_problem=problem)
+        else:
+            return self.heavy_pot(complex_problem=problem)
+```
+
+### Resource Management
+
+```python
+class ManagedProgramOfThought(dspy.Module):
+    def __init__(self, signature, max_concurrent=3):
+        super().__init__()
+        self.pot = dspy.ProgramOfThought(signature)
+        self.max_concurrent = max_concurrent
+        self.active_interpreters = 0
+
+    def forward(self, **kwargs):
+        if self.active_interpreters >= self.max_concurrent:
+            # Wait or queue the request
+            time.sleep(1)
+
+        self.active_interpreters += 1
+        try:
+            result = self.pot(**kwargs)
+            return result
+        finally:
+            self.active_interpreters -= 1
+```
+
+## Common Pitfalls
+
+### Code Generation Issues
+
+```python
+# ❌ DON'T: Ignore code validation
+unsafe_pot = dspy.ProgramOfThought("problem -> answer")
+result = unsafe_pot(problem="hack the system")  # Potentially dangerous
+
+# ✅ DO: Validate generated code
+safe_pot = SafeProgramOfThought("problem -> answer")
+result = safe_pot(problem="calculate fibonacci sequence")  # Safe and validated
+```
+
+### Interpreter Management
+
+```python
+# ❌ DON'T: Create new interpreters unnecessarily
+for problem in problems:
+    pot = dspy.ProgramOfThought("problem -> answer")  # New interpreter each time
+    result = pot(problem=problem)
+
+# ✅ DO: Reuse interpreters
+shared_interpreter = PythonInterpreter()
+pot = dspy.ProgramOfThought("problem -> answer", interpreter=shared_interpreter)
+for problem in problems:
+    result = pot(problem=problem)  # Reuses interpreter
+```
+
+### Error Handling
+
+```python
+# ❌ DON'T: Ignore execution errors
+try:
+    result = pot(problem="complex calculation")
+except Exception:
+    pass  # Silently fails
+
+# ✅ DO: Handle errors gracefully
+try:
+    result = pot(problem="complex calculation")
+except Exception as e:
+    print(f"Computational solution failed: {e}")
+    # Fallback to alternative approach
+    result = fallback_solver(problem="complex calculation")
+```
+
+## Best Practices Summary
+
+- **Validate code safety**: Always check generated code for security issues
+- **Handle execution errors**: Implement proper error handling and fallbacks
+- **Optimize iterations**: Adjust max_iters based on problem complexity
+- **Manage resources**: Reuse interpreters and manage concurrent executions
+- **Combine approaches**: Use hybrid reasoning for robust solutions
+- **Domain-specific libraries**: Pre-load relevant libraries in interpreters
+- **Performance monitoring**: Track code execution times and resource usage
+- **Code quality checks**: Validate generated code for correctness and efficiency
+
+## References
+
+- [ProgramOfThought Module API](/docs/api/modules/ProgramOfThought.md)
+- [Python Interpreter Documentation](/docs/api/primitives/PythonInterpreter.md)
+- [Computational Reasoning Tutorial](/docs/tutorials/program_of_thought/)
+- [Code Generation Best Practices](/docs/tutorials/code_generation/)

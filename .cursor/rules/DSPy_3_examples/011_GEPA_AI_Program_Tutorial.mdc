@@ -1,0 +1,723 @@
+---
+description: DSPY 3 GEPA AI Program Tutorial - Advanced reflective prompt optimization using GEPA
+alwaysApply: false
+---
+
+> You are an expert in GEPA (Guided Evolution of Prompts) optimization using DSPy 3.0.1 based on official tutorials.
+
+## GEPA AI Program Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GEPA Optimization Workflow               │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐ │
+│  │ Base        │    │ Reflection   │    │ Prompt Tree     │ │
+│  │ Program     │───▶│ LM Analyzes  │───▶│ Evolution       │ │
+│  │             │    │ Performance  │    │ & Candidates    │ │
+│  └─────────────┘    └──────────────┘    └─────────────────┘ │
+│           │                 │                       │       │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │              Textual Feedback System                   │ │
+│  │  • Execution traces    • Error analysis               │ │
+│  │  • Performance metrics • Domain-specific feedback     │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│           │                 │                       │       │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │                Pareto Front Selection                   │ │
+│  │  • Multi-objective optimization                        │ │
+│  │  • Best aggregate scores                               │ │
+│  │  • Statistical validation                              │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### GEPA Core Optimization Workflow (From Tutorial)
+
+```python
+import dspy
+from dspy import GEPA
+
+# Configure base language model
+lm = dspy.LM("openai/gpt-4.1-mini", temperature=1, api_key=api_key, max_tokens=32000)
+dspy.configure(lm=lm)
+
+# Define your DSPy program (example: Chain of Thought)
+class GenerateResponse(dspy.Signature):
+    """Solve the problem and provide the answer in the correct format."""
+    problem = dspy.InputField()
+    answer = dspy.OutputField()
+
+program = dspy.ChainOfThought(GenerateResponse)
+
+# Create evaluation metric with rich textual feedback
+def metric_with_feedback(example, prediction, trace=None, pred_name=None, pred_trace=None):
+    correct_answer = example['answer']
+    try:
+        pred_answer = prediction.answer
+        score = int(correct_answer == pred_answer)
+
+        feedback_text = ""
+        if score == 1:
+            feedback_text = f"Correct! The answer is '{correct_answer}'."
+        else:
+            feedback_text = f"Incorrect. The correct answer is '{correct_answer}'. "
+            if hasattr(example, 'solution'):
+                feedback_text += f"Solution: {example.solution}"
+
+        return dspy.Prediction(score=score, feedback=feedback_text)
+    except Exception as e:
+        feedback_text = f"Error processing answer: {str(e)}. Please ensure proper formatting."
+        return dspy.Prediction(score=0, feedback=feedback_text)
+
+# GEPA Optimizer Configuration
+optimizer = GEPA(
+    metric=metric_with_feedback,
+    auto="light",  # Budget setting: "light", "medium", "heavy"
+    num_threads=32,
+    track_stats=True,
+    reflection_minibatch_size=3,
+    reflection_lm=dspy.LM(model="gpt-5", temperature=1.0, max_tokens=32000, api_key=api_key)
+)
+
+# Compile optimized program
+optimized_program = optimizer.compile(
+    program,
+    trainset=train_set,
+    valset=val_set,
+)
+```
+
+### Performance Results (From Tutorials)
+
+- **AIME Math Problems**: 46.7% → 56.7% accuracy (21.4% relative improvement)
+- **Privacy Tasks**: 77% → 86% composite score (11.7% improvement)
+- **Classification Tasks**: Significant improvements with predictor-level feedback
+- **Sample Efficiency**: High performance with minimal rollouts (1-10 iterations)
+
+### Production GEPA Optimization System
+
+```python
+import mlflow
+from typing import Dict, List, Any, Optional
+import logging
+
+class ProductionGEPAOptimizer:
+    def __init__(
+        self,
+        base_lm: str = "openai/gpt-4.1-mini",
+        reflection_lm: str = "openai/gpt-5",
+        budget: str = "medium",
+        experiment_name: str = "GEPA-Optimization",
+        api_key: str = None
+    ):
+        self.base_lm = dspy.LM(base_lm, api_key=api_key, max_tokens=32000)
+        self.reflection_lm = dspy.LM(reflection_lm, api_key=api_key, max_tokens=32000)
+        self.budget = budget
+        self.experiment_name = experiment_name
+
+        # Setup MLflow tracking
+        mlflow.set_experiment(experiment_name)
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+    def create_feedback_metric(self, domain_validator: callable = None) -> callable:
+        """Create rich feedback metric for GEPA optimization"""
+        def feedback_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+            try:
+                # Core evaluation
+                base_score = self._evaluate_prediction(example, prediction)
+
+                # Generate contextual feedback
+                feedback_parts = []
+
+                if base_score > 0.8:
+                    feedback_parts.append("Excellent performance!")
+                elif base_score > 0.5:
+                    feedback_parts.append("Good approach, but can be improved.")
+                else:
+                    feedback_parts.append("Significant improvement needed.")
+
+                # Add domain-specific feedback
+                if domain_validator:
+                    domain_feedback = domain_validator(example, prediction, trace)
+                    feedback_parts.append(domain_feedback)
+
+                # Add execution trace insights
+                if trace:
+                    trace_feedback = self._analyze_trace(trace)
+                    feedback_parts.append(trace_feedback)
+
+                feedback_text = " ".join(feedback_parts)
+                return dspy.Prediction(score=base_score, feedback=feedback_text)
+
+            except Exception as e:
+                feedback_text = f"Evaluation error: {str(e)}. Check input formatting and constraints."
+                return dspy.Prediction(score=0.0, feedback=feedback_text)
+
+        return feedback_metric
+
+    def optimize_program(
+        self,
+        program: dspy.Module,
+        trainset: List[dspy.Example],
+        valset: List[dspy.Example],
+        metric_fn: callable,
+        domain_validator: callable = None
+    ) -> dspy.Module:
+        """Run GEPA optimization with full tracking"""
+
+        with mlflow.start_run(run_name=f"GEPA-{self.budget}"):
+            # Log configuration
+            mlflow.log_params({
+                "optimizer": "GEPA",
+                "budget": self.budget,
+                "base_lm": str(self.base_lm),
+                "reflection_lm": str(self.reflection_lm),
+                "train_size": len(trainset),
+                "val_size": len(valset)
+            })
+
+            # Create feedback metric
+            feedback_metric = self.create_feedback_metric(domain_validator)
+
+            # Configure GEPA optimizer
+            optimizer = GEPA(
+                metric=feedback_metric,
+                auto=self.budget,
+                num_threads=16,
+                track_stats=True,
+                track_best_outputs=True,
+                reflection_minibatch_size=min(5, len(trainset) // 10),
+                reflection_lm=self.reflection_lm
+            )
+
+            # Baseline evaluation
+            baseline_evaluator = dspy.Evaluate(
+                devset=valset,
+                metric=metric_fn,
+                num_threads=16,
+                display_progress=True
+            )
+            baseline_score = baseline_evaluator(program)
+            mlflow.log_metric("baseline_score", baseline_score)
+
+            # Run optimization
+            logging.info("Starting GEPA optimization...")
+            optimized_program = optimizer.compile(
+                student=program,
+                trainset=trainset,
+                valset=valset,
+            )
+
+            # Final evaluation
+            final_score = baseline_evaluator(optimized_program)
+            improvement = ((final_score - baseline_score) / baseline_score) * 100
+
+            mlflow.log_metrics({
+                "final_score": final_score,
+                "improvement_percent": improvement,
+                "optimization_success": 1 if improvement > 0 else 0
+            })
+
+            # Save optimized program
+            mlflow.dspy.log_model(
+                optimized_program,
+                artifact_path="optimized_model",
+                registered_model_name=f"GEPA-{self.experiment_name}"
+            )
+
+            logging.info(f"GEPA optimization complete. Improvement: {improvement:.1f}%")
+            return optimized_program
+
+    def _evaluate_prediction(self, example, prediction) -> float:
+        """Base evaluation logic"""
+        # Implement your core evaluation logic here
+        # This should return a score between 0 and 1
+        return 0.5  # Placeholder
+
+    def _analyze_trace(self, trace) -> str:
+        """Analyze execution trace for feedback"""
+        # Analyze the trace and provide insights
+        return "Execution trace analysis: Consider more systematic reasoning steps."
+
+# Usage Example
+optimizer = ProductionGEPAOptimizer(
+    budget="medium",
+    experiment_name="Math-Problem-Solver"
+)
+
+optimized_program = optimizer.optimize_program(
+    program=base_program,
+    trainset=train_data,
+    valset=validation_data,
+    metric_fn=accuracy_metric,
+    domain_validator=math_domain_validator
+)
+```
+
+## Production Enhancements
+
+### MLflow Integration
+
+```python
+# Complete experiment tracking setup
+import mlflow
+
+mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_experiment("GEPA-Advanced-Optimization")
+
+# Enable comprehensive autologging
+mlflow.dspy.autolog(
+    log_compiles=True,
+    log_evals=True,
+    log_traces_from_compile=True
+)
+
+# Custom metrics logging during optimization
+class GEPAExperimentTracker:
+    def __init__(self):
+        self.iteration_scores = []
+        self.pareto_front_progression = []
+
+    def log_iteration(self, iteration: int, scores: Dict[str, float]):
+        """Log metrics for each GEPA iteration"""
+        for metric_name, score in scores.items():
+            mlflow.log_metric(f"iteration_{metric_name}", score, step=iteration)
+
+        self.iteration_scores.append(scores)
+
+    def log_pareto_front(self, iteration: int, front_scores: List[float]):
+        """Track Pareto front evolution"""
+        mlflow.log_metric("pareto_front_size", len(front_scores), step=iteration)
+        mlflow.log_metric("pareto_front_max", max(front_scores), step=iteration)
+        mlflow.log_metric("pareto_front_mean", sum(front_scores) / len(front_scores), step=iteration)
+
+        self.pareto_front_progression.append(front_scores)
+```
+
+### Enterprise GEPA Workflow
+
+```python
+from dataclasses import dataclass
+from pathlib import Path
+import joblib
+import yaml
+
+@dataclass
+class GEPAConfig:
+    base_model: str = "openai/gpt-4.1-mini"
+    reflection_model: str = "openai/gpt-5"
+    budget: str = "medium"
+    num_threads: int = 16
+    reflection_minibatch_size: int = 3
+    track_stats: bool = True
+    track_best_outputs: bool = True
+    experiment_name: str = "production-gepa"
+
+class EnterpriseGEPAPipeline:
+    def __init__(self, config: GEPAConfig):
+        self.config = config
+        self.setup_logging()
+        self.setup_mlflow()
+
+    def setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(f'gepa_optimization_{self.config.experiment_name}.log'),
+                logging.StreamHandler()
+            ]
+        )
+
+    def setup_mlflow(self):
+        mlflow.set_experiment(self.config.experiment_name)
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+    def run_optimization_suite(
+        self,
+        programs: Dict[str, dspy.Module],
+        datasets: Dict[str, List[dspy.Example]],
+        metrics: Dict[str, callable]
+    ) -> Dict[str, dspy.Module]:
+        """Run GEPA optimization across multiple programs"""
+
+        results = {}
+
+        for program_name, program in programs.items():
+            logging.info(f"Starting optimization for {program_name}")
+
+            with mlflow.start_run(run_name=f"GEPA-{program_name}"):
+                optimized = self.optimize_single_program(
+                    program=program,
+                    trainset=datasets[f"{program_name}_train"],
+                    valset=datasets[f"{program_name}_val"],
+                    metric=metrics[program_name]
+                )
+
+                results[program_name] = optimized
+
+                # Save checkpoint
+                self.save_checkpoint(program_name, optimized)
+
+        return results
+
+    def optimize_single_program(
+        self,
+        program: dspy.Module,
+        trainset: List[dspy.Example],
+        valset: List[dspy.Example],
+        metric: callable
+    ) -> dspy.Module:
+        """Optimize individual program with GEPA"""
+
+        # Create rich feedback metric
+        def enhanced_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+            base_score = metric(example, prediction, trace)
+
+            # Generate detailed feedback
+            feedback_components = []
+
+            if hasattr(prediction, 'reasoning'):
+                if len(prediction.reasoning.split()) < 10:
+                    feedback_components.append("Reasoning is too brief. Provide more detailed step-by-step analysis.")
+                elif len(prediction.reasoning.split()) > 200:
+                    feedback_components.append("Reasoning is too verbose. Focus on key insights.")
+                else:
+                    feedback_components.append("Good reasoning length and structure.")
+
+            if trace and pred_name:
+                feedback_components.append(f"Module {pred_name} performance analysis: {self._analyze_module_performance(trace, pred_name)}")
+
+            feedback_text = " ".join(feedback_components)
+            return dspy.Prediction(score=base_score, feedback=feedback_text)
+
+        # Configure GEPA
+        optimizer = GEPA(
+            metric=enhanced_metric,
+            auto=self.config.budget,
+            num_threads=self.config.num_threads,
+            track_stats=self.config.track_stats,
+            track_best_outputs=self.config.track_best_outputs,
+            reflection_minibatch_size=self.config.reflection_minibatch_size,
+            reflection_lm=dspy.LM(
+                model=self.config.reflection_model,
+                temperature=1.0,
+                max_tokens=32000
+            )
+        )
+
+        return optimizer.compile(
+            student=program,
+            trainset=trainset,
+            valset=valset
+        )
+
+    def save_checkpoint(self, name: str, program: dspy.Module):
+        """Save optimization checkpoint"""
+        checkpoint_dir = Path("gepa_checkpoints")
+        checkpoint_dir.mkdir(exist_ok=True)
+
+        checkpoint_path = checkpoint_dir / f"{name}_optimized.pkl"
+        joblib.dump(program, checkpoint_path)
+
+        logging.info(f"Saved checkpoint: {checkpoint_path}")
+```
+
+### Performance Monitoring
+
+```python
+class GEPAPerformanceMonitor:
+    def __init__(self):
+        self.metrics_history = {}
+        self.alert_thresholds = {
+            'score_degradation': -0.05,  # Alert if score drops by 5%
+            'optimization_time': 3600,    # Alert if optimization takes over 1 hour
+            'memory_usage': 0.8          # Alert if memory usage exceeds 80%
+        }
+
+    def monitor_optimization(
+        self,
+        optimizer_func: callable,
+        *args,
+        **kwargs
+    ):
+        """Monitor GEPA optimization with alerts"""
+        import time
+        import psutil
+
+        start_time = time.time()
+        start_memory = psutil.virtual_memory().percent
+
+        try:
+            result = optimizer_func(*args, **kwargs)
+
+            # Performance metrics
+            duration = time.time() - start_time
+            end_memory = psutil.virtual_memory().percent
+            memory_delta = end_memory - start_memory
+
+            # Log performance
+            performance_metrics = {
+                'optimization_duration': duration,
+                'memory_usage_delta': memory_delta,
+                'peak_memory_usage': end_memory
+            }
+
+            mlflow.log_metrics(performance_metrics)
+
+            # Check alerts
+            self.check_performance_alerts(performance_metrics)
+
+            return result
+
+        except Exception as e:
+            self.send_alert(f"GEPA Optimization Failed: {str(e)}")
+            raise
+
+    def check_performance_alerts(self, metrics: Dict[str, float]):
+        """Check performance thresholds and send alerts"""
+        if metrics['optimization_duration'] > self.alert_thresholds['optimization_time']:
+            self.send_alert(f"Long optimization time: {metrics['optimization_duration']:.1f}s")
+
+        if metrics['peak_memory_usage'] > self.alert_thresholds['memory_usage'] * 100:
+            self.send_alert(f"High memory usage: {metrics['peak_memory_usage']:.1f}%")
+
+    def send_alert(self, message: str):
+        """Send performance alert"""
+        logging.warning(f"GEPA ALERT: {message}")
+        # Integrate with your alerting system (email, Slack, etc.)
+```
+
+## Optimization Strategies
+
+### When to Use GEPA
+
+- **Complex reasoning tasks** where textual feedback is valuable
+- **Multi-modal objectives** requiring nuanced optimization
+- **Sample-efficient scenarios** with limited training data
+- **Domain-specific tasks** where LLM reflection can provide insights
+- **Iterative refinement** needs with feedback loops
+
+### GEPA vs Other Optimizers
+
+```python
+# Optimizer selection guide
+optimizer_guide = {
+    'GEPA': {
+        'best_for': ['complex reasoning', 'textual feedback available', 'sample efficiency'],
+        'performance': 'Excellent with rich feedback',
+        'cost': 'Medium (reflection LM calls)',
+        'iterations': '1-10 typically sufficient'
+    },
+    'MIPROv2': {
+        'best_for': ['general optimization', 'large datasets', 'instruction tuning'],
+        'performance': 'Consistent across tasks',
+        'cost': 'High (many LM calls)',
+        'iterations': '50-200 typically needed'
+    },
+    'BootstrapFewShot': {
+        'best_for': ['simple tasks', 'quick prototyping', 'few-shot learning'],
+        'performance': 'Good for basic tasks',
+        'cost': 'Low',
+        'iterations': '5-20 typically needed'
+    }
+}
+
+def select_optimizer(task_complexity: str, feedback_quality: str, budget: str) -> str:
+    if task_complexity == 'high' and feedback_quality == 'rich':
+        return 'GEPA'
+    elif budget == 'high' and task_complexity in ['medium', 'high']:
+        return 'MIPROv2'
+    else:
+        return 'BootstrapFewShot'
+```
+
+### Hyperparameter Tuning
+
+```python
+# GEPA hyperparameter optimization
+from itertools import product
+
+def tune_gepa_hyperparameters(
+    base_program: dspy.Module,
+    trainset: List[dspy.Example],
+    valset: List[dspy.Example],
+    metric: callable
+) -> Dict[str, Any]:
+    """Grid search for optimal GEPA parameters"""
+
+    hyperparameter_grid = {
+        'budget': ['light', 'medium', 'heavy'],
+        'reflection_minibatch_size': [3, 5, 8],
+        'temperature': [0.7, 1.0, 1.3]
+    }
+
+    best_score = 0
+    best_config = {}
+
+    for params in product(*hyperparameter_grid.values()):
+        config = dict(zip(hyperparameter_grid.keys(), params))
+
+        with mlflow.start_run(run_name=f"GEPA-tune-{'-'.join(map(str, params))}"):
+            optimizer = GEPA(
+                metric=metric,
+                auto=config['budget'],
+                reflection_minibatch_size=config['reflection_minibatch_size'],
+                reflection_lm=dspy.LM(
+                    model="openai/gpt-5",
+                    temperature=config['temperature']
+                )
+            )
+
+            optimized_program = optimizer.compile(
+                student=base_program,
+                trainset=trainset,
+                valset=valset
+            )
+
+            # Evaluate
+            evaluator = dspy.Evaluate(devset=valset, metric=metric)
+            score = evaluator(optimized_program)
+
+            mlflow.log_params(config)
+            mlflow.log_metric("validation_score", score)
+
+            if score > best_score:
+                best_score = score
+                best_config = config
+
+    return best_config
+```
+
+## Speed Tips
+
+- **Use appropriate budget**: Start with "light" for fast iteration
+- **Optimize reflection batch size**: Smaller batches (3-5) often sufficient
+- **Leverage parallel processing**: Set num_threads based on available resources
+- **Cache LM calls**: Use DSPy caching for repeated experiments
+- **Monitor memory**: Large programs may need memory optimization
+- **Profile bottlenecks**: Use MLflow traces to identify slow components
+
+## Common Issues
+
+### Optimization Convergence
+
+```python
+# Handle convergence issues
+def diagnose_convergence_issues(optimizer_stats):
+    issues = []
+
+    if optimizer_stats.get('pareto_front_size', 0) < 2:
+        issues.append("Low diversity in candidate solutions")
+
+    if optimizer_stats.get('improvement_rate', 0) < 0.01:
+        issues.append("Minimal improvement per iteration")
+
+    if optimizer_stats.get('reflection_quality', 0) < 0.5:
+        issues.append("Poor reflection quality from LM")
+
+    return issues
+```
+
+### Memory Management
+
+```python
+# Memory optimization for large programs
+import gc
+
+class MemoryEfficientGEPA:
+    def __init__(self):
+        self.checkpoint_frequency = 5
+
+    def optimize_with_memory_management(self, *args, **kwargs):
+        for iteration in range(max_iterations):
+            # Run optimization step
+            result = self.run_iteration(*args, **kwargs)
+
+            # Periodic cleanup
+            if iteration % self.checkpoint_frequency == 0:
+                gc.collect()
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
+            yield result
+```
+
+### Feedback Quality Issues
+
+```python
+# Improve feedback quality
+def enhance_feedback_quality(base_metric):
+    def enhanced_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+        base_result = base_metric(example, prediction, trace)
+
+        # Add structured feedback components
+        feedback_sections = []
+
+        # Performance analysis
+        if hasattr(base_result, 'score'):
+            if base_result.score > 0.8:
+                feedback_sections.append("✅ Excellent performance")
+            elif base_result.score > 0.5:
+                feedback_sections.append("⚠️ Moderate performance - room for improvement")
+            else:
+                feedback_sections.append("❌ Poor performance - major issues detected")
+
+        # Specific improvement suggestions
+        if hasattr(prediction, 'reasoning') and len(prediction.reasoning) < 50:
+            feedback_sections.append("💡 Suggestion: Provide more detailed reasoning")
+
+        # Combine feedback
+        enhanced_feedback = " | ".join(feedback_sections)
+
+        return dspy.Prediction(
+            score=base_result.score if hasattr(base_result, 'score') else base_result,
+            feedback=enhanced_feedback
+        )
+
+    return enhanced_metric
+```
+
+## Best Practices Summary
+
+### GEPA Optimization Workflow
+
+1. **Start with rich feedback metrics** that provide actionable insights
+2. **Use appropriate reflection LM** (GPT-4/5 for complex tasks)
+3. **Monitor Pareto front evolution** to track optimization progress
+4. **Implement comprehensive logging** with MLflow integration
+5. **Set up performance monitoring** and alerting systems
+6. **Use systematic hyperparameter tuning** for optimal results
+7. **Handle edge cases** and convergence issues proactively
+
+### Production Deployment
+
+- **Containerize optimized programs** for consistent deployment
+- **Implement A/B testing** between baseline and optimized versions
+- **Set up continuous monitoring** of production performance
+- **Maintain optimization pipelines** for regular model updates
+- **Document optimization decisions** and parameter choices
+
+### Quality Assurance
+
+- **Validate improvements** on held-out test sets
+- **Check for overfitting** to validation data
+- **Monitor for performance degradation** over time
+- **Implement rollback procedures** for failed optimizations
+
+## References
+
+- [GEPA Paper: Reflective Prompt Evolution Can Outperform Reinforcement Learning](https://arxiv.org/abs/2507.19457)
+- [DSPy GEPA Documentation](https://dspy.ai/docs/deep-dive/teleprompter/gepa)
+- [GEPA Official Implementation](https://github.com/gepa-ai/gepa)
+- [MLflow DSPy Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

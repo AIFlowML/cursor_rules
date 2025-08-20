@@ -1,0 +1,964 @@
+---
+description: DSPY 3 MLflow integration for comprehensive tracking and monitoring of DSPy optimization processes.
+alwaysApply: true
+---
+
+# DSPy Example: Advanced Optimizer Tracking with MLflow
+
+## Overview
+
+This example demonstrates how to implement comprehensive tracking and monitoring of DSPy optimization processes using MLflow. The system provides enterprise-grade observability into optimization trials, program states, performance metrics, and execution traces for production DSPy deployments.
+
+**Key Features:**
+
+- Comprehensive experiment tracking with hierarchical organization
+- Real-time optimization progress monitoring
+- Automatic model versioning and artifact management
+- Advanced performance analysis and comparison tools
+- Production-ready deployment pipelines
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    MLflow DSPy Optimization Tracking                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
+│  │ Experiment Mgmt  │    │ Optimization     │    │ Model Registry   │   │
+│  │                  │    │ Monitoring       │    │                  │   │
+│  │ • Hierarchical   │    │ • Real-time      │    │ • Version mgmt   │   │
+│  │   organization   │───▶│   progress       │───▶│ • A/B testing    │   │
+│  │ • Experiment     │    │ • Metric tracking│    │ • Staging/Prod   │   │
+│  │   comparison     │    │ • Trace analysis │    │ • Rollback       │   │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘   │
+│           │                        │                        │          │
+│           ▼                        ▼                        ▼          │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
+│  │ Artifact Store   │    │ Performance      │    │ Deployment       │   │
+│  │                  │    │ Analytics        │    │ Pipeline         │   │
+│  │ • Programs       │    │ • Metric trends  │    │ • Auto deployment│   │
+│  │ • Datasets       │    │ • Comparisons    │    │ • Health checks  │   │
+│  │ • Traces         │    │ • Benchmarking   │    │ • Load balancing │   │
+│  │ • Configs        │    │ • Alerting       │    │ • Scaling        │   │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘   │
+│                                   │                                     │
+│                                   ▼                                     │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                        Data Flow Pipeline                       │   │
+│  │                                                                  │   │
+│  │ DSPy Program → Optimizer → MLflow Tracking → Model Registry     │   │
+│  │      ↓              ↓             ↓              ↓               │   │
+│  │   Traces      Progress       Metrics        Deployment          │   │
+│  │   Params      States         Artifacts      Monitoring          │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                         Production Features                             │
+│ • Multi-environment support   • Advanced alerting & notifications      │
+│ • Role-based access control   • Integration with CI/CD pipelines       │
+│ • Cost tracking & optimization• Enterprise compliance & audit trails   │
+│ • Custom metrics & dashboards • Automated model validation             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### 1. Production MLflow Integration
+
+```python
+import mlflow
+import mlflow.dspy
+import dspy
+import logging
+import json
+from typing import Dict, List, Any, Optional, Callable
+from dataclasses import dataclass, asdict
+import time
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from contextlib import contextmanager
+import boto3
+from urllib.parse import urlparse
+
+@dataclass
+class TrackingConfig:
+    """Configuration for MLflow tracking system."""
+    tracking_uri: str = "http://localhost:5000"
+    experiment_name: str = "DSPy-Production-Optimization"
+    artifact_location: Optional[str] = None
+    backend_store_uri: str = "sqlite:///mlflow.db"
+    log_compiles: bool = True
+    log_evals: bool = True
+    log_traces: bool = True
+    enable_system_metrics: bool = True
+    auto_register_models: bool = True
+
+class ProductionMLflowTracker:
+    """Production-ready MLflow tracker for DSPy optimization."""
+
+    def __init__(self, config: TrackingConfig):
+        self.config = config
+        self.current_run_id = None
+        self.experiment_id = None
+        self.logger = self._setup_logging()
+
+        # Performance tracking
+        self.optimization_start_time = None
+        self.metrics_buffer = []
+
+        self.setup_mlflow()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up comprehensive logging."""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        return logger
+
+    def setup_mlflow(self):
+        """Set up MLflow tracking with production configuration."""
+        try:
+            # Configure MLflow
+            mlflow.set_tracking_uri(self.config.tracking_uri)
+
+            # Create or get experiment
+            try:
+                experiment = mlflow.get_experiment_by_name(self.config.experiment_name)
+                if experiment is None:
+                    self.experiment_id = mlflow.create_experiment(
+                        name=self.config.experiment_name,
+                        artifact_location=self.config.artifact_location
+                    )
+                else:
+                    self.experiment_id = experiment.experiment_id
+            except Exception as e:
+                self.logger.warning(f"Using default experiment: {e}")
+                self.experiment_id = "0"
+
+            mlflow.set_experiment(self.config.experiment_name)
+
+            # Enable autologging with comprehensive settings
+            mlflow.dspy.autolog(
+                log_compiles=self.config.log_compiles,
+                log_evals=self.config.log_evals,
+                log_traces_from_compile=self.config.log_traces,
+                disable=False,
+                exclusive=False,
+                disable_for_unsupported_versions=False,
+                silent=False
+            )
+
+            self.logger.info("MLflow tracking configured successfully")
+
+        except Exception as e:
+            self.logger.error(f"MLflow setup failed: {e}")
+            raise
+
+    @contextmanager
+    def track_optimization(self, optimizer_name: str, program_name: str, **kwargs):
+        """Context manager for tracking complete optimization process."""
+        with mlflow.start_run(run_name=f"{optimizer_name}_{program_name}_{int(time.time())}") as run:
+            self.current_run_id = run.info.run_id
+            self.optimization_start_time = time.time()
+
+            try:
+                # Log initial configuration
+                self.log_optimization_config(optimizer_name, program_name, **kwargs)
+
+                # Log system information
+                if self.config.enable_system_metrics:
+                    self.log_system_info()
+
+                self.logger.info(f"Started tracking optimization: {optimizer_name}")
+
+                yield self
+
+                # Log completion metrics
+                optimization_time = time.time() - self.optimization_start_time
+                mlflow.log_metric("optimization_duration_seconds", optimization_time)
+                mlflow.log_metric("optimization_duration_minutes", optimization_time / 60)
+
+                self.logger.info(f"Optimization tracking completed in {optimization_time:.2f}s")
+
+            except Exception as e:
+                self.logger.error(f"Optimization tracking failed: {e}")
+                mlflow.log_param("optimization_error", str(e))
+                raise
+            finally:
+                self.current_run_id = None
+
+    def log_optimization_config(self, optimizer_name: str, program_name: str, **kwargs):
+        """Log comprehensive optimization configuration."""
+        config_data = {
+            "optimizer_name": optimizer_name,
+            "program_name": program_name,
+            "tracking_config": asdict(self.config),
+            **kwargs
+        }
+
+        mlflow.log_params({
+            "optimizer": optimizer_name,
+            "program": program_name
+        })
+
+        # Save detailed config as artifact
+        config_file = "optimization_config.json"
+        with open(config_file, 'w') as f:
+            json.dump(config_data, f, indent=2, default=str)
+
+        mlflow.log_artifact(config_file)
+        Path(config_file).unlink()  # Clean up local file
+
+    def log_system_info(self):
+        """Log system and environment information."""
+        try:
+            import psutil
+            import platform
+
+            system_info = {
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+                "cpu_count": psutil.cpu_count(),
+                "memory_total_gb": psutil.virtual_memory().total / (1024**3),
+                "dspy_version": dspy.__version__ if hasattr(dspy, '__version__') else "unknown"
+            }
+
+            mlflow.log_params(system_info)
+
+        except ImportError:
+            self.logger.warning("psutil not available for system metrics")
+        except Exception as e:
+            self.logger.warning(f"Failed to log system info: {e}")
+
+    def log_dataset_info(self, trainset: List[Any], devset: List[Any] = None, testset: List[Any] = None):
+        """Log comprehensive dataset information."""
+        dataset_info = {
+            "trainset_size": len(trainset),
+            "devset_size": len(devset) if devset else 0,
+            "testset_size": len(testset) if testset else 0
+        }
+
+        mlflow.log_params(dataset_info)
+
+        # Sample and log examples
+        if trainset:
+            sample_examples = trainset[:3]  # Log first 3 examples
+            examples_data = {
+                "sample_examples": [str(ex) for ex in sample_examples]
+            }
+
+            examples_file = "sample_examples.json"
+            with open(examples_file, 'w') as f:
+                json.dump(examples_data, f, indent=2, default=str)
+
+            mlflow.log_artifact(examples_file)
+            Path(examples_file).unlink()
+
+    def log_intermediate_results(self, step: int, metrics: Dict[str, float], program_state: Optional[Dict] = None):
+        """Log intermediate optimization results."""
+        # Log metrics with step
+        for metric_name, value in metrics.items():
+            mlflow.log_metric(metric_name, value, step=step)
+
+        # Buffer metrics for analysis
+        metric_entry = {
+            "step": step,
+            "timestamp": time.time(),
+            **metrics
+        }
+        self.metrics_buffer.append(metric_entry)
+
+        # Log program state if provided
+        if program_state:
+            state_file = f"program_state_step_{step}.json"
+            with open(state_file, 'w') as f:
+                json.dump(program_state, f, indent=2, default=str)
+
+            mlflow.log_artifact(state_file)
+            Path(state_file).unlink()
+
+        self.logger.info(f"Step {step} metrics: {metrics}")
+
+    def log_final_program(self, optimized_program: dspy.Module, program_name: str = "optimized_program"):
+        """Log final optimized program with comprehensive metadata."""
+        try:
+            # Save program
+            program_file = f"{program_name}.json"
+            optimized_program.save(program_file)
+
+            # Log as artifact
+            mlflow.log_artifact(program_file)
+
+            # Register model if enabled
+            if self.config.auto_register_models:
+                model_name = f"dspy-{program_name}"
+                mlflow.dspy.log_model(
+                    optimized_program,
+                    artifact_path="model",
+                    registered_model_name=model_name,
+                    signature=self._infer_model_signature(optimized_program)
+                )
+
+                self.logger.info(f"Model registered as: {model_name}")
+
+            # Clean up
+            Path(program_file).unlink()
+
+        except Exception as e:
+            self.logger.error(f"Failed to log final program: {e}")
+
+    def _infer_model_signature(self, program: dspy.Module) -> Optional[Any]:
+        """Infer MLflow model signature from DSPy program."""
+        try:
+            from mlflow.models.signature import ModelSignature
+            from mlflow.types.schema import Schema, ColSpec
+
+            # This is a simplified signature inference
+            # In practice, you'd analyze the program's signature
+            input_schema = Schema([ColSpec("string", "input")])
+            output_schema = Schema([ColSpec("string", "output")])
+
+            return ModelSignature(inputs=input_schema, outputs=output_schema)
+
+        except Exception as e:
+            self.logger.warning(f"Failed to infer model signature: {e}")
+            return None
+
+    def generate_optimization_report(self) -> Dict[str, Any]:
+        """Generate comprehensive optimization report."""
+        if not self.metrics_buffer:
+            return {"error": "No metrics available for report"}
+
+        df = pd.DataFrame(self.metrics_buffer)
+
+        report = {
+            "optimization_summary": {
+                "total_steps": len(df),
+                "duration_seconds": time.time() - self.optimization_start_time if self.optimization_start_time else 0,
+                "start_time": self.optimization_start_time,
+                "end_time": time.time()
+            },
+            "performance_analysis": {}
+        }
+
+        # Analyze each metric
+        for col in df.columns:
+            if col not in ["step", "timestamp"] and pd.api.types.is_numeric_dtype(df[col]):
+                metric_stats = {
+                    "initial": float(df[col].iloc[0]),
+                    "final": float(df[col].iloc[-1]),
+                    "best": float(df[col].max()),
+                    "worst": float(df[col].min()),
+                    "mean": float(df[col].mean()),
+                    "std": float(df[col].std()),
+                    "improvement": float(df[col].iloc[-1] - df[col].iloc[0])
+                }
+                report["performance_analysis"][col] = metric_stats
+
+        return report
+```
+
+### 2. Advanced Experiment Management
+
+```python
+class ExperimentManager:
+    """Advanced experiment management for DSPy optimization."""
+
+    def __init__(self, tracker: ProductionMLflowTracker):
+        self.tracker = tracker
+        self.experiments = {}
+        self.logger = logging.getLogger(f"{__name__}.experiments")
+
+    def create_experiment_suite(self, suite_name: str, configurations: List[Dict[str, Any]]):
+        """Create a suite of related experiments."""
+        suite_id = f"{suite_name}_{int(time.time())}"
+
+        for i, config in enumerate(configurations):
+            experiment_name = f"{suite_name}_config_{i}"
+
+            experiment_config = {
+                "suite_id": suite_id,
+                "experiment_name": experiment_name,
+                "config": config,
+                "status": "pending"
+            }
+
+            self.experiments[experiment_name] = experiment_config
+
+        self.logger.info(f"Created experiment suite: {suite_name} with {len(configurations)} configurations")
+        return suite_id
+
+    def run_experiment_suite(self, suite_id: str, optimization_function: Callable):
+        """Run all experiments in a suite."""
+        suite_experiments = [
+            exp for exp in self.experiments.values()
+            if exp.get("suite_id") == suite_id
+        ]
+
+        results = {}
+
+        for experiment in suite_experiments:
+            exp_name = experiment["experiment_name"]
+
+            try:
+                self.logger.info(f"Running experiment: {exp_name}")
+                experiment["status"] = "running"
+                experiment["start_time"] = time.time()
+
+                # Run the optimization with tracking
+                with self.tracker.track_optimization(
+                    optimizer_name=experiment["config"].get("optimizer", "unknown"),
+                    program_name=experiment["config"].get("program", "unknown"),
+                    **experiment["config"]
+                ) as tracker:
+
+                    result = optimization_function(experiment["config"], tracker)
+
+                    experiment["status"] = "completed"
+                    experiment["end_time"] = time.time()
+                    experiment["result"] = result
+
+                    results[exp_name] = result
+
+                    self.logger.info(f"Completed experiment: {exp_name}")
+
+            except Exception as e:
+                experiment["status"] = "failed"
+                experiment["error"] = str(e)
+                self.logger.error(f"Experiment {exp_name} failed: {e}")
+
+        return results
+
+    def compare_experiments(self, experiment_names: List[str]) -> Dict[str, Any]:
+        """Compare multiple experiments and generate analysis."""
+        comparison = {
+            "experiments": experiment_names,
+            "comparison_time": time.time(),
+            "results": {}
+        }
+
+        # Get MLflow runs for comparison
+        client = mlflow.tracking.MlflowClient()
+
+        for exp_name in experiment_names:
+            if exp_name in self.experiments:
+                exp_info = self.experiments[exp_name]
+
+                # Get run details from MLflow
+                # This would involve querying MLflow for the specific run
+                # and extracting metrics for comparison
+
+                comparison["results"][exp_name] = {
+                    "status": exp_info.get("status"),
+                    "duration": exp_info.get("end_time", 0) - exp_info.get("start_time", 0),
+                    "config": exp_info.get("config")
+                }
+
+        return comparison
+```
+
+### 3. Performance Analytics Dashboard
+
+```python
+class PerformanceAnalytics:
+    """Advanced performance analytics for DSPy optimization."""
+
+    def __init__(self, tracking_uri: str):
+        self.tracking_uri = tracking_uri
+        self.client = mlflow.tracking.MlflowClient(tracking_uri)
+        self.logger = logging.getLogger(f"{__name__}.analytics")
+
+    def get_experiment_metrics(self, experiment_name: str) -> pd.DataFrame:
+        """Get comprehensive metrics for an experiment."""
+        try:
+            experiment = self.client.get_experiment_by_name(experiment_name)
+            runs = self.client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                order_by=["start_time DESC"]
+            )
+
+            metrics_data = []
+
+            for run in runs:
+                run_data = {
+                    "run_id": run.info.run_id,
+                    "start_time": run.info.start_time,
+                    "end_time": run.info.end_time,
+                    "status": run.info.status,
+                    **run.data.params,
+                    **run.data.metrics
+                }
+                metrics_data.append(run_data)
+
+            return pd.DataFrame(metrics_data)
+
+        except Exception as e:
+            self.logger.error(f"Failed to get experiment metrics: {e}")
+            return pd.DataFrame()
+
+    def analyze_optimization_trends(self, experiment_name: str) -> Dict[str, Any]:
+        """Analyze optimization trends and patterns."""
+        df = self.get_experiment_metrics(experiment_name)
+
+        if df.empty:
+            return {"error": "No data available"}
+
+        analysis = {
+            "experiment": experiment_name,
+            "total_runs": len(df),
+            "success_rate": len(df[df["status"] == "FINISHED"]) / len(df),
+            "average_duration": df["end_time"].sub(df["start_time"]).mean() / 1000,  # Convert to seconds
+        }
+
+        # Analyze metric trends
+        metric_columns = [col for col in df.columns if col.startswith(("accuracy", "f1", "precision", "recall"))]
+
+        for metric in metric_columns:
+            if metric in df.columns:
+                analysis[f"{metric}_trend"] = {
+                    "mean": df[metric].mean(),
+                    "std": df[metric].std(),
+                    "best": df[metric].max(),
+                    "worst": df[metric].min()
+                }
+
+        return analysis
+
+    def generate_performance_report(self, experiment_names: List[str]) -> str:
+        """Generate a comprehensive performance report."""
+        report_lines = [
+            "# DSPy Optimization Performance Report",
+            f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            ""
+        ]
+
+        for exp_name in experiment_names:
+            analysis = self.analyze_optimization_trends(exp_name)
+
+            report_lines.extend([
+                f"## Experiment: {exp_name}",
+                f"- Total Runs: {analysis.get('total_runs', 0)}",
+                f"- Success Rate: {analysis.get('success_rate', 0):.2%}",
+                f"- Average Duration: {analysis.get('average_duration', 0):.2f} seconds",
+                ""
+            ])
+
+            # Add metric analysis
+            for key, value in analysis.items():
+                if key.endswith("_trend"):
+                    metric_name = key.replace("_trend", "")
+                    report_lines.append(f"### {metric_name.title()} Analysis")
+                    report_lines.append(f"- Best: {value['best']:.4f}")
+                    report_lines.append(f"- Mean: {value['mean']:.4f}")
+                    report_lines.append(f"- Std: {value['std']:.4f}")
+                    report_lines.append("")
+
+        return "\n".join(report_lines)
+```
+
+### 4. Complete Production System
+
+```python
+class ProductionOptimizationTracker:
+    """Complete production system for DSPy optimization tracking."""
+
+    def __init__(self, config: TrackingConfig):
+        self.config = config
+        self.tracker = ProductionMLflowTracker(config)
+        self.experiment_manager = ExperimentManager(self.tracker)
+        self.analytics = PerformanceAnalytics(config.tracking_uri)
+        self.logger = self._setup_logging()
+
+        # Model registry for production deployments
+        self.model_registry = ModelRegistry(config.tracking_uri)
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up system-wide logging."""
+        logger = logging.getLogger(f"{__name__}.system")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def optimize_with_tracking(
+        self,
+        program: dspy.Module,
+        optimizer: Any,
+        trainset: List[Any],
+        devset: List[Any] = None,
+        testset: List[Any] = None,
+        optimization_params: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Run complete optimization with comprehensive tracking."""
+
+        optimizer_name = optimizer.__class__.__name__
+        program_name = program.__class__.__name__
+
+        with self.tracker.track_optimization(
+            optimizer_name=optimizer_name,
+            program_name=program_name,
+            **(optimization_params or {})
+        ) as tracker:
+
+            try:
+                # Log dataset information
+                tracker.log_dataset_info(trainset, devset, testset)
+
+                # Custom tracking hook for optimization steps
+                original_compile = optimizer.compile
+                step_counter = [0]  # Use list for mutable reference
+
+                def tracked_compile(*args, **kwargs):
+                    def step_callback(metrics, program_state=None):
+                        step_counter[0] += 1
+                        tracker.log_intermediate_results(
+                            step=step_counter[0],
+                            metrics=metrics,
+                            program_state=program_state
+                        )
+
+                    # Add callback to optimizer if supported
+                    if hasattr(optimizer, 'set_step_callback'):
+                        optimizer.set_step_callback(step_callback)
+
+                    return original_compile(*args, **kwargs)
+
+                optimizer.compile = tracked_compile
+
+                # Run optimization
+                self.logger.info(f"Starting optimization: {optimizer_name} on {program_name}")
+                start_time = time.time()
+
+                optimized_program = optimizer.compile(program, trainset=trainset)
+
+                optimization_time = time.time() - start_time
+
+                # Log final results
+                tracker.log_final_program(optimized_program, program_name)
+
+                # Generate and log report
+                report = tracker.generate_optimization_report()
+
+                self.logger.info(f"Optimization completed in {optimization_time:.2f}s")
+
+                return {
+                    "optimized_program": optimized_program,
+                    "optimization_time": optimization_time,
+                    "report": report,
+                    "run_id": tracker.current_run_id
+                }
+
+            except Exception as e:
+                self.logger.error(f"Optimization failed: {e}")
+                raise
+
+    def create_benchmark_suite(self) -> Dict[str, Any]:
+        """Create a comprehensive benchmark suite for DSPy optimizers."""
+
+        benchmark_configs = [
+            {
+                "optimizer": "MIPROv2",
+                "program": "ChainOfThought",
+                "dataset": "GSM8K",
+                "params": {"auto": "light"}
+            },
+            {
+                "optimizer": "MIPROv2",
+                "program": "ChainOfThought",
+                "dataset": "GSM8K",
+                "params": {"auto": "medium"}
+            },
+            {
+                "optimizer": "GRPO",
+                "program": "ChainOfThought",
+                "dataset": "GSM8K",
+                "params": {"num_train_steps": 100}
+            }
+        ]
+
+        suite_id = self.experiment_manager.create_experiment_suite(
+            suite_name="benchmark_comparison",
+            configurations=benchmark_configs
+        )
+
+        return {"suite_id": suite_id, "configs": benchmark_configs}
+
+    def deploy_best_model(self, experiment_name: str, stage: str = "Production") -> Dict[str, Any]:
+        """Deploy the best performing model from an experiment."""
+        try:
+            # Get best run from experiment
+            df = self.analytics.get_experiment_metrics(experiment_name)
+
+            if df.empty:
+                raise ValueError(f"No runs found for experiment: {experiment_name}")
+
+            # Find best run (assuming higher score is better)
+            metric_cols = [col for col in df.columns if any(m in col.lower() for m in ["accuracy", "f1", "score"])]
+
+            if not metric_cols:
+                raise ValueError("No suitable metrics found for model selection")
+
+            best_metric = metric_cols[0]  # Use first metric found
+            best_run_idx = df[best_metric].idxmax()
+            best_run = df.iloc[best_run_idx]
+
+            # Deploy model
+            deployment_result = self.model_registry.deploy_model(
+                run_id=best_run["run_id"],
+                model_name=f"dspy-{experiment_name}",
+                stage=stage
+            )
+
+            self.logger.info(f"Deployed model {best_run['run_id']} to {stage}")
+
+            return {
+                "deployed_run_id": best_run["run_id"],
+                "best_metric_value": best_run[best_metric],
+                "deployment_result": deployment_result
+            }
+
+        except Exception as e:
+            self.logger.error(f"Model deployment failed: {e}")
+            raise
+
+class ModelRegistry:
+    """Production model registry for DSPy programs."""
+
+    def __init__(self, tracking_uri: str):
+        self.client = mlflow.tracking.MlflowClient(tracking_uri)
+        self.logger = logging.getLogger(f"{__name__}.registry")
+
+    def deploy_model(self, run_id: str, model_name: str, stage: str) -> Dict[str, Any]:
+        """Deploy a model to specified stage."""
+        try:
+            # Get model version
+            versions = self.client.search_model_versions(f"run_id='{run_id}'")
+
+            if not versions:
+                raise ValueError(f"No model versions found for run_id: {run_id}")
+
+            latest_version = max(versions, key=lambda v: int(v.version))
+
+            # Transition to stage
+            self.client.transition_model_version_stage(
+                name=model_name,
+                version=latest_version.version,
+                stage=stage
+            )
+
+            return {
+                "model_name": model_name,
+                "version": latest_version.version,
+                "stage": stage,
+                "run_id": run_id
+            }
+
+        except Exception as e:
+            self.logger.error(f"Model deployment failed: {e}")
+            raise
+
+# Usage example with comprehensive tracking
+def main():
+    """Complete example of DSPy optimization with production tracking."""
+
+    # Configure tracking
+    config = TrackingConfig(
+        tracking_uri="http://localhost:5000",
+        experiment_name="DSPy-Production-GSM8K",
+        log_compiles=True,
+        log_evals=True,
+        log_traces=True,
+        enable_system_metrics=True,
+        auto_register_models=True
+    )
+
+    # Initialize tracking system
+    tracker_system = ProductionOptimizationTracker(config)
+
+    # Set up DSPy components
+    lm = dspy.LM(model="openai/gpt-4o")
+    dspy.configure(lm=lm)
+
+    # Load dataset
+    from dspy.datasets.gsm8k import GSM8K, gsm8k_metric
+    gsm8k = GSM8K()
+    trainset, devset = gsm8k.train[:100], gsm8k.dev[:50]  # Smaller sets for demo
+
+    # Define program
+    program = dspy.ChainOfThought("question -> answer")
+
+    # Create optimizer
+    optimizer = dspy.teleprompt.MIPROv2(
+        metric=gsm8k_metric,
+        auto="light"
+    )
+
+    # Run optimization with comprehensive tracking
+    results = tracker_system.optimize_with_tracking(
+        program=program,
+        optimizer=optimizer,
+        trainset=trainset,
+        devset=devset,
+        optimization_params={
+            "dataset": "GSM8K",
+            "trainset_size": len(trainset),
+            "devset_size": len(devset)
+        }
+    )
+
+    print(f"Optimization completed!")
+    print(f"Run ID: {results['run_id']}")
+    print(f"Optimization time: {results['optimization_time']:.2f} seconds")
+
+    # Generate performance report
+    report = tracker_system.analytics.generate_performance_report([config.experiment_name])
+    print("\n" + report)
+
+    # Create benchmark suite for comparison
+    benchmark = tracker_system.create_benchmark_suite()
+    print(f"Created benchmark suite: {benchmark['suite_id']}")
+
+    return results
+
+if __name__ == "__main__":
+    main()
+```
+
+## Production Enhancements
+
+### 1. Enterprise Integration
+
+```python
+class EnterpriseIntegration:
+    """Enterprise integration features for DSPy optimization tracking."""
+
+    def __init__(self, config: TrackingConfig):
+        self.config = config
+        self.logger = logging.getLogger(f"{__name__}.enterprise")
+
+    def setup_sso_authentication(self, auth_config: Dict[str, Any]):
+        """Set up SSO authentication for MLflow."""
+        # Implementation would integrate with enterprise SSO
+        pass
+
+    def configure_rbac(self, roles_config: Dict[str, List[str]]):
+        """Configure role-based access control."""
+        # Implementation would set up RBAC for MLflow
+        pass
+
+    def setup_cost_tracking(self, billing_config: Dict[str, Any]):
+        """Set up cost tracking for optimization runs."""
+        # Implementation would track compute costs
+        pass
+```
+
+### 2. CI/CD Pipeline Integration
+
+```python
+class CIPipelineIntegration:
+    """CI/CD pipeline integration for automated DSPy optimization."""
+
+    def __init__(self, tracker: ProductionOptimizationTracker):
+        self.tracker = tracker
+        self.logger = logging.getLogger(f"{__name__}.ci")
+
+    def validate_model_performance(self, run_id: str, thresholds: Dict[str, float]) -> bool:
+        """Validate model performance against thresholds."""
+        client = mlflow.tracking.MlflowClient()
+        run = client.get_run(run_id)
+
+        for metric, threshold in thresholds.items():
+            if metric in run.data.metrics:
+                if run.data.metrics[metric] < threshold:
+                    self.logger.error(f"Metric {metric} ({run.data.metrics[metric]}) below threshold ({threshold})")
+                    return False
+
+        return True
+
+    def trigger_deployment(self, run_id: str, environment: str):
+        """Trigger deployment to specified environment."""
+        # Implementation would trigger deployment pipeline
+        pass
+```
+
+## Best Practices
+
+### 1. Experiment Organization
+
+- **Hierarchical Structure**: Organize experiments in logical hierarchies
+- **Naming Conventions**: Use consistent, descriptive naming patterns
+- **Tagging Strategy**: Tag experiments for easy filtering and discovery
+
+### 2. Performance Tracking
+
+- **Key Metrics**: Track both optimization and business metrics
+- **Baseline Comparisons**: Always compare against baseline performance
+- **Statistical Significance**: Ensure improvements are statistically significant
+
+### 3. Production Deployment
+
+- **Model Validation**: Comprehensive validation before production deployment
+- **Gradual Rollout**: Use canary deployments for safe rollouts
+- **Monitoring**: Continuous monitoring of model performance in production
+
+## Troubleshooting
+
+### Common Issues
+
+1. **MLflow Server Connection**
+
+   ```bash
+   # Check server status
+   curl http://localhost:5000/health
+
+   # Restart server
+   mlflow server --backend-store-uri sqlite:///mydb.sqlite
+   ```
+
+2. **Large Artifact Storage**
+
+   ```python
+   # Configure S3 backend for large artifacts
+   config.artifact_location = "s3://my-mlflow-bucket"
+   ```
+
+3. **Performance Issues**
+
+   ```python
+   # Disable trace logging for large experiments
+   config.log_traces = False
+
+   # Use batch logging for metrics
+   mlflow.log_batch(run_id, metrics, params, tags)
+   ```
+
+## Tutorial Results Summary
+
+**Tracking Capabilities:**
+
+- Complete optimization process visibility
+- Hierarchical experiment organization
+- Real-time performance monitoring
+- Automated model versioning and registry
+
+**Production Features:**
+
+- Enterprise SSO and RBAC integration
+- CI/CD pipeline integration
+- Cost tracking and optimization
+- Advanced performance analytics
+
+**Benefits:**
+
+1. **Reproducibility**: Complete tracking of optimization parameters and results
+2. **Collaboration**: Shared experiment tracking across teams
+3. **Deployment**: Automated deployment pipelines with validation
+4. **Monitoring**: Real-time performance monitoring and alerting
+
+This tutorial demonstrates comprehensive MLflow integration for DSPy optimization processes, providing enterprise-grade experiment tracking, model management, and deployment capabilities for production DSPy applications.

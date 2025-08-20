@@ -1,0 +1,1148 @@
+---
+description: Complete FastAPI Integration - REST API deployment patterns for DSPy applications
+alwaysApply: false
+---
+
+> You are an expert in building complete FastAPI integrations for DSPy 3.0.1 applications with production-ready deployment patterns.
+
+## Complete FastAPI Integration Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   API Gateway   │    │   Request       │    │   DSPy Program  │
+│   & Load Balancer│───▶│   Validation    │───▶│   Execution     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Authentication│    │   Rate Limiting │    │   Response      │
+│   & Authorization│───▶│   & Caching     │───▶│   Processing    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Health        │    │   Monitoring    │    │   Documentation│
+│   Checks        │◀───│   & Logging     │◀───│   & Testing     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant FastAPI Templates
+
+### Quick Start API
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import dspy
+import uvicorn
+
+# Configure DSPy
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Simple DSPy program
+qa = dspy.ChainOfThought('question -> answer')
+
+app = FastAPI(title="DSPy API", version="1.0.0")
+
+class QuestionRequest(BaseModel):
+    question: str
+
+class AnswerResponse(BaseModel):
+    answer: str
+
+@app.post("/ask", response_model=AnswerResponse)
+async def ask_question(request: QuestionRequest):
+    try:
+        result = qa(question=request.question)
+        return AnswerResponse(answer=result.answer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Production FastAPI Integration
+
+```python
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, validator
+from typing import List, Dict, Any, Optional, Union
+import dspy
+import asyncio
+import time
+import logging
+import uuid
+from datetime import datetime, timedelta
+import redis
+import json
+from contextlib import asynccontextmanager
+import uvicorn
+
+# Enhanced request/response models
+class DSPyRequest(BaseModel):
+    """Base request model with common fields"""
+    request_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    metadata: Optional[Dict[str, Any]] = {}
+
+class DSPyResponse(BaseModel):
+    """Base response model with common fields"""
+    request_id: str
+    result: Any
+    processing_time: float
+    timestamp: datetime
+    cached: bool = False
+    model_version: Optional[str] = None
+
+class ErrorResponse(BaseModel):
+    """Error response model"""
+    error: str
+    error_type: str
+    request_id: str
+    timestamp: datetime
+    details: Optional[Dict[str, Any]] = None
+
+# Specialized request/response models
+class TextClassificationRequest(DSPyRequest):
+    text: str = Field(..., min_length=1, max_length=10000)
+    classes: Optional[List[str]] = None
+    include_confidence: bool = False
+
+class TextClassificationResponse(DSPyResponse):
+    predicted_class: str
+    confidence: Optional[float] = None
+    all_probabilities: Optional[Dict[str, float]] = None
+
+class QARequest(DSPyRequest):
+    question: str = Field(..., min_length=1, max_length=1000)
+    context: Optional[str] = None
+    max_tokens: Optional[int] = Field(default=500, ge=1, le=2000)
+
+class QAResponse(DSPyResponse):
+    answer: str
+    confidence: float
+    sources: Optional[List[str]] = None
+
+# DSPy program manager
+class DSPyProgramManager:
+    """Manages DSPy programs with caching and optimization"""
+
+    def __init__(self):
+        self.programs = {}
+        self.program_versions = {}
+        self.cache = None
+        self._initialize_cache()
+        self.setup_logging()
+
+    def setup_logging(self):
+        """Configure logging"""
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+
+    def _initialize_cache(self):
+        """Initialize Redis cache if available"""
+        try:
+            self.cache = redis.Redis(host='localhost', port=6379, decode_responses=True)
+            self.cache.ping()
+            self.logger.info("Redis cache initialized")
+        except Exception as e:
+            self.logger.warning(f"Redis not available, using in-memory cache: {e}")
+            self.cache = {}
+
+    def register_program(self, name: str, program: dspy.Module, version: str = "1.0"):
+        """Register a DSPy program"""
+        self.programs[name] = program
+        self.program_versions[name] = version
+        self.logger.info(f"Registered program '{name}' version {version}")
+
+    async def execute_program(self,
+                            program_name: str,
+                            inputs: Dict[str, Any],
+                            use_cache: bool = True,
+                            timeout: float = 30.0) -> Dict[str, Any]:
+        """Execute DSPy program with caching and error handling"""
+
+        if program_name not in self.programs:
+            raise ValueError(f"Program '{program_name}' not found")
+
+        program = self.programs[program_name]
+
+        # Generate cache key
+        cache_key = None
+        if use_cache:
+            cache_key = f"{program_name}:{hash(str(inputs))}"
+
+            # Check cache
+            if isinstance(self.cache, redis.Redis):
+                cached_result = self.cache.get(cache_key)
+                if cached_result:
+                    return {"result": json.loads(cached_result), "cached": True}
+            elif isinstance(self.cache, dict) and cache_key in self.cache:
+                return {"result": self.cache[cache_key], "cached": True}
+
+        # Execute program with timeout
+        try:
+            start_time = time.time()
+
+            # Run with timeout
+            result = await asyncio.wait_for(
+                self._run_program_async(program, inputs),
+                timeout=timeout
+            )
+
+            execution_time = time.time() - start_time
+
+            # Cache result
+            if use_cache and cache_key:
+                result_to_cache = self._serialize_result(result)
+
+                if isinstance(self.cache, redis.Redis):
+                    self.cache.setex(cache_key, 3600, json.dumps(result_to_cache))  # 1 hour TTL
+                elif isinstance(self.cache, dict):
+                    self.cache[cache_key] = result_to_cache
+
+            return {
+                "result": result,
+                "cached": False,
+                "execution_time": execution_time
+            }
+
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=408,
+                detail=f"Program execution timed out after {timeout}s"
+            )
+        except Exception as e:
+            self.logger.error(f"Program execution failed: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Program execution failed: {str(e)}"
+            )
+
+    async def _run_program_async(self, program: dspy.Module, inputs: Dict[str, Any]):
+        """Run DSPy program in executor to avoid blocking"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: program(**inputs))
+
+    def _serialize_result(self, result):
+        """Serialize DSPy result for caching"""
+        if hasattr(result, '__dict__'):
+            return result.__dict__
+        return result
+
+    def get_program_info(self) -> Dict[str, Any]:
+        """Get information about registered programs"""
+        return {
+            "programs": list(self.programs.keys()),
+            "versions": self.program_versions,
+            "cache_type": "redis" if isinstance(self.cache, redis.Redis) else "memory"
+        }
+
+# Global program manager
+program_manager = DSPyProgramManager()
+
+# Lifespan management
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    yield
+    # Shutdown - cleanup if needed
+    pass
+
+# Create FastAPI app
+app = FastAPI(
+    title="DSPy Production API",
+    version="2.0.0",
+    description="Production-ready DSPy application API",
+    lifespan=lifespan
+)
+
+# Add middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"]  # Configure appropriately for production
+)
+
+# Authentication dependency
+security = HTTPBearer()
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify API token (implement your authentication logic)"""
+    # Implement your token verification logic here
+    # For demo purposes, we'll accept any token
+    return {"user_id": "demo_user"}
+
+# Rate limiting
+class RateLimiter:
+    def __init__(self):
+        self.requests = {}
+        self.window_size = 60  # 1 minute
+        self.max_requests = 100  # per window
+
+    def is_allowed(self, client_id: str) -> bool:
+        """Check if request is within rate limits"""
+        now = time.time()
+        window_start = now - self.window_size
+
+        # Clean old requests
+        if client_id in self.requests:
+            self.requests[client_id] = [
+                req_time for req_time in self.requests[client_id]
+                if req_time > window_start
+            ]
+        else:
+            self.requests[client_id] = []
+
+        # Check limit
+        if len(self.requests[client_id]) >= self.max_requests:
+            return False
+
+        # Add current request
+        self.requests[client_id].append(now)
+        return True
+
+rate_limiter = RateLimiter()
+
+async def check_rate_limit(request: Request):
+    """Rate limiting dependency"""
+    client_ip = request.client.host
+
+    if not rate_limiter.is_allowed(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later."
+        )
+
+# API endpoints
+@app.on_event("startup")
+async def startup_event():
+    """Initialize DSPy programs on startup"""
+
+    # Initialize DSPy
+    lm = dspy.LM('openai/gpt-4o-mini')
+    dspy.configure(lm=lm)
+
+    # Register programs
+    # Text classification
+    classification_program = dspy.ChainOfThought('text -> predicted_class: str, confidence: float')
+    program_manager.register_program("text_classification", classification_program)
+
+    # Question answering
+    qa_program = dspy.ChainOfThought('question, context -> answer: str, confidence: float')
+    program_manager.register_program("question_answering", qa_program)
+
+    # Sentiment analysis
+    sentiment_program = dspy.ChainOfThought('text -> sentiment: str, score: float')
+    program_manager.register_program("sentiment_analysis", sentiment_program)
+
+@app.post("/classify", response_model=TextClassificationResponse)
+async def classify_text(
+    request: TextClassificationRequest,
+    background_tasks: BackgroundTasks,
+    _: dict = Depends(verify_token),
+    __: None = Depends(check_rate_limit)
+):
+    """Classify text using DSPy"""
+
+    start_time = time.time()
+
+    try:
+        # Execute program
+        result = await program_manager.execute_program(
+            "text_classification",
+            {"text": request.text}
+        )
+
+        processing_time = time.time() - start_time
+
+        # Log request (in background)
+        background_tasks.add_task(
+            log_request,
+            "classify",
+            request.request_id,
+            {"text_length": len(request.text)},
+            processing_time
+        )
+
+        return TextClassificationResponse(
+            request_id=request.request_id,
+            result=result["result"],
+            processing_time=processing_time,
+            timestamp=datetime.utcnow(),
+            cached=result.get("cached", False),
+            predicted_class=result["result"].predicted_class,
+            confidence=result["result"].confidence if request.include_confidence else None
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error=str(e),
+                error_type=type(e).__name__,
+                request_id=request.request_id,
+                timestamp=datetime.utcnow()
+            ).dict()
+        )
+
+@app.post("/qa", response_model=QAResponse)
+async def answer_question(
+    request: QARequest,
+    background_tasks: BackgroundTasks,
+    _: dict = Depends(verify_token),
+    __: None = Depends(check_rate_limit)
+):
+    """Answer questions using DSPy"""
+
+    start_time = time.time()
+
+    try:
+        # Prepare inputs
+        inputs = {"question": request.question}
+        if request.context:
+            inputs["context"] = request.context
+
+        # Execute program
+        result = await program_manager.execute_program(
+            "question_answering",
+            inputs
+        )
+
+        processing_time = time.time() - start_time
+
+        # Log request
+        background_tasks.add_task(
+            log_request,
+            "qa",
+            request.request_id,
+            {"question_length": len(request.question)},
+            processing_time
+        )
+
+        return QAResponse(
+            request_id=request.request_id,
+            result=result["result"],
+            processing_time=processing_time,
+            timestamp=datetime.utcnow(),
+            cached=result.get("cached", False),
+            answer=result["result"].answer,
+            confidence=result["result"].confidence
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error=str(e),
+                error_type=type(e).__name__,
+                request_id=request.request_id,
+                timestamp=datetime.utcnow()
+            ).dict()
+        )
+
+# Batch processing endpoints
+@app.post("/batch/classify")
+async def batch_classify(
+    requests: List[TextClassificationRequest],
+    background_tasks: BackgroundTasks,
+    _: dict = Depends(verify_token)
+):
+    """Batch text classification"""
+
+    if len(requests) > 100:  # Limit batch size
+        raise HTTPException(status_code=400, detail="Batch size too large (max 100)")
+
+    start_time = time.time()
+    results = []
+
+    for req in requests:
+        try:
+            result = await program_manager.execute_program(
+                "text_classification",
+                {"text": req.text}
+            )
+
+            results.append({
+                "request_id": req.request_id,
+                "success": True,
+                "predicted_class": result["result"].predicted_class,
+                "confidence": result["result"].confidence,
+                "cached": result.get("cached", False)
+            })
+
+        except Exception as e:
+            results.append({
+                "request_id": req.request_id,
+                "success": False,
+                "error": str(e)
+            })
+
+    processing_time = time.time() - start_time
+
+    # Log batch request
+    background_tasks.add_task(
+        log_request,
+        "batch_classify",
+        "batch_" + str(uuid.uuid4()),
+        {"batch_size": len(requests)},
+        processing_time
+    )
+
+    return {
+        "results": results,
+        "total_processed": len(requests),
+        "processing_time": processing_time,
+        "timestamp": datetime.utcnow()
+    }
+
+# WebSocket for real-time interactions
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket, client_id: str):
+    """WebSocket endpoint for real-time DSPy interactions"""
+    await websocket.accept()
+
+    try:
+        while True:
+            # Receive data
+            data = await websocket.receive_json()
+
+            # Validate request
+            if "program" not in data or "inputs" not in data:
+                await websocket.send_json({
+                    "error": "Invalid request format"
+                })
+                continue
+
+            # Execute program
+            try:
+                result = await program_manager.execute_program(
+                    data["program"],
+                    data["inputs"]
+                )
+
+                await websocket.send_json({
+                    "success": True,
+                    "result": program_manager._serialize_result(result["result"]),
+                    "cached": result.get("cached", False)
+                })
+
+            except Exception as e:
+                await websocket.send_json({
+                    "success": False,
+                    "error": str(e)
+                })
+
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+
+# Health and monitoring endpoints
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+
+    # Check DSPy configuration
+    dspy_status = "ok" if dspy.settings.lm else "error"
+
+    # Check cache
+    cache_status = "ok"
+    try:
+        if isinstance(program_manager.cache, redis.Redis):
+            program_manager.cache.ping()
+    except:
+        cache_status = "error"
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow(),
+        "services": {
+            "dspy": dspy_status,
+            "cache": cache_status,
+            "programs": len(program_manager.programs)
+        }
+    }
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get API metrics"""
+    return {
+        "programs": program_manager.get_program_info(),
+        "uptime": datetime.utcnow(),  # Would track actual uptime in production
+        "cache_stats": {
+            "type": "redis" if isinstance(program_manager.cache, redis.Redis) else "memory",
+            "enabled": program_manager.cache is not None
+        }
+    }
+
+@app.get("/programs")
+async def list_programs():
+    """List available DSPy programs"""
+    return program_manager.get_program_info()
+
+# Utility functions
+async def log_request(endpoint: str, request_id: str, metadata: Dict, processing_time: float):
+    """Log request for monitoring (implement your logging logic)"""
+    log_entry = {
+        "endpoint": endpoint,
+        "request_id": request_id,
+        "processing_time": processing_time,
+        "timestamp": datetime.utcnow().isoformat(),
+        "metadata": metadata
+    }
+
+    # Log to your preferred system (e.g., file, database, monitoring service)
+    logging.info(f"API Request: {json.dumps(log_entry)}")
+
+# Custom exception handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Custom HTTP exception handler"""
+    return {
+        "error": exc.detail,
+        "status_code": exc.status_code,
+        "timestamp": datetime.utcnow(),
+        "path": str(request.url)
+    }
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """General exception handler"""
+    logging.error(f"Unhandled exception: {str(exc)}")
+
+    return HTTPException(
+        status_code=500,
+        detail={
+            "error": "Internal server error",
+            "type": type(exc).__name__,
+            "timestamp": datetime.utcnow(),
+            "path": str(request.url)
+        }
+    )
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
+```
+
+## Advanced Integration Patterns
+
+### Async DSPy Programs
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import functools
+
+class AsyncDSPyWrapper:
+    """Wrapper to make DSPy programs async-compatible"""
+
+    def __init__(self, program: dspy.Module, max_workers: int = 10):
+        self.program = program
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    async def __call__(self, **kwargs):
+        """Execute DSPy program asynchronously"""
+        loop = asyncio.get_event_loop()
+
+        # Run in thread pool to avoid blocking
+        result = await loop.run_in_executor(
+            self.executor,
+            functools.partial(self.program, **kwargs)
+        )
+
+        return result
+
+    async def batch_execute(self, requests: List[Dict]) -> List[Any]:
+        """Execute multiple requests concurrently"""
+
+        # Create tasks for concurrent execution
+        tasks = [
+            self(**request) for request in requests
+        ]
+
+        # Execute concurrently with proper error handling
+        results = []
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+                results.append({"success": True, "result": result})
+            except Exception as e:
+                results.append({"success": False, "error": str(e)})
+
+        return results
+
+# Usage with FastAPI
+async_qa_program = AsyncDSPyWrapper(
+    dspy.ChainOfThought('question, context -> answer')
+)
+
+@app.post("/async/qa")
+async def async_question_answering(request: QARequest):
+    """Asynchronous question answering"""
+
+    try:
+        result = await async_qa_program(
+            question=request.question,
+            context=request.context or ""
+        )
+
+        return {
+            "request_id": request.request_id,
+            "answer": result.answer,
+            "timestamp": datetime.utcnow()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### Model Versioning and A/B Testing
+
+```python
+from enum import Enum
+import random
+
+class ModelVersion(Enum):
+    V1 = "v1.0"
+    V2 = "v2.0"
+    LATEST = "latest"
+
+class ModelRegistry:
+    """Manage multiple DSPy model versions"""
+
+    def __init__(self):
+        self.models = {}
+        self.ab_tests = {}
+        self.default_version = ModelVersion.LATEST
+
+    def register_model(self, name: str, version: ModelVersion, program: dspy.Module):
+        """Register a model version"""
+        if name not in self.models:
+            self.models[name] = {}
+
+        self.models[name][version.value] = program
+
+    def setup_ab_test(self, model_name: str, version_a: ModelVersion, version_b: ModelVersion, traffic_split: float = 0.5):
+        """Setup A/B test between model versions"""
+        self.ab_tests[model_name] = {
+            "version_a": version_a.value,
+            "version_b": version_b.value,
+            "traffic_split": traffic_split
+        }
+
+    def get_model(self, name: str, user_id: str = None) -> dspy.Module:
+        """Get model version based on A/B test configuration"""
+
+        if name not in self.models:
+            raise ValueError(f"Model {name} not found")
+
+        # Check if A/B test is configured
+        if name in self.ab_tests:
+            test_config = self.ab_tests[name]
+
+            # Determine version based on user hash (consistent assignment)
+            if user_id:
+                hash_value = hash(user_id) % 100
+                use_version_a = hash_value < (test_config["traffic_split"] * 100)
+            else:
+                use_version_a = random.random() < test_config["traffic_split"]
+
+            version = test_config["version_a"] if use_version_a else test_config["version_b"]
+        else:
+            version = self.default_version.value
+
+        return self.models[name][version]
+
+# Enhanced FastAPI with model versioning
+model_registry = ModelRegistry()
+
+@app.post("/qa/versioned")
+async def versioned_qa(
+    request: QARequest,
+    user_id: Optional[str] = None
+):
+    """QA with model versioning"""
+
+    try:
+        # Get appropriate model version
+        qa_model = model_registry.get_model("qa", user_id)
+
+        # Execute
+        result = qa_model(question=request.question, context=request.context or "")
+
+        return {
+            "request_id": request.request_id,
+            "answer": result.answer,
+            "model_version": "determined_by_ab_test",  # Could track actual version used
+            "timestamp": datetime.utcnow()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### Streaming Responses
+
+```python
+from fastapi.responses import StreamingResponse
+import json
+
+class StreamingDSPyProgram:
+    """DSPy program that yields intermediate results"""
+
+    def __init__(self, program: dspy.Module):
+        self.program = program
+
+    async def stream_execute(self, **kwargs):
+        """Execute program and stream intermediate results"""
+
+        yield f"data: {json.dumps({'status': 'started', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+
+        try:
+            # Start processing
+            yield f"data: {json.dumps({'status': 'processing', 'message': 'Analyzing input...'})}\n\n"
+
+            # Execute program (in real implementation, you'd stream actual intermediate results)
+            result = self.program(**kwargs)
+
+            # Stream result
+            yield f"data: {json.dumps({'status': 'completed', 'result': result.__dict__ if hasattr(result, '__dict__') else str(result)})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'error': str(e)})}\n\n"
+
+@app.post("/stream/qa")
+async def stream_qa(request: QARequest):
+    """Streaming question answering"""
+
+    streaming_program = StreamingDSPyProgram(
+        dspy.ChainOfThought('question, context -> answer')
+    )
+
+    return StreamingResponse(
+        streaming_program.stream_execute(
+            question=request.question,
+            context=request.context or ""
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
+```
+
+## Production Deployment Patterns
+
+### Docker Configuration
+
+```dockerfile
+# Dockerfile for DSPy FastAPI app
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Run application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+```
+
+```yaml
+# docker-compose.yml for full stack
+version: "3.8"
+
+services:
+  dspy-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - dspy-api
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+```
+
+### Kubernetes Deployment
+
+```yaml
+# k8s-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dspy-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: dspy-api
+  template:
+    metadata:
+      labels:
+        app: dspy-api
+    spec:
+      containers:
+        - name: dspy-api
+          image: your-registry/dspy-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dspy-secrets
+                  key: openai-api-key
+            - name: REDIS_URL
+              value: "redis://redis-service:6379"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dspy-api-service
+spec:
+  selector:
+    app: dspy-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dspy-secrets
+type: Opaque
+data:
+  openai-api-key: <base64-encoded-api-key>
+```
+
+### Monitoring and Observability
+
+```python
+import time
+from prometheus_client import Counter, Histogram, Gauge, generate_latest
+from fastapi import Response
+
+# Prometheus metrics
+request_count = Counter(
+    'dspy_api_requests_total',
+    'Total API requests',
+    ['method', 'endpoint', 'status']
+)
+
+request_duration = Histogram(
+    'dspy_api_request_duration_seconds',
+    'Request duration in seconds',
+    ['method', 'endpoint']
+)
+
+active_connections = Gauge(
+    'dspy_api_active_connections',
+    'Active connections'
+)
+
+program_executions = Counter(
+    'dspy_program_executions_total',
+    'Total DSPy program executions',
+    ['program_name', 'status']
+)
+
+# Middleware for metrics collection
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Collect metrics for all requests"""
+
+    start_time = time.time()
+    active_connections.inc()
+
+    try:
+        response = await call_next(request)
+
+        # Record metrics
+        duration = time.time() - start_time
+        request_duration.labels(
+            method=request.method,
+            endpoint=request.url.path
+        ).observe(duration)
+
+        request_count.labels(
+            method=request.method,
+            endpoint=request.url.path,
+            status=response.status_code
+        ).inc()
+
+        return response
+
+    finally:
+        active_connections.dec()
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint"""
+    return Response(generate_latest(), media_type="text/plain")
+
+# Enhanced program manager with metrics
+class MetricsDSPyProgramManager(DSPyProgramManager):
+    """Program manager with metrics collection"""
+
+    async def execute_program(self, program_name: str, inputs: Dict[str, Any], **kwargs):
+        """Execute program with metrics"""
+
+        try:
+            result = await super().execute_program(program_name, inputs, **kwargs)
+
+            program_executions.labels(
+                program_name=program_name,
+                status="success"
+            ).inc()
+
+            return result
+
+        except Exception as e:
+            program_executions.labels(
+                program_name=program_name,
+                status="error"
+            ).inc()
+            raise
+```
+
+## Speed Tips
+
+- **Async Processing**: Use async/await for non-blocking operations
+- **Connection Pooling**: Reuse database and API connections
+- **Response Caching**: Cache expensive DSPy program results
+- **Request Batching**: Process multiple requests together when possible
+- **Model Loading**: Load DSPy models once at startup, not per request
+- **Thread Pool**: Use thread pools for CPU-intensive DSPy operations
+- **Streaming**: Stream large responses to improve perceived performance
+- **CDN Integration**: Use CDN for static assets and cacheable responses
+
+## Common Pitfalls
+
+- **Blocking Operations**: Don't run DSPy programs in the main thread
+- **Memory Leaks**: Properly cleanup DSPy models and caches
+- **Rate Limiting**: Implement proper rate limiting for API endpoints
+- **Error Handling**: Handle DSPy exceptions gracefully with proper error responses
+- **Security**: Validate all inputs and implement proper authentication
+- **Monitoring**: Monitor performance and error rates in production
+- **Resource Management**: Properly manage memory and CPU resources
+- **Configuration**: Externalize configuration and secrets properly
+
+## Best Practices Summary
+
+- **Async Design**: Use async/await patterns throughout the application
+- **Error Handling**: Implement comprehensive error handling and logging
+- **Caching Strategy**: Cache expensive operations at multiple levels
+- **Security**: Implement proper authentication, authorization, and input validation
+- **Monitoring**: Comprehensive metrics, logging, and health checks
+- **Scalability**: Design for horizontal scaling with proper load balancing
+- **Documentation**: Comprehensive API documentation with examples
+- **Testing**: Thorough testing including unit, integration, and load tests
+
+## References
+
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [DSPy Production Guide](https://dspy.ai/docs/tutorials/deployment/)
+- [Uvicorn Deployment](https://www.uvicorn.org/deployment/)
+- [Docker Best Practices](https://docs.docker.com/develop/best-practices/)
+- [Kubernetes Deployment Guide](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)

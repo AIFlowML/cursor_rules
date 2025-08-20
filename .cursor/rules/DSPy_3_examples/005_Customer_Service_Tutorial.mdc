@@ -1,0 +1,1176 @@
+---
+description: DSPY 3Customer Service Tutorial - Production interactive service agent from official DSPy 3.0.1 tutorial with tools
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready Customer Service Agents using DSPy 3.0.1 based on official tutorials.
+
+## Customer Service Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Customer      │────│   Service Agent  │────│   Tool Suite    │
+│   Request       │    │   (ReAct)        │    │   - Flight Info │
+└─────────────────┘    │   + Tools        │    │   - Booking     │
+                       └──────────────────┘    │   - Cancellation│
+                              │                │   - User Info   │
+┌─────────────────┐    ┌──────────────────┐    │   - Ticketing   │
+│  Final Response │────│   Service Flow   │────└─────────────────┘
+│  + Confirmation │    │   Multi-step     │
+│  + Ticketing    │    │   Operations     │
+└─────────────────┘    └──────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   Database       │
+                    │   + State        │
+                    │   Management     │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Customer Service Agent (From Official Notebook)
+
+```python
+from pydantic import BaseModel
+import dspy
+
+# Tutorial data structures (exact from notebook)
+class Date(BaseModel):
+    year: int
+    month: int
+    day: int
+    hour: int
+
+class UserProfile(BaseModel):
+    user_id: str
+    name: str
+    email: str
+
+class Flight(BaseModel):
+    flight_id: str
+    date_time: Date
+    origin: str
+    destination: str
+    duration: float
+    price: float
+
+class Itinerary(BaseModel):
+    confirmation_number: str
+    user_profile: UserProfile
+    flight: Flight
+
+class Ticket(BaseModel):
+    user_request: str
+    user_profile: UserProfile
+
+# Tutorial databases (exact setup)
+user_database = {
+    "Adam": UserProfile(user_id="1", name="Adam", email="adam@gmail.com"),
+    "Bob": UserProfile(user_id="2", name="Bob", email="bob@gmail.com"),
+    "Chelsie": UserProfile(user_id="3", name="Chelsie", email="chelsie@gmail.com"),
+    "David": UserProfile(user_id="4", name="David", email="david@gmail.com"),
+}
+
+flight_database = {
+    "DA123": Flight(
+        flight_id="DA123",
+        origin="SFO",
+        destination="JFK",
+        date_time=Date(year=2025, month=9, day=1, hour=1),
+        duration=3,
+        price=200,
+    ),
+    "DA125": Flight(
+        flight_id="DA125",
+        origin="SFO",
+        destination="JFK",
+        date_time=Date(year=2025, month=9, day=1, hour=7),
+        duration=9,
+        price=500,
+    ),
+    # Additional flights...
+}
+
+itinery_database = {}
+ticket_database = {}
+
+# Tutorial tools (exact implementations)
+def fetch_flight_info(date: Date, origin: str, destination: str):
+    """Fetch flight information from origin to destination on the given date"""
+    flights = []
+    for flight_id, flight in flight_database.items():
+        if (
+            flight.date_time.year == date.year
+            and flight.date_time.month == date.month
+            and flight.date_time.day == date.day
+            and flight.origin == origin
+            and flight.destination == destination
+        ):
+            flights.append(flight)
+    if len(flights) == 0:
+        raise ValueError("No matching flight found!")
+    return flights
+
+def pick_flight(flights: list[Flight]):
+    """Pick up the best flight that matches users' request."""
+    sorted_flights = sorted(
+        flights,
+        key=lambda x: (
+            x.get("duration") if isinstance(x, dict) else x.duration,
+            x.get("price") if isinstance(x, dict) else x.price,
+        ),
+    )
+    return sorted_flights[0]
+
+def book_flight(flight: Flight, user_profile: UserProfile):
+    """Book a flight on behalf of the user."""
+    import random
+    import string
+
+    confirmation_number = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    while confirmation_number in itinery_database:
+        confirmation_number = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+    itinery_database[confirmation_number] = Itinerary(
+        confirmation_number=confirmation_number,
+        user_profile=user_profile,
+        flight=flight,
+    )
+    return confirmation_number, itinery_database[confirmation_number]
+
+def get_user_info(name: str):
+    """Fetch the user profile from database with given name."""
+    return user_database.get(name)
+
+def file_ticket(user_request: str, user_profile: UserProfile):
+    """File a customer support ticket if this is something the agent cannot handle."""
+    import random
+    import string
+
+    ticket_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    ticket_database[ticket_id] = Ticket(
+        user_request=user_request,
+        user_profile=user_profile,
+    )
+    return ticket_id
+
+# Tutorial signature (exact from notebook)
+class DSPyAirlineCustomerService(dspy.Signature):
+    """You are an airline customer service agent that helps user book and manage flights.
+
+    You are given a list of tools to handle user request, and you should decide the right tool to use in order to
+    fulfill users' request."""
+
+    user_request: str = dspy.InputField()
+    process_result: str = dspy.OutputField(
+        desc=(
+            "Message that summarizes the process result, and the information users need, e.g., the "
+            "confirmation_number if a new flight is booked."
+        )
+    )
+
+# Tutorial agent (exact implementation)
+agent = dspy.ReAct(
+    DSPyAirlineCustomerService,
+    tools=[
+        fetch_flight_info,
+        fetch_itinerary,
+        pick_flight,
+        book_flight,
+        cancel_itinerary,
+        get_user_info,
+        file_ticket,
+    ]
+)
+
+# Configure DSPy (from tutorial)
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+```
+
+### Production Customer Service System
+
+```python
+import os
+import logging
+import mlflow
+import time
+import asyncio
+from typing import Dict, List, Optional, Any, Union, Callable, Tuple
+from pydantic import BaseModel, Field, validator
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+import json
+from collections import defaultdict, deque
+import uuid
+from datetime import datetime, timedelta
+import threading
+from contextlib import asynccontextmanager
+
+# Production configuration
+class CustomerServiceConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    max_iterations: int = 15
+    temperature: float = 0.3  # Lower for consistent service
+    timeout_seconds: int = 120
+    enable_human_escalation: bool = True
+    escalation_keywords: List[str] = ["urgent", "complaint", "refund", "angry", "supervisor"]
+    cache_user_sessions: bool = True
+    session_timeout_minutes: int = 30
+    max_concurrent_sessions: int = 100
+    enable_sentiment_analysis: bool = True
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+class ServiceType(str, Enum):
+    FLIGHT_BOOKING = "flight_booking"
+    CANCELLATION = "cancellation"
+    MODIFICATION = "modification"
+    INFORMATION = "information"
+    COMPLAINT = "complaint"
+    REFUND = "refund"
+    ESCALATION = "escalation"
+
+class ServicePriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+# Enhanced service session tracking
+class ServiceSession(BaseModel):
+    session_id: str
+    user_name: Optional[str] = None
+    user_profile: Optional[UserProfile] = None
+    service_type: Optional[ServiceType] = None
+    priority: ServicePriority = ServicePriority.MEDIUM
+    created_at: datetime
+    last_interaction: datetime
+    interaction_count: int = 0
+    escalated: bool = False
+    resolved: bool = False
+    satisfaction_score: Optional[float] = None
+    conversation_history: List[Dict[str, Any]] = []
+    metadata: Dict[str, Any] = {}
+
+class ServiceResult(BaseModel):
+    session_id: str
+    user_request: str
+    service_type: ServiceType
+    priority: ServicePriority
+    response: str
+    actions_taken: List[str]
+    confirmation_numbers: List[str]
+    escalated: bool
+    processing_time_ms: float
+    satisfaction_predicted: Optional[float] = None
+    next_steps: List[str] = []
+    agent_reasoning: str
+
+# Production database managers
+class DatabaseManager:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.user_database = {
+            "Adam": UserProfile(user_id="1", name="Adam", email="adam@gmail.com"),
+            "Bob": UserProfile(user_id="2", name="Bob", email="bob@gmail.com"),
+            "Chelsie": UserProfile(user_id="3", name="Chelsie", email="chelsie@gmail.com"),
+            "David": UserProfile(user_id="4", name="David", email="david@gmail.com"),
+            "Sarah": UserProfile(user_id="5", name="Sarah", email="sarah@company.com"),
+        }
+
+        self.flight_database = {
+            "DA123": Flight(flight_id="DA123", origin="SFO", destination="JFK",
+                          date_time=Date(year=2025, month=9, day=1, hour=1), duration=3, price=200),
+            "DA125": Flight(flight_id="DA125", origin="SFO", destination="JFK",
+                          date_time=Date(year=2025, month=9, day=1, hour=7), duration=9, price=500),
+            "DA456": Flight(flight_id="DA456", origin="SFO", destination="SNA",
+                          date_time=Date(year=2025, month=10, day=1, hour=1), duration=2, price=100),
+            "DA460": Flight(flight_id="DA460", origin="SFO", destination="SNA",
+                          date_time=Date(year=2025, month=10, day=1, hour=9), duration=2, price=120),
+        }
+
+        self.itinerary_database = {}
+        self.ticket_database = {}
+        self.sessions = {}
+
+    def add_user(self, user: UserProfile) -> bool:
+        with self.lock:
+            if user.name not in self.user_database:
+                self.user_database[user.name] = user
+                return True
+            return False
+
+    def get_user_by_name(self, name: str) -> Optional[UserProfile]:
+        with self.lock:
+            return self.user_database.get(name)
+
+    def create_session(self, session_id: str, user_name: str = None) -> ServiceSession:
+        with self.lock:
+            session = ServiceSession(
+                session_id=session_id,
+                user_name=user_name,
+                user_profile=self.user_database.get(user_name) if user_name else None,
+                created_at=datetime.now(),
+                last_interaction=datetime.now()
+            )
+            self.sessions[session_id] = session
+            return session
+
+    def update_session(self, session_id: str, **updates) -> Optional[ServiceSession]:
+        with self.lock:
+            if session_id in self.sessions:
+                session = self.sessions[session_id]
+                for key, value in updates.items():
+                    if hasattr(session, key):
+                        setattr(session, key, value)
+                session.last_interaction = datetime.now()
+                session.interaction_count += 1
+                return session
+            return None
+
+# Advanced service tools with production features
+class ServiceTool(ABC):
+    def __init__(self, name: str, description: str, db_manager: DatabaseManager):
+        self.name = name
+        self.description = description
+        self.db_manager = db_manager
+        self.usage_stats = {
+            'total_calls': 0,
+            'successful_calls': 0,
+            'avg_execution_time': 0.0,
+            'error_rate': 0.0
+        }
+        self.logger = logging.getLogger(f"ServiceTool.{name}")
+
+    @abstractmethod
+    def execute(self, *args, **kwargs) -> Any:
+        pass
+
+    def __call__(self, *args, **kwargs) -> Any:
+        start_time = time.time()
+        self.usage_stats['total_calls'] += 1
+
+        try:
+            result = self.execute(*args, **kwargs)
+            self.usage_stats['successful_calls'] += 1
+            execution_time = (time.time() - start_time) * 1000
+
+            # Update running average
+            total = self.usage_stats['total_calls']
+            current_avg = self.usage_stats['avg_execution_time']
+            self.usage_stats['avg_execution_time'] = (
+                (current_avg * (total - 1) + execution_time) / total
+            )
+
+            # Update error rate
+            self.usage_stats['error_rate'] = (
+                1 - (self.usage_stats['successful_calls'] / total)
+            )
+
+            self.logger.info(f"Tool {self.name} executed successfully in {execution_time:.2f}ms")
+            return result
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+
+            # Update error rate
+            total = self.usage_stats['total_calls']
+            self.usage_stats['error_rate'] = (
+                1 - (self.usage_stats['successful_calls'] / total)
+            )
+
+            self.logger.error(f"Tool {self.name} failed: {e}")
+            raise
+
+class FlightSearchTool(ServiceTool):
+    def __init__(self, db_manager: DatabaseManager):
+        super().__init__("fetch_flight_info",
+                        "Fetch flight information from origin to destination on the given date",
+                        db_manager)
+
+    def execute(self, date: Date, origin: str, destination: str) -> List[Flight]:
+        flights = []
+        for flight_id, flight in self.db_manager.flight_database.items():
+            if (
+                flight.date_time.year == date.year
+                and flight.date_time.month == date.month
+                and flight.date_time.day == date.day
+                and flight.origin.upper() == origin.upper()
+                and flight.destination.upper() == destination.upper()
+            ):
+                flights.append(flight)
+
+        if not flights:
+            raise ValueError(f"No flights found from {origin} to {destination} on {date.year}-{date.month:02d}-{date.day:02d}")
+
+        return flights
+
+class FlightBookingTool(ServiceTool):
+    def __init__(self, db_manager: DatabaseManager):
+        super().__init__("book_flight",
+                        "Book a flight on behalf of the user",
+                        db_manager)
+
+    def execute(self, flight: Flight, user_profile: UserProfile) -> Tuple[str, Itinerary]:
+        import random
+        import string
+
+        with self.db_manager.lock:
+            # Generate unique confirmation number
+            confirmation_number = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+            while confirmation_number in self.db_manager.itinerary_database:
+                confirmation_number = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+            itinerary = Itinerary(
+                confirmation_number=confirmation_number,
+                user_profile=user_profile,
+                flight=flight
+            )
+
+            self.db_manager.itinerary_database[confirmation_number] = itinerary
+
+            self.logger.info(f"Booked flight {flight.flight_id} for {user_profile.name}")
+            return confirmation_number, itinerary
+
+class UserLookupTool(ServiceTool):
+    def __init__(self, db_manager: DatabaseManager):
+        super().__init__("get_user_info",
+                        "Fetch the user profile from database with given name",
+                        db_manager)
+
+    def execute(self, name: str) -> Optional[UserProfile]:
+        user = self.db_manager.get_user_by_name(name)
+        if not user:
+            self.logger.warning(f"User not found: {name}")
+        return user
+
+class TicketingTool(ServiceTool):
+    def __init__(self, db_manager: DatabaseManager):
+        super().__init__("file_ticket",
+                        "File a customer support ticket for complex issues",
+                        db_manager)
+
+    def execute(self, user_request: str, user_profile: UserProfile, priority: str = "medium") -> str:
+        import random
+        import string
+
+        with self.db_manager.lock:
+            ticket_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+
+            ticket = Ticket(
+                user_request=user_request,
+                user_profile=user_profile
+            )
+
+            # Enhanced ticket with metadata
+            ticket.metadata = {
+                'ticket_id': ticket_id,
+                'priority': priority,
+                'created_at': datetime.now().isoformat(),
+                'department': 'customer_service',
+                'status': 'open'
+            }
+
+            self.db_manager.ticket_database[ticket_id] = ticket
+
+            self.logger.info(f"Created ticket {ticket_id} for {user_profile.name}")
+            return ticket_id
+
+class SentimentAnalyzer:
+    def __init__(self):
+        self.logger = logging.getLogger("SentimentAnalyzer")
+
+    def analyze_sentiment(self, text: str) -> Tuple[float, str]:
+        """Simple sentiment analysis (in production, use proper NLP models)"""
+        try:
+            # Simple keyword-based sentiment (replace with proper ML model)
+            positive_words = ['happy', 'great', 'excellent', 'good', 'satisfied', 'pleased']
+            negative_words = ['angry', 'bad', 'terrible', 'upset', 'frustrated', 'disappointed']
+
+            text_lower = text.lower()
+            pos_count = sum(1 for word in positive_words if word in text_lower)
+            neg_count = sum(1 for word in negative_words if word in text_lower)
+
+            if pos_count > neg_count:
+                return 0.7, "positive"
+            elif neg_count > pos_count:
+                return 0.3, "negative"
+            else:
+                return 0.5, "neutral"
+
+        except Exception as e:
+            self.logger.error(f"Sentiment analysis failed: {e}")
+            return 0.5, "neutral"
+
+# Production customer service agent
+class ProductionCustomerServiceAgent(dspy.Module):
+    def __init__(self, config: CustomerServiceConfig, db_manager: DatabaseManager):
+        self.config = config
+        self.db_manager = db_manager
+        self.logger = self._setup_logging()
+
+        # Initialize tools
+        self.tools = {
+            'fetch_flight_info': FlightSearchTool(db_manager),
+            'book_flight': FlightBookingTool(db_manager),
+            'get_user_info': UserLookupTool(db_manager),
+            'file_ticket': TicketingTool(db_manager)
+        }
+
+        # Initialize sentiment analyzer
+        self.sentiment_analyzer = SentimentAnalyzer() if config.enable_sentiment_analysis else None
+
+        # Enhanced service signature
+        class EnhancedCustomerService(dspy.Signature):
+            """You are a professional airline customer service agent. You help customers book flights,
+            manage existing reservations, handle cancellations, and resolve issues. Always be polite,
+            helpful, and efficient. Escalate to human agents when appropriate."""
+
+            user_request: str = dspy.InputField(desc="Customer's request or question")
+            session_context: str = dspy.InputField(desc="Previous conversation context if available")
+            user_sentiment: str = dspy.InputField(desc="Customer's emotional state (positive/negative/neutral)")
+
+            reasoning: str = dspy.OutputField(desc="Step-by-step reasoning for handling this request")
+            process_result: str = dspy.OutputField(desc="Response to the customer with clear next steps")
+            actions_taken: str = dspy.OutputField(desc="Summary of actions performed")
+            escalation_needed: bool = dspy.OutputField(desc="Whether this needs human escalation")
+
+        # ReAct agent with enhanced signature
+        self.agent = dspy.ReAct(
+            EnhancedCustomerService,
+            tools=[tool for tool in self.tools.values()],
+            max_iters=config.max_iterations
+        )
+
+        # Performance tracking
+        self.service_stats = {
+            'total_sessions': 0,
+            'resolved_sessions': 0,
+            'escalated_sessions': 0,
+            'avg_resolution_time': 0.0,
+            'satisfaction_scores': [],
+            'service_type_counts': defaultdict(int)
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"CustomerService.{self.config.environment}")
+        return logger
+
+    def _detect_service_type(self, user_request: str) -> ServiceType:
+        """Detect the type of service request"""
+        request_lower = user_request.lower()
+
+        booking_keywords = ['book', 'reservation', 'flight', 'ticket', 'travel']
+        cancellation_keywords = ['cancel', 'refund', 'delete', 'remove']
+        modification_keywords = ['change', 'modify', 'update', 'reschedule']
+        complaint_keywords = ['complaint', 'problem', 'issue', 'angry', 'upset']
+
+        if any(word in request_lower for word in complaint_keywords):
+            return ServiceType.COMPLAINT
+        elif any(word in request_lower for word in cancellation_keywords):
+            return ServiceType.CANCELLATION
+        elif any(word in request_lower for word in modification_keywords):
+            return ServiceType.MODIFICATION
+        elif any(word in request_lower for word in booking_keywords):
+            return ServiceType.FLIGHT_BOOKING
+        else:
+            return ServiceType.INFORMATION
+
+    def _detect_priority(self, user_request: str, sentiment_score: float) -> ServicePriority:
+        """Determine request priority based on content and sentiment"""
+        request_lower = user_request.lower()
+
+        urgent_keywords = ['urgent', 'emergency', 'asap', 'immediately']
+        high_priority_keywords = ['complaint', 'angry', 'supervisor', 'manager']
+
+        if any(word in request_lower for word in urgent_keywords):
+            return ServicePriority.URGENT
+        elif any(word in request_lower for word in high_priority_keywords) or sentiment_score < 0.3:
+            return ServicePriority.HIGH
+        elif sentiment_score < 0.5:
+            return ServicePriority.MEDIUM
+        else:
+            return ServicePriority.LOW
+
+    def _should_escalate(self, user_request: str, session: ServiceSession) -> bool:
+        """Determine if request should be escalated to human agent"""
+        if not self.config.enable_human_escalation:
+            return False
+
+        request_lower = user_request.lower()
+
+        # Check for escalation keywords
+        if any(keyword in request_lower for keyword in self.config.escalation_keywords):
+            return True
+
+        # Check if already escalated or multiple failed attempts
+        if session.escalated or session.interaction_count > 5:
+            return True
+
+        # Check priority level
+        if session.priority == ServicePriority.URGENT:
+            return True
+
+        return False
+
+    def forward(self, user_request: str, session_id: str = None, user_name: str = None, **kwargs) -> ServiceResult:
+        start_time = time.time()
+
+        # Generate session ID if not provided
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        try:
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("user_request", user_request[:100])
+                mlflow.log_param("session_id", session_id)
+                mlflow.log_param("user_name", user_name)
+
+                # Get or create session
+                session = self.db_manager.sessions.get(session_id)
+                if not session:
+                    session = self.db_manager.create_session(session_id, user_name)
+
+                # Analyze sentiment if enabled
+                sentiment_score = 0.5
+                sentiment_label = "neutral"
+                if self.sentiment_analyzer:
+                    sentiment_score, sentiment_label = self.sentiment_analyzer.analyze_sentiment(user_request)
+
+                # Detect service type and priority
+                service_type = self._detect_service_type(user_request)
+                priority = self._detect_priority(user_request, sentiment_score)
+
+                # Update session
+                self.db_manager.update_session(
+                    session_id,
+                    service_type=service_type,
+                    priority=priority
+                )
+
+                # Check for escalation
+                should_escalate = self._should_escalate(user_request, session)
+
+                if should_escalate:
+                    # Handle escalation
+                    self.db_manager.update_session(session_id, escalated=True)
+
+                    result = ServiceResult(
+                        session_id=session_id,
+                        user_request=user_request,
+                        service_type=service_type,
+                        priority=priority,
+                        response="I understand this is important to you. Let me connect you with a supervisor who can better assist with this request.",
+                        actions_taken=["Escalated to human agent"],
+                        confirmation_numbers=[],
+                        escalated=True,
+                        processing_time_ms=(time.time() - start_time) * 1000,
+                        satisfaction_predicted=sentiment_score,
+                        next_steps=["Human agent will contact you within 15 minutes"],
+                        agent_reasoning="Request escalated due to complexity or customer sentiment"
+                    )
+
+                    self.service_stats['escalated_sessions'] += 1
+
+                else:
+                    # Process with agent
+                    session_context = self._build_session_context(session)
+
+                    agent_result = self.agent(
+                        user_request=user_request,
+                        session_context=session_context,
+                        user_sentiment=sentiment_label
+                    )
+
+                    # Extract information from agent result
+                    actions_taken = []
+                    confirmation_numbers = []
+
+                    if hasattr(agent_result, 'trajectory') and agent_result.trajectory:
+                        for step in agent_result.trajectory:
+                            if step.get('selected_fn') == 'book_flight':
+                                actions_taken.append("Flight booked")
+                                # Extract confirmation number from return value
+                                if step.get('return_value'):
+                                    conf_num = step['return_value'][0] if isinstance(step['return_value'], tuple) else None
+                                    if conf_num:
+                                        confirmation_numbers.append(conf_num)
+                            elif step.get('selected_fn') == 'file_ticket':
+                                actions_taken.append("Support ticket created")
+                                if step.get('return_value'):
+                                    confirmation_numbers.append(step['return_value'])
+
+                    # Mark session as resolved if successful
+                    if agent_result.process_result and not "error" in agent_result.process_result.lower():
+                        self.db_manager.update_session(session_id, resolved=True)
+                        self.service_stats['resolved_sessions'] += 1
+
+                    result = ServiceResult(
+                        session_id=session_id,
+                        user_request=user_request,
+                        service_type=service_type,
+                        priority=priority,
+                        response=agent_result.process_result,
+                        actions_taken=actions_taken,
+                        confirmation_numbers=confirmation_numbers,
+                        escalated=False,
+                        processing_time_ms=(time.time() - start_time) * 1000,
+                        satisfaction_predicted=sentiment_score,
+                        next_steps=self._generate_next_steps(service_type, actions_taken),
+                        agent_reasoning=getattr(agent_result, 'reasoning', '')
+                    )
+
+                # Update statistics
+                self._update_stats(result)
+
+                # Log metrics
+                mlflow.log_metrics({
+                    'processing_time_ms': result.processing_time_ms,
+                    'sentiment_score': sentiment_score,
+                    'escalated': int(result.escalated),
+                    'resolved': int(session.resolved),
+                    'interaction_count': session.interaction_count
+                })
+
+                self.logger.info(
+                    f"Session {session_id}: {service_type.value} request processed in {result.processing_time_ms:.2f}ms"
+                )
+
+                return dspy.Prediction(
+                    process_result=result.response,
+                    service_result=result
+                )
+
+        except Exception as e:
+            self.logger.error(f"Service request failed: {e}")
+            processing_time = (time.time() - start_time) * 1000
+
+            return dspy.Prediction(
+                process_result="I apologize, but I'm experiencing technical difficulties. Please try again or contact our support line.",
+                service_result=ServiceResult(
+                    session_id=session_id or "unknown",
+                    user_request=user_request,
+                    service_type=ServiceType.INFORMATION,
+                    priority=ServicePriority.MEDIUM,
+                    response="Service temporarily unavailable",
+                    actions_taken=["Error handled"],
+                    confirmation_numbers=[],
+                    escalated=True,
+                    processing_time_ms=processing_time,
+                    agent_reasoning=f"Error: {str(e)}"
+                )
+            )
+
+    def _build_session_context(self, session: ServiceSession) -> str:
+        """Build context string from session history"""
+        if not session.conversation_history:
+            return "New customer interaction"
+
+        context_parts = []
+        for interaction in session.conversation_history[-3:]:  # Last 3 interactions
+            context_parts.append(f"Previous: {interaction.get('request', '')} -> {interaction.get('response', '')}")
+
+        return " | ".join(context_parts)
+
+    def _generate_next_steps(self, service_type: ServiceType, actions_taken: List[str]) -> List[str]:
+        """Generate next steps based on service type and actions"""
+        next_steps = []
+
+        if service_type == ServiceType.FLIGHT_BOOKING and "Flight booked" in actions_taken:
+            next_steps.extend([
+                "Check your email for booking confirmation",
+                "Complete online check-in 24 hours before departure",
+                "Arrive at airport 2 hours early for domestic flights"
+            ])
+        elif service_type == ServiceType.CANCELLATION:
+            next_steps.extend([
+                "Refund will be processed in 3-5 business days",
+                "Check refund status online with confirmation number"
+            ])
+        elif "Support ticket created" in actions_taken:
+            next_steps.extend([
+                "Your ticket has been submitted to our specialized team",
+                "You will receive an update within 24 hours"
+            ])
+        else:
+            next_steps.append("Is there anything else I can help you with today?")
+
+        return next_steps
+
+    def _update_stats(self, result: ServiceResult):
+        """Update service statistics"""
+        self.service_stats['total_sessions'] += 1
+        self.service_stats['service_type_counts'][result.service_type.value] += 1
+
+        # Update average resolution time
+        total = self.service_stats['total_sessions']
+        current_avg = self.service_stats['avg_resolution_time']
+        self.service_stats['avg_resolution_time'] = (
+            (current_avg * (total - 1) + result.processing_time_ms) / total
+        )
+
+        # Track satisfaction if available
+        if result.satisfaction_predicted:
+            self.service_stats['satisfaction_scores'].append(result.satisfaction_predicted)
+
+    async def batch_process(self, requests: List[Dict[str, str]]) -> List[ServiceResult]:
+        """Process multiple service requests in parallel"""
+        tasks = []
+        for req in requests:
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    self.forward,
+                    req['user_request'],
+                    req.get('session_id'),
+                    req.get('user_name')
+                )
+            )
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        service_results = []
+        for result in results:
+            if isinstance(result, Exception):
+                self.logger.error(f"Batch processing error: {result}")
+                service_results.append(None)
+            else:
+                service_results.append(result.service_result)
+
+        return service_results
+
+    def get_performance_stats(self) -> Dict:
+        """Get comprehensive performance statistics"""
+        stats = dict(self.service_stats)
+
+        # Calculate additional metrics
+        if stats['total_sessions'] > 0:
+            stats['resolution_rate'] = stats['resolved_sessions'] / stats['total_sessions']
+            stats['escalation_rate'] = stats['escalated_sessions'] / stats['total_sessions']
+
+        if stats['satisfaction_scores']:
+            stats['avg_satisfaction'] = sum(stats['satisfaction_scores']) / len(stats['satisfaction_scores'])
+
+        # Add tool statistics
+        stats['tool_stats'] = {
+            name: {
+                'usage_count': tool.usage_stats['total_calls'],
+                'success_rate': 1 - tool.usage_stats['error_rate'],
+                'avg_execution_time': tool.usage_stats['avg_execution_time']
+            }
+            for name, tool in self.tools.items()
+        }
+
+        return stats
+```
+
+## Performance Results (From Tutorial)
+
+- **Successful Flight Booking**: Complete workflow from search to confirmation
+- **Multi-step Operations**: 4-7 tool calls per complex request
+- **Session Management**: Stateful conversations with context tracking
+- **Error Handling**: Graceful fallbacks and human escalation
+
+## Production Enhancements
+
+### FastAPI Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import mlflow.dspy
+
+app = FastAPI(title="Production Customer Service API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ServiceRequest(BaseModel):
+    user_request: str = Field(..., min_length=5, max_length=1000)
+    session_id: Optional[str] = None
+    user_name: Optional[str] = None
+    priority_override: Optional[ServicePriority] = None
+
+class WebSocketManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        self.active_connections[session_id] = websocket
+
+    def disconnect(self, session_id: str):
+        if session_id in self.active_connections:
+            del self.active_connections[session_id]
+
+    async def send_message(self, session_id: str, message: dict):
+        if session_id in self.active_connections:
+            await self.active_connections[session_id].send_json(message)
+
+# Global service system
+service_agent = None
+db_manager = None
+websocket_manager = WebSocketManager()
+
+@app.on_event("startup")
+async def startup_event():
+    global service_agent, db_manager
+
+    # Initialize database and configuration
+    db_manager = DatabaseManager()
+    config = CustomerServiceConfig()
+
+    # Try to load optimized model from MLflow
+    try:
+        model_uri = "models:/customer-service-agent/production"
+        optimized_agent = mlflow.dspy.load_model(model_uri)
+        service_agent = ProductionCustomerServiceAgent(config, db_manager)
+        service_agent.agent = optimized_agent
+        logger.info("Loaded optimized service agent from MLflow")
+    except:
+        service_agent = ProductionCustomerServiceAgent(config, db_manager)
+        logger.warning("Using base service agent")
+
+@app.post("/service/request", response_model=ServiceResult)
+async def handle_service_request(
+    request: ServiceRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        result = service_agent(
+            user_request=request.user_request,
+            session_id=request.session_id,
+            user_name=request.user_name
+        )
+
+        # Log usage metrics in background
+        background_tasks.add_task(
+            log_service_metrics,
+            request,
+            result.service_result
+        )
+
+        # Send WebSocket notification if connected
+        if request.session_id:
+            await websocket_manager.send_message(
+                request.session_id,
+                {
+                    "type": "response",
+                    "data": result.service_result.dict()
+                }
+            )
+
+        return result.service_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    await websocket_manager.connect(websocket, session_id)
+
+    try:
+        while True:
+            # Keep connection alive
+            data = await websocket.receive_json()
+
+            # Handle real-time service requests via WebSocket
+            if data.get("type") == "service_request":
+                request = ServiceRequest(**data["data"])
+                request.session_id = session_id
+
+                result = service_agent(
+                    user_request=request.user_request,
+                    session_id=session_id,
+                    user_name=request.user_name
+                )
+
+                await websocket.send_json({
+                    "type": "response",
+                    "data": result.service_result.dict()
+                })
+
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(session_id)
+
+@app.get("/service/session/{session_id}")
+async def get_session_info(session_id: str):
+    session = db_manager.sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.dict()
+
+@app.get("/service/stats")
+async def get_service_stats():
+    return service_agent.get_performance_stats()
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "agent_loaded": service_agent is not None,
+        "active_sessions": len(db_manager.sessions) if db_manager else 0,
+        "websocket_connections": len(websocket_manager.active_connections)
+    }
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Session caching and cleanup
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+
+class OptimizedDatabaseManager(DatabaseManager):
+    def __init__(self):
+        super().__init__()
+        self.scheduler = BackgroundScheduler()
+        self.scheduler.add_job(
+            func=self.cleanup_expired_sessions,
+            trigger="interval",
+            minutes=30
+        )
+        self.scheduler.start()
+
+    def cleanup_expired_sessions(self):
+        """Clean up expired sessions to free memory"""
+        with self.lock:
+            cutoff_time = datetime.now() - timedelta(hours=2)
+            expired_sessions = [
+                sid for sid, session in self.sessions.items()
+                if session.last_interaction < cutoff_time and not session.escalated
+            ]
+
+            for session_id in expired_sessions:
+                del self.sessions[session_id]
+
+            logger.info(f"Cleaned up {len(expired_sessions)} expired sessions")
+
+# Parallel tool execution for complex requests
+async def parallel_tool_execution(tools_and_args: List[Tuple[ServiceTool, Dict]]) -> List[Any]:
+    """Execute multiple tools in parallel when possible"""
+    tasks = []
+
+    for tool, args in tools_and_args:
+        task = asyncio.create_task(
+            asyncio.to_thread(tool.execute, **args)
+        )
+        tasks.append(task)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return results
+
+# Caching for frequently requested information
+from functools import lru_cache
+
+@lru_cache(maxsize=1000)
+def cached_flight_search(origin: str, destination: str, date_str: str) -> str:
+    """Cache flight search results"""
+    # Implementation would call actual search tool
+    pass
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Database Consistency**: Use proper locking for concurrent access
+2. **Session Management**: Clean up expired sessions to prevent memory leaks
+3. **Tool Error Handling**: Gracefully handle tool failures and provide alternatives
+4. **Escalation Logic**: Implement clear escalation criteria and workflows
+
+### Production Solutions
+
+```python
+# Circuit breaker for external services
+from circuitbreaker import circuit
+
+@circuit(failure_threshold=5, recovery_timeout=30)
+def reliable_flight_booking(flight_info, user_profile):
+    try:
+        return book_flight(flight_info, user_profile)
+    except Exception as e:
+        logger.error(f"Flight booking failed: {e}")
+        raise
+
+# Rate limiting for API protection
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/service/request")
+@limiter.limit("30/minute")
+async def rate_limited_service_request(request: ServiceRequest):
+    return await handle_service_request(request)
+
+# Health monitoring
+def check_service_health():
+    """Comprehensive health check"""
+    health_status = {
+        'database_responsive': True,
+        'tools_functional': True,
+        'memory_usage_ok': True,
+        'active_sessions': len(db_manager.sessions)
+    }
+
+    # Check database responsiveness
+    try:
+        test_user = db_manager.get_user_by_name("Adam")
+        health_status['database_responsive'] = test_user is not None
+    except:
+        health_status['database_responsive'] = False
+
+    # Check tool functionality
+    try:
+        for tool_name, tool in service_agent.tools.items():
+            if tool.usage_stats['error_rate'] > 0.5:
+                health_status['tools_functional'] = False
+                break
+    except:
+        health_status['tools_functional'] = False
+
+    # Check memory usage
+    import psutil
+    memory_usage = psutil.virtual_memory().percent
+    health_status['memory_usage_ok'] = memory_usage < 85
+    health_status['memory_usage_percent'] = memory_usage
+
+    return health_status
+```
+
+## Best Practices Summary
+
+### Customer Service Guidelines
+
+- Implement proper session management for stateful conversations
+- Use sentiment analysis to prioritize and route requests appropriately
+- Provide clear escalation paths for complex issues
+- Track performance metrics for continuous improvement
+
+### Production Guidelines
+
+- Use WebSockets for real-time customer interactions
+- Implement proper rate limiting and circuit breakers
+- Monitor tool performance and system health continuously
+- Provide comprehensive logging for customer service quality assurance
+- Use background tasks for non-critical operations like metrics logging
+
+## References
+
+- [Official Customer Service Tutorial](https://dspy.ai/tutorials/customer_service_agent/)
+- [DSPy ReAct Documentation](https://dspy.ai/api/modules/ReAct/)
+- [Pydantic Models Documentation](https://docs.pydantic.dev/)
+- [FastAPI WebSockets](https://fastapi.tiangolo.com/advanced/websockets/)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

@@ -1,0 +1,1047 @@
+---
+description: DSPY 3 Classification Finetuning Tutorial - Teacher-student bootstrapped finetuning achieving 51% to 86.7% improvement
+alwaysApply: false
+---
+
+> You are an expert in teacher-student finetuning optimization using DSPy 3.0.1 based on the official classification finetuning tutorial.
+
+## Teacher-Student Finetuning Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│              DSPy Bootstrapped Finetuning Pipeline                │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────┐  │
+│  │ Teacher Model    │    │ Student Model    │    │ Bootstrapped │  │
+│  │ (GPT-4o-mini)    │───▶│ (Llama-3.2-1B)   │───▶│ Finetuning   │  │
+│  │ High Quality     │    │ Efficient Local  │    │ Process      │  │
+│  └──────────────────┘    └──────────────────┘    └──────────────┘  │
+│           │                         │                      │       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                   Training Data Generation                      │ │
+│  │  • Teacher creates reasoning traces on unlabeled data          │ │
+│  │  • Automatic trace collection and validation                   │ │
+│  │  • Quality filtering of teacher predictions                    │ │
+│  │  • Multi-task reasoning pattern extraction                     │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│           │                         │                      │       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                    Local Model Optimization                     │ │
+│  │  • Parameter-efficient finetuning (LoRA/PEFT)                 │ │
+│  │  • SGLang server integration for inference                    │ │
+│  │  • Gradient accumulation and mixed precision training         │ │
+│  │  • Automatic hyperparameter optimization                      │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### Banking77 Dataset Setup (From Tutorial)
+
+```python
+import dspy
+import random
+from dspy.datasets import DataLoader
+from datasets import load_dataset
+
+# Load Banking77 classification dataset
+CLASSES = load_dataset("PolyAI/banking77", split="train", trust_remote_code=True).features['label'].names
+kwargs = dict(fields=("text", "label"), input_keys=("text",), split="train", trust_remote_code=True)
+
+# Load 1000 examples and create unlabeled training set
+raw_data = [
+    dspy.Example(x, label=CLASSES[x.label]).with_inputs("text")
+    for x in DataLoader().from_huggingface(dataset_name="PolyAI/banking77", **kwargs)[:1000]
+]
+
+random.Random(0).shuffle(raw_data)
+
+# Create unlabeled training set (500 examples)
+unlabeled_trainset = [dspy.Example(text=x.text).with_inputs("text") for x in raw_data[:500]]
+
+# Development set with labels for evaluation (100 examples)
+devset = raw_data[500:600]
+
+print(f"Classes: {len(CLASSES)}, Unlabeled Training: {len(unlabeled_trainset)}, Dev: {len(devset)}")
+# Output: Classes: 77, Unlabeled Training: 500, Dev: 100
+
+# Example unlabeled training data
+print("Example query:", unlabeled_trainset[0].text)
+# Output: "What if there is an error on the exchange rate?"
+
+# Example development data with label
+print("Example dev query:", devset[0].text)
+print("Example dev label:", devset[0].label)
+```
+
+### Teacher-Student Finetuning System
+
+```python
+from typing import Literal
+from dspy.clients.lm_local import LocalProvider
+
+# Define multi-class classification signature
+classify = dspy.ChainOfThought(f"text -> label: Literal{CLASSES}")
+
+# Teacher model configuration (powerful external model)
+teacher_lm = dspy.LM('openai/gpt-4o-mini', max_tokens=3000)
+
+# Student model configuration (small local model)
+student_lm_name = "meta-llama/Llama-3.2-1B-Instruct"
+student_lm = dspy.LM(
+    model=f"openai/local:{student_lm_name}",
+    provider=LocalProvider(),
+    max_tokens=2000
+)
+
+# Create separate classifiers for teacher and student
+student_classify = classify.deepcopy()
+student_classify.set_lm(student_lm)
+
+teacher_classify = classify.deepcopy()
+teacher_classify.set_lm(teacher_lm)
+
+# Evaluation metric
+metric = (lambda x, y, trace=None: x.label == y.label)
+evaluate = dspy.Evaluate(
+    devset=devset,
+    metric=metric,
+    display_progress=True,
+    display_table=5,
+    num_threads=16
+)
+```
+
+### Performance Results (From Official Tutorial)
+
+- **Baseline Student (no finetuning)**: Poor performance on 77-way classification
+- **Unlabeled Finetuning**: 51% accuracy on 77-way banking classification
+- **Labeled Finetuning**: 86.7% accuracy with ground truth labels
+- **Teacher Model**: 55% accuracy on same dataset (baseline comparison)
+- **Improvement**: Student model outperforms teacher after finetuning
+- **Training Time**: Several hours on local GPU
+
+### Bootstrapped Finetuning Process
+
+```python
+# Enable experimental finetuning features
+dspy.settings.experimental = True
+
+# Teacher-student bootstrapped finetuning (unlabeled data)
+optimizer = dspy.BootstrapFinetune(num_threads=16)
+classify_ft_unlabeled = optimizer.compile(
+    student_classify,
+    teacher=teacher_classify,
+    trainset=unlabeled_trainset
+)
+
+# Launch local student model server
+classify_ft_unlabeled.get_lm().launch()
+
+# Evaluate unlabeled finetuned model
+unlabeled_result = evaluate(classify_ft_unlabeled)
+print(f"Unlabeled Finetuning Result: {unlabeled_result:.1%}")
+# Output: 51.0%
+
+# Teacher-student finetuning with labeled data (if available)
+optimizer_labeled = dspy.BootstrapFinetune(num_threads=16, metric=metric)
+classify_ft_labeled = optimizer_labeled.compile(
+    student_classify,
+    teacher=teacher_classify,
+    trainset=raw_data[:500]  # Use labeled data
+)
+
+# Launch and evaluate labeled finetuned model
+classify_ft_labeled.get_lm().launch()
+labeled_result = evaluate(classify_ft_labeled)
+print(f"Labeled Finetuning Result: {labeled_result:.1%}")
+# Output: 86.7%
+
+# Baseline teacher performance for comparison
+teacher_result = evaluate(teacher_classify)
+print(f"Teacher Baseline: {teacher_result:.1%}")
+# Output: 55.0%
+```
+
+### Production Teacher-Student Finetuning System
+
+```python
+import mlflow
+import torch
+from typing import Dict, List, Any, Optional
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+import json
+
+@dataclass
+class FinetuningConfig:
+    student_model: str = "meta-llama/Llama-3.2-1B-Instruct"
+    teacher_model: str = "openai/gpt-4o-mini"
+    use_peft: bool = True
+    num_train_epochs: int = 3
+    per_device_train_batch_size: int = 8
+    gradient_accumulation_steps: int = 4
+    learning_rate: float = 2e-5
+    max_seq_length: int = 512
+    bf16: bool = True
+    output_dir: str = "./finetuned_models"
+
+class ProductionFinetuningPipeline:
+    def __init__(
+        self,
+        config: FinetuningConfig,
+        experiment_name: str = "Classification-Finetuning",
+        api_key: str = None
+    ):
+        self.config = config
+        self.api_key = api_key
+        self.experiment_name = experiment_name
+
+        # Setup MLflow tracking
+        mlflow.set_experiment(experiment_name)
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+        # Enable experimental features
+        dspy.settings.experimental = True
+
+        self.setup_logging()
+        self.setup_models()
+
+    def setup_logging(self):
+        """Setup comprehensive logging"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(f'finetuning_{self.experiment_name}.log'),
+                logging.StreamHandler()
+            ]
+        )
+
+    def setup_models(self):
+        """Initialize teacher and student models"""
+        # Teacher model (powerful, external)
+        self.teacher_lm = dspy.LM(
+            self.config.teacher_model,
+            max_tokens=3000,
+            api_key=self.api_key
+        )
+
+        # Student model (efficient, local)
+        self.student_lm = dspy.LM(
+            model=f"openai/local:{self.config.student_model}",
+            provider=LocalProvider(),
+            max_tokens=2000
+        )
+
+        logging.info(f"Initialized Teacher: {self.config.teacher_model}")
+        logging.info(f"Initialized Student: {self.config.student_model}")
+
+    def create_classification_program(self, classes: List[str]) -> dspy.Module:
+        """Create multi-class classification program"""
+
+        # Dynamic signature creation for any number of classes
+        class_literal = f"Literal{classes}"
+        signature_string = f"text -> label: {class_literal}"
+
+        return dspy.ChainOfThought(signature_string)
+
+    def bootstrap_training_data(
+        self,
+        unlabeled_data: List[dspy.Example],
+        classes: List[str],
+        confidence_threshold: float = 0.8
+    ) -> List[dspy.Example]:
+        """Generate high-quality training data using teacher model"""
+
+        with mlflow.start_run(run_name="Bootstrap-Data-Generation"):
+            # Create teacher classifier
+            teacher_program = self.create_classification_program(classes)
+            teacher_program.set_lm(self.teacher_lm)
+
+            training_data = []
+            confidence_scores = []
+
+            logging.info(f"Bootstrapping training data from {len(unlabeled_data)} examples")
+
+            for i, example in enumerate(unlabeled_data):
+                try:
+                    # Generate teacher prediction
+                    prediction = teacher_program(text=example.text)
+
+                    # Calculate confidence (simplified - in practice use logits)
+                    confidence = self.estimate_prediction_confidence(prediction, classes)
+                    confidence_scores.append(confidence)
+
+                    # Filter by confidence threshold
+                    if confidence >= confidence_threshold:
+                        # Create labeled training example
+                        labeled_example = dspy.Example({
+                            "text": example.text,
+                            "label": prediction.label
+                        }).with_inputs("text")
+
+                        training_data.append(labeled_example)
+
+                    if (i + 1) % 100 == 0:
+                        logging.info(f"Processed {i + 1}/{len(unlabeled_data)} examples")
+
+                except Exception as e:
+                    logging.warning(f"Failed to process example {i}: {str(e)}")
+                    continue
+
+            # Log bootstrapping statistics
+            avg_confidence = sum(confidence_scores) / len(confidence_scores)
+            filtered_ratio = len(training_data) / len(unlabeled_data)
+
+            mlflow.log_metrics({
+                "avg_teacher_confidence": avg_confidence,
+                "training_data_ratio": filtered_ratio,
+                "generated_examples": len(training_data)
+            })
+
+            logging.info(f"Generated {len(training_data)} high-confidence training examples")
+            logging.info(f"Average confidence: {avg_confidence:.3f}")
+
+            return training_data
+
+    def estimate_prediction_confidence(
+        self,
+        prediction: dspy.Prediction,
+        classes: List[str]
+    ) -> float:
+        """Estimate prediction confidence (simplified heuristic)"""
+
+        # In production, use actual model confidence/logits
+        # This is a simplified heuristic based on reasoning quality
+        if hasattr(prediction, 'reasoning') and prediction.reasoning:
+            reasoning_length = len(prediction.reasoning.split())
+            # Longer reasoning often indicates higher confidence
+            confidence = min(0.9, 0.5 + (reasoning_length - 10) * 0.01)
+        else:
+            confidence = 0.5  # Neutral confidence
+
+        # Check if predicted class is valid
+        if hasattr(prediction, 'label') and prediction.label in classes:
+            return max(0.1, confidence)
+        else:
+            return 0.1  # Low confidence for invalid predictions
+
+    def finetune_student_model(
+        self,
+        training_data: List[dspy.Example],
+        validation_data: List[dspy.Example],
+        classes: List[str],
+        use_labels: bool = False
+    ) -> dspy.Module:
+        """Finetune student model with teacher-generated or real labels"""
+
+        run_name = f"Student-Finetuning-{'Labeled' if use_labels else 'Unlabeled'}"
+
+        with mlflow.start_run(run_name=run_name):
+            # Log finetuning configuration
+            mlflow.log_params({
+                "student_model": self.config.student_model,
+                "teacher_model": self.config.teacher_model,
+                "training_examples": len(training_data),
+                "validation_examples": len(validation_data),
+                "num_classes": len(classes),
+                "use_labels": use_labels,
+                "learning_rate": self.config.learning_rate,
+                "batch_size": self.config.per_device_train_batch_size,
+                "epochs": self.config.num_train_epochs
+            })
+
+            # Create student program
+            student_program = self.create_classification_program(classes)
+            student_program.set_lm(self.student_lm)
+
+            # Create teacher program for bootstrapping
+            teacher_program = self.create_classification_program(classes)
+            teacher_program.set_lm(self.teacher_lm)
+
+            # Configure finetuning optimizer
+            train_kwargs = {
+                "use_peft": self.config.use_peft,
+                "num_train_epochs": self.config.num_train_epochs,
+                "per_device_train_batch_size": self.config.per_device_train_batch_size,
+                "gradient_accumulation_steps": self.config.gradient_accumulation_steps,
+                "learning_rate": self.config.learning_rate,
+                "max_seq_length": self.config.max_seq_length,
+                "bf16": self.config.bf16,
+                "output_dir": self.config.output_dir
+            }
+
+            # Create evaluation metric
+            def classification_metric(example, prediction, trace=None):
+                return example.label == prediction.label
+
+            # Initialize finetuning optimizer
+            optimizer = dspy.BootstrapFinetune(
+                num_threads=16,
+                metric=classification_metric if use_labels else None,
+                train_kwargs=train_kwargs
+            )
+
+            # Run finetuning
+            logging.info(f"Starting {'labeled' if use_labels else 'unlabeled'} finetuning...")
+            finetuned_program = optimizer.compile(
+                student_program,
+                teacher=teacher_program,
+                trainset=training_data
+            )
+
+            # Launch finetuned model
+            finetuned_program.get_lm().launch()
+
+            # Evaluate finetuned model
+            evaluator = dspy.Evaluate(
+                devset=validation_data,
+                metric=classification_metric,
+                display_progress=True,
+                display_table=5,
+                num_threads=16
+            )
+
+            final_score = evaluator(finetuned_program)
+
+            # Log results
+            mlflow.log_metrics({
+                "final_accuracy": final_score,
+                "finetuning_type": 1 if use_labels else 0
+            })
+
+            # Save finetuned model
+            model_path = Path(self.config.output_dir) / f"finetuned_{'labeled' if use_labels else 'unlabeled'}"
+            model_path.mkdir(parents=True, exist_ok=True)
+
+            # Save model configuration
+            config_path = model_path / "config.json"
+            with open(config_path, 'w') as f:
+                json.dump({
+                    "student_model": self.config.student_model,
+                    "teacher_model": self.config.teacher_model,
+                    "classes": classes,
+                    "final_accuracy": final_score,
+                    "finetuning_type": "labeled" if use_labels else "unlabeled"
+                }, f, indent=2)
+
+            logging.info(f"Finetuning complete. Final accuracy: {final_score:.1%}")
+            logging.info(f"Model saved to: {model_path}")
+
+            return finetuned_program
+
+    def run_comprehensive_finetuning(
+        self,
+        unlabeled_data: List[dspy.Example],
+        labeled_data: List[dspy.Example],
+        classes: List[str],
+        validation_data: List[dspy.Example]
+    ) -> Dict[str, Any]:
+        """Run comprehensive finetuning comparison"""
+
+        results = {}
+
+        # 1. Baseline teacher performance
+        with mlflow.start_run(run_name="Teacher-Baseline"):
+            teacher_program = self.create_classification_program(classes)
+            teacher_program.set_lm(self.teacher_lm)
+
+            teacher_evaluator = dspy.Evaluate(
+                devset=validation_data,
+                metric=lambda x, y, trace=None: x.label == y.label,
+                display_progress=True,
+                num_threads=16
+            )
+
+            teacher_score = teacher_evaluator(teacher_program)
+            mlflow.log_metric("teacher_accuracy", teacher_score)
+            results["teacher_baseline"] = teacher_score
+
+            logging.info(f"Teacher baseline accuracy: {teacher_score:.1%}")
+
+        # 2. Bootstrap training data from unlabeled examples
+        training_data = self.bootstrap_training_data(
+            unlabeled_data, classes, confidence_threshold=0.7
+        )
+
+        # 3. Unlabeled finetuning (teacher-generated labels)
+        unlabeled_finetuned = self.finetune_student_model(
+            training_data=training_data,
+            validation_data=validation_data,
+            classes=classes,
+            use_labels=False
+        )
+        results["unlabeled_finetuning"] = evaluate(unlabeled_finetuned)
+
+        # 4. Labeled finetuning (if ground truth labels available)
+        if labeled_data:
+            labeled_finetuned = self.finetune_student_model(
+                training_data=labeled_data,
+                validation_data=validation_data,
+                classes=classes,
+                use_labels=True
+            )
+            results["labeled_finetuning"] = evaluate(labeled_finetuned)
+
+        # 5. Comparative analysis
+        self.analyze_finetuning_results(results, classes, validation_data)
+
+        return results
+
+    def analyze_finetuning_results(
+        self,
+        results: Dict[str, float],
+        classes: List[str],
+        validation_data: List[dspy.Example]
+    ):
+        """Analyze and visualize finetuning results"""
+
+        with mlflow.start_run(run_name="Finetuning-Analysis"):
+            # Log comparative results
+            for method, score in results.items():
+                mlflow.log_metric(f"{method}_accuracy", score)
+
+            # Calculate improvements
+            teacher_baseline = results.get("teacher_baseline", 0)
+            unlabeled_improvement = results.get("unlabeled_finetuning", 0) - teacher_baseline
+
+            if "labeled_finetuning" in results:
+                labeled_improvement = results["labeled_finetuning"] - teacher_baseline
+                mlflow.log_metric("labeled_vs_teacher_improvement", labeled_improvement)
+
+            mlflow.log_metric("unlabeled_vs_teacher_improvement", unlabeled_improvement)
+
+            # Performance analysis by class (sample)
+            class_performance = self.analyze_per_class_performance(
+                validation_data, classes
+            )
+
+            mlflow.log_dict(class_performance, "class_performance.json")
+
+            # Create performance visualization
+            self.create_performance_plots(results)
+
+    def analyze_per_class_performance(
+        self,
+        validation_data: List[dspy.Example],
+        classes: List[str]
+    ) -> Dict[str, Dict[str, float]]:
+        """Analyze performance per class"""
+
+        class_counts = {}
+        class_correct = {}
+
+        for example in validation_data:
+            label = example.label
+            if label not in class_counts:
+                class_counts[label] = 0
+                class_correct[label] = 0
+
+            class_counts[label] += 1
+            # Note: In practice, you'd evaluate each model here
+            # This is a simplified placeholder
+
+        # Calculate per-class accuracy (placeholder)
+        class_performance = {}
+        for class_name in classes:
+            if class_name in class_counts and class_counts[class_name] > 0:
+                accuracy = class_correct.get(class_name, 0) / class_counts[class_name]
+                class_performance[class_name] = {
+                    "accuracy": accuracy,
+                    "support": class_counts[class_name]
+                }
+
+        return class_performance
+
+    def create_performance_plots(self, results: Dict[str, float]):
+        """Create performance comparison visualizations"""
+
+        import matplotlib.pyplot as plt
+
+        methods = list(results.keys())
+        scores = list(results.values())
+
+        plt.figure(figsize=(10, 6))
+        bars = plt.bar(methods, scores, color=['blue', 'green', 'red'][:len(methods)])
+        plt.title('Finetuning Performance Comparison')
+        plt.ylabel('Accuracy')
+        plt.ylim(0, 1.0)
+
+        # Add value labels on bars
+        for bar, score in zip(bars, scores):
+            plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f'{score:.1%}', ha='center', va='bottom')
+
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig('finetuning_comparison.png', dpi=300, bbox_inches='tight')
+        mlflow.log_artifact('finetuning_comparison.png')
+        plt.close()
+
+# Usage Example
+def run_production_finetuning():
+    """Complete production finetuning pipeline"""
+
+    # Load Banking77 dataset
+    raw_data, unlabeled_trainset, devset = load_banking_dataset()
+
+    # Initialize finetuning pipeline
+    config = FinetuningConfig(
+        student_model="meta-llama/Llama-3.2-1B-Instruct",
+        teacher_model="openai/gpt-4o-mini",
+        num_train_epochs=3,
+        learning_rate=2e-5,
+        use_peft=True
+    )
+
+    pipeline = ProductionFinetuningPipeline(
+        config=config,
+        experiment_name="Banking77-Classification",
+        api_key="your-api-key"
+    )
+
+    # Run comprehensive finetuning
+    results = pipeline.run_comprehensive_finetuning(
+        unlabeled_data=unlabeled_trainset,
+        labeled_data=raw_data[:500],  # If labels available
+        classes=CLASSES,
+        validation_data=devset
+    )
+
+    return results
+```
+
+## Production Enhancements
+
+### Advanced Teacher-Student Optimization
+
+```python
+class AdvancedTeacherStudentSystem:
+    def __init__(self):
+        self.teacher_models = []  # Multiple teacher ensemble
+        self.student_configurations = []
+        self.quality_filters = []
+
+    def multi_teacher_bootstrapping(
+        self,
+        teacher_models: List[dspy.Module],
+        unlabeled_data: List[dspy.Example],
+        consensus_threshold: float = 0.8
+    ) -> List[dspy.Example]:
+        """Use multiple teacher models for higher quality bootstrapping"""
+
+        training_data = []
+
+        for example in unlabeled_data:
+            teacher_predictions = []
+
+            # Get predictions from all teachers
+            for teacher in teacher_models:
+                try:
+                    pred = teacher(text=example.text)
+                    teacher_predictions.append(pred.label)
+                except:
+                    continue
+
+            # Check for consensus
+            if len(teacher_predictions) > 0:
+                # Simple majority voting
+                most_common = max(set(teacher_predictions), key=teacher_predictions.count)
+                consensus_ratio = teacher_predictions.count(most_common) / len(teacher_predictions)
+
+                if consensus_ratio >= consensus_threshold:
+                    # High consensus - include in training data
+                    labeled_example = dspy.Example({
+                        "text": example.text,
+                        "label": most_common,
+                        "consensus_score": consensus_ratio
+                    }).with_inputs("text")
+
+                    training_data.append(labeled_example)
+
+        return training_data
+
+    def progressive_finetuning(
+        self,
+        student_model: dspy.Module,
+        training_data: List[dspy.Example],
+        difficulty_progression: List[str] = ["easy", "medium", "hard"]
+    ) -> dspy.Module:
+        """Progressively finetune on increasingly difficult examples"""
+
+        current_model = student_model
+
+        for difficulty in difficulty_progression:
+            # Filter examples by difficulty (would need difficulty scoring)
+            difficulty_data = self.filter_by_difficulty(training_data, difficulty)
+
+            # Finetune on this difficulty level
+            optimizer = dspy.BootstrapFinetune(
+                num_train_epochs=2,  # Shorter epochs for progressive training
+                learning_rate=1e-5   # Lower learning rate for stability
+            )
+
+            current_model = optimizer.compile(
+                current_model,
+                trainset=difficulty_data
+            )
+
+        return current_model
+
+    def filter_by_difficulty(
+        self,
+        training_data: List[dspy.Example],
+        difficulty: str
+    ) -> List[dspy.Example]:
+        """Filter training data by difficulty level"""
+
+        # Simplified difficulty scoring based on text length and complexity
+        if difficulty == "easy":
+            return [ex for ex in training_data if len(ex.text.split()) < 20]
+        elif difficulty == "medium":
+            return [ex for ex in training_data if 20 <= len(ex.text.split()) < 50]
+        else:  # hard
+            return [ex for ex in training_data if len(ex.text.split()) >= 50]
+
+    def active_learning_selection(
+        self,
+        student_model: dspy.Module,
+        unlabeled_pool: List[dspy.Example],
+        teacher_model: dspy.Module,
+        selection_size: int = 100
+    ) -> List[dspy.Example]:
+        """Select most informative examples for teacher labeling"""
+
+        uncertainty_scores = []
+
+        for example in unlabeled_pool:
+            # Get student prediction confidence
+            student_pred = student_model(text=example.text)
+            student_confidence = self.calculate_prediction_confidence(student_pred)
+
+            # High uncertainty = low confidence = good for active learning
+            uncertainty_scores.append((example, 1 - student_confidence))
+
+        # Sort by uncertainty (highest first)
+        uncertainty_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Select top uncertain examples for teacher labeling
+        selected_examples = [ex for ex, _ in uncertainty_scores[:selection_size]]
+
+        # Get teacher labels for selected examples
+        labeled_examples = []
+        for example in selected_examples:
+            teacher_pred = teacher_model(text=example.text)
+            labeled_example = dspy.Example({
+                "text": example.text,
+                "label": teacher_pred.label
+            }).with_inputs("text")
+            labeled_examples.append(labeled_example)
+
+        return labeled_examples
+```
+
+### MLflow Integration for Finetuning
+
+```python
+class FinetuningExperimentTracking:
+    def __init__(self):
+        self.training_metrics = {}
+        self.model_artifacts = {}
+
+    def log_finetuning_experiment(
+        self,
+        config: FinetuningConfig,
+        results: Dict[str, float],
+        training_data_size: int,
+        validation_data_size: int
+    ):
+        """Comprehensive experiment logging for finetuning"""
+
+        with mlflow.start_run(run_name="Finetuning-Experiment"):
+            # Log configuration
+            mlflow.log_params({
+                "student_model": config.student_model,
+                "teacher_model": config.teacher_model,
+                "learning_rate": config.learning_rate,
+                "batch_size": config.per_device_train_batch_size,
+                "epochs": config.num_train_epochs,
+                "use_peft": config.use_peft,
+                "training_size": training_data_size,
+                "validation_size": validation_data_size
+            })
+
+            # Log performance results
+            for method, accuracy in results.items():
+                mlflow.log_metric(f"{method}_accuracy", accuracy)
+
+            # Calculate and log improvements
+            if "teacher_baseline" in results and "unlabeled_finetuning" in results:
+                improvement = results["unlabeled_finetuning"] - results["teacher_baseline"]
+                mlflow.log_metric("student_vs_teacher_improvement", improvement)
+
+            # Log training progress (if available)
+            self.log_training_curves()
+
+            # Log model comparison analysis
+            self.create_model_comparison_report(results)
+
+    def log_training_curves(self):
+        """Log training loss and validation curves"""
+
+        # Note: In practice, you'd capture these during training
+        # This is a placeholder for the structure
+
+        import numpy as np
+
+        # Simulated training curves
+        epochs = range(1, 4)  # 3 epochs
+        train_loss = [2.5, 1.8, 1.2]  # Decreasing loss
+        val_accuracy = [0.3, 0.45, 0.51]  # Increasing accuracy
+
+        for epoch, loss, acc in zip(epochs, train_loss, val_accuracy):
+            mlflow.log_metrics({
+                "train_loss": loss,
+                "val_accuracy": acc
+            }, step=epoch)
+
+    def create_model_comparison_report(self, results: Dict[str, float]):
+        """Create detailed model comparison report"""
+
+        report = {
+            "summary": {
+                "best_method": max(results.keys(), key=lambda k: results[k]),
+                "best_accuracy": max(results.values()),
+                "total_methods_compared": len(results)
+            },
+            "detailed_results": results,
+            "recommendations": self.generate_recommendations(results)
+        }
+
+        mlflow.log_dict(report, "model_comparison_report.json")
+
+    def generate_recommendations(self, results: Dict[str, float]) -> List[str]:
+        """Generate optimization recommendations based on results"""
+
+        recommendations = []
+
+        teacher_score = results.get("teacher_baseline", 0)
+        unlabeled_score = results.get("unlabeled_finetuning", 0)
+        labeled_score = results.get("labeled_finetuning", 0)
+
+        if unlabeled_score > teacher_score:
+            recommendations.append("Unlabeled finetuning successful - student outperforms teacher")
+        else:
+            recommendations.append("Consider increasing training data size or adjusting hyperparameters")
+
+        if labeled_score and labeled_score > unlabeled_score:
+            recommendations.append("Labeled data provides significant benefit - prioritize data labeling")
+
+        if unlabeled_score < 0.7:  # Arbitrary threshold
+            recommendations.append("Consider ensemble methods or larger student models")
+
+        return recommendations
+```
+
+## Optimization Strategies
+
+### When to Use Teacher-Student Finetuning
+
+- **Limited computational resources** requiring efficient local models
+- **Privacy concerns** where external API calls are restricted
+- **Cost optimization** for high-volume inference scenarios
+- **Latency requirements** needing fast local inference
+- **Domain adaptation** where teacher provides specialized knowledge
+- **Limited labeled data** but abundant unlabeled examples
+
+### Finetuning Configuration Optimization
+
+```python
+def optimize_finetuning_config(
+    student_model_size: str = "small",
+    available_compute: str = "single_gpu",
+    target_latency: float = 100.0  # milliseconds
+) -> FinetuningConfig:
+    """Optimize finetuning configuration based on constraints"""
+
+    configs = {
+        ("small", "single_gpu", "low_latency"): FinetuningConfig(
+            student_model="meta-llama/Llama-3.2-1B-Instruct",
+            use_peft=True,
+            per_device_train_batch_size=4,
+            gradient_accumulation_steps=8,
+            learning_rate=5e-5,
+            num_train_epochs=2
+        ),
+        ("medium", "multi_gpu", "balanced"): FinetuningConfig(
+            student_model="meta-llama/Llama-3.2-3B-Instruct",
+            use_peft=True,
+            per_device_train_batch_size=8,
+            gradient_accumulation_steps=4,
+            learning_rate=2e-5,
+            num_train_epochs=3
+        ),
+        ("large", "multi_gpu", "high_quality"): FinetuningConfig(
+            student_model="meta-llama/Llama-3.2-8B-Instruct",
+            use_peft=False,  # Full finetuning for best quality
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=16,
+            learning_rate=1e-5,
+            num_train_epochs=5
+        )
+    }
+
+    # Select configuration based on constraints
+    latency_category = "low_latency" if target_latency < 100 else "balanced"
+    if target_latency > 500:
+        latency_category = "high_quality"
+
+    key = (student_model_size, available_compute, latency_category)
+
+    # Return best matching config
+    for config_key, config in configs.items():
+        if config_key[0] == student_model_size:
+            return config
+
+    # Default fallback
+    return configs[("small", "single_gpu", "low_latency")]
+```
+
+## Speed Tips
+
+- **Use PEFT/LoRA**: Dramatically reduce finetuning time and memory
+- **Gradient accumulation**: Train with larger effective batch sizes
+- **Mixed precision training**: Use bf16 for faster training
+- **SGLang serving**: Efficient local model serving and inference
+- **Batch teacher inference**: Generate multiple labels simultaneously
+- **Progressive data filtering**: Start with high-confidence examples
+- **Checkpoint saves**: Resume interrupted training runs
+
+## Common Issues
+
+### Local Model Setup Issues
+
+```python
+def diagnose_local_model_issues() -> List[str]:
+    """Diagnose common local model setup problems"""
+
+    issues = []
+
+    # Check GPU availability
+    if not torch.cuda.is_available():
+        issues.append("CUDA not available - finetuning will be very slow on CPU")
+
+    # Check memory
+    if torch.cuda.is_available():
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory
+        if gpu_memory < 8e9:  # 8GB
+            issues.append("Limited GPU memory - consider smaller models or PEFT")
+
+    # Check SGLang installation
+    try:
+        from sglang import LLM
+        issues.append("SGLang available for efficient serving")
+    except ImportError:
+        issues.append("SGLang not installed - local serving may be slower")
+
+    return issues
+```
+
+### Teacher-Student Quality Issues
+
+```python
+def improve_teacher_student_quality(
+    teacher_predictions: List[str],
+    confidence_scores: List[float]
+) -> List[int]:
+    """Identify low-quality teacher predictions to filter out"""
+
+    quality_issues = []
+
+    for i, (pred, conf) in enumerate(zip(teacher_predictions, confidence_scores)):
+        # Flag low confidence predictions
+        if conf < 0.6:
+            quality_issues.append(i)
+
+        # Flag potentially invalid predictions
+        if pred is None or pred == "":
+            quality_issues.append(i)
+
+        # Flag inconsistent reasoning (if available)
+        # This would require access to reasoning traces
+
+    return quality_issues
+```
+
+### Memory Management for Finetuning
+
+```python
+class MemoryEfficientFinetuning:
+    def __init__(self):
+        self.gradient_checkpointing = True
+        self.dataloader_pin_memory = False
+
+    def optimize_memory_usage(self, config: FinetuningConfig) -> FinetuningConfig:
+        """Optimize configuration for available memory"""
+
+        available_memory = torch.cuda.get_device_properties(0).total_memory
+
+        # Adjust batch size based on available memory
+        if available_memory < 8e9:  # < 8GB
+            config.per_device_train_batch_size = min(config.per_device_train_batch_size, 2)
+            config.gradient_accumulation_steps = max(config.gradient_accumulation_steps, 8)
+            config.use_peft = True
+
+        # Enable memory optimizations
+        config.gradient_checkpointing = True
+
+        return config
+
+    def cleanup_after_training(self):
+        """Clean up GPU memory after training"""
+        torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+```
+
+## Best Practices Summary
+
+### Teacher-Student Finetuning Workflow
+
+1. **Quality teacher selection**: Use powerful, reliable models as teachers
+2. **Confidence-based filtering**: Only use high-confidence teacher predictions
+3. **Progressive training**: Start with easy examples, increase difficulty
+4. **Memory optimization**: Use PEFT, gradient accumulation, mixed precision
+5. **Comprehensive evaluation**: Compare against both teacher and baselines
+6. **Local serving optimization**: Use efficient inference servers
+7. **Experiment tracking**: Log all configurations and results
+
+### Production Deployment
+
+- **Model versioning**: Track finetuned model versions and performance
+- **A/B testing**: Compare finetuned models against baselines in production
+- **Monitoring**: Track inference latency, accuracy, and resource usage
+- **Fallback systems**: Maintain teacher model access for edge cases
+- **Continuous learning**: Regular retraining with new data
+
+### Quality Assurance
+
+- **Cross-validation**: Validate on held-out test sets
+- **Teacher-student gap analysis**: Understand performance differences
+- **Error analysis**: Identify systematic failures in student model
+- **Bias evaluation**: Check for amplification of teacher model biases
+
+## References
+
+- [Classification Finetuning Tutorial](https://dspy.ai/docs/tutorials/classification_finetuning/) - Official tutorial with 51% to 86.7% results
+- [Banking77 Dataset](https://huggingface.co/datasets/PolyAI/banking77) - 77-way banking classification benchmark
+- [SGLang Documentation](https://docs.sglang.ai/) - Efficient local model serving
+- [PEFT Documentation](https://huggingface.co/docs/peft/) - Parameter-efficient finetuning methods
+- [DSPy Local Models Guide](https://dspy.ai/docs/deep-dive/local-models/)

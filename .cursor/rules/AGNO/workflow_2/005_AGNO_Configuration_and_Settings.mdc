@@ -1,0 +1,910 @@
+---
+description: AGNO Workflows 2.0 - Master workflow configuration and settings for optimal performance  
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 configuration and settings. Master all configuration options for production-ready workflows.
+
+## Configuration Architecture Flow
+
+```
+Base Config → Storage Setup → Event Config → Session State → Advanced Settings
+     ↓             ↓            ↓             ↓               ↓
+Workflow Name   SQLite/Postgres  Event Store   Shared State   Background/Stream
+Description     Table Config     Filter Rules   Initialize     Timeout Config  
+     ↓             ↓            ↓             ↓               ↓
+Identity        Persistence    Debug/Audit   Cross-Step     Performance
+Established     Layer Ready    Capability    Data Flow      Optimization
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Configuration
+```python
+from agno.workflow.v2 import Workflow
+from agno.storage.sqlite import SqliteStorage
+
+# Minimal configuration
+workflow = Workflow(
+    name="Basic Workflow",
+    steps=[agent1, agent2]
+)
+
+# Basic configuration with storage
+workflow = Workflow(
+    name="Persistent Workflow",
+    description="Workflow with basic persistence",
+    steps=[researcher, analyzer],
+    storage=SqliteStorage(
+        table_name="workflows",
+        db_file="app.db",
+        mode="workflow_v2"
+    )
+)
+
+# Run with basic settings
+workflow.print_response("Analyze AI trends", markdown=True)
+```
+
+### Production Ready - Complete Configuration
+```python
+from agno.workflow.v2 import Workflow, Step
+from agno.storage.sqlite import SqliteStorage
+from agno.storage.postgres import PgStorage  
+from agno.run.v2.workflow import WorkflowRunEvent
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+import os
+
+# Production storage configuration
+production_storage = PgStorage(
+    table_name="production_workflows",
+    db_url=os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/agno"),
+    mode="workflow_v2",
+    debug=False
+)
+
+# Development storage configuration  
+development_storage = SqliteStorage(
+    table_name="dev_workflows",
+    db_file="tmp/dev_workflows.db",
+    mode="workflow_v2",
+    debug=True
+)
+
+# Advanced event filtering for production
+production_events_to_skip = [
+    WorkflowRunEvent.step_started,
+    WorkflowRunEvent.parallel_execution_started,
+    WorkflowRunEvent.condition_execution_started,
+    WorkflowRunEvent.loop_execution_started,
+    WorkflowRunEvent.router_execution_started,
+    WorkflowRunEvent.steps_execution_started,
+    # Keep completion events and errors for monitoring
+]
+
+# Development event configuration (store everything)
+development_events_to_skip = []  # Store all events for debugging
+
+# Session state initialization
+initial_session_state = {
+    "workflow_version": "2.0",
+    "environment": "production",
+    "created_at": "2024-01-01",
+    "user_preferences": {
+        "output_format": "markdown",
+        "detail_level": "comprehensive"
+    },
+    "tracking": {
+        "run_count": 0,
+        "last_successful_run": None
+    }
+}
+
+# Complete production workflow configuration
+production_workflow = Workflow(
+    name="Enterprise Content Pipeline",
+    description="Production-ready content creation workflow with full monitoring",
+    
+    # Core execution configuration
+    steps=[
+        Step(name="research", description="Comprehensive market research", team=research_team),
+        Step(name="analysis", description="Data analysis and insights", agent=analyst_agent),
+        Step(name="content", description="Content creation and formatting", agent=writer_agent),
+        Step(name="review", description="Quality assurance and validation", agent=reviewer_agent)
+    ],
+    
+    # Storage and persistence
+    storage=production_storage,
+    
+    # Event management 
+    store_events=True,
+    events_to_skip=production_events_to_skip,
+    
+    # Session state management
+    workflow_session_state=initial_session_state.copy()
+)
+
+# Development workflow configuration
+development_workflow = Workflow(
+    name="Dev Content Pipeline", 
+    description="Development workflow with full debugging",
+    
+    steps=[research_agent, analysis_agent, writer_agent],
+    
+    # Development storage
+    storage=development_storage,
+    
+    # Full event storage for debugging
+    store_events=True,
+    events_to_skip=development_events_to_skip,
+    
+    # Development session state
+    workflow_session_state={
+        "environment": "development",
+        "debug_mode": True,
+        "verbose_logging": True
+    }
+)
+
+# Configuration-aware execution
+def run_workflow_with_config(workflow, message, environment="production"):
+    """Execute workflow with environment-specific configuration"""
+    
+    additional_data = {
+        "environment": environment,
+        "execution_timestamp": datetime.now().isoformat(),
+        "config_version": "1.0"
+    }
+    
+    if environment == "development":
+        # Development execution with full streaming
+        return workflow.run(
+            message=message,
+            additional_data=additional_data,
+            stream=True,
+            stream_intermediate_steps=True
+        )
+    else:
+        # Production execution
+        return workflow.run(
+            message=message,
+            additional_data=additional_data,
+            markdown=True
+        )
+
+# Usage
+prod_response = run_workflow_with_config(
+    production_workflow,
+    "Analyze enterprise software market trends",
+    "production"
+)
+
+dev_response = run_workflow_with_config(
+    development_workflow, 
+    "Test market analysis workflow",
+    "development"
+)
+```
+
+## Storage Configuration
+
+### SQLite Configuration (Development/Small Scale)
+```python
+from agno.storage.sqlite import SqliteStorage
+import os
+
+# Basic SQLite setup
+basic_sqlite = SqliteStorage(
+    table_name="workflows",
+    db_file="workflows.db",
+    mode="workflow_v2"
+)
+
+# Advanced SQLite configuration
+advanced_sqlite = SqliteStorage(
+    table_name="advanced_workflows",
+    db_file="tmp/advanced_workflows.db", 
+    mode="workflow_v2",
+    debug=True,              # Enable debug logging
+    auto_upgrade_schema=True # Auto-upgrade database schema
+)
+
+# Environment-specific SQLite
+env_sqlite = SqliteStorage(
+    table_name=f"workflows_{os.getenv('ENV', 'dev')}",
+    db_file=f"db/{os.getenv('ENV', 'dev')}_workflows.db",
+    mode="workflow_v2"
+)
+
+# Multiple database configuration
+class MultiStorageConfig:
+    def __init__(self):
+        self.primary_storage = SqliteStorage(
+            table_name="primary_workflows",
+            db_file="primary.db",
+            mode="workflow_v2"
+        )
+        
+        self.audit_storage = SqliteStorage(
+            table_name="audit_workflows", 
+            db_file="audit.db",
+            mode="workflow_v2"
+        )
+        
+        self.test_storage = SqliteStorage(
+            table_name="test_workflows",
+            db_file=":memory:",  # In-memory for tests
+            mode="workflow_v2"
+        )
+    
+    def get_storage(self, environment):
+        storage_map = {
+            "production": self.primary_storage,
+            "audit": self.audit_storage,
+            "test": self.test_storage
+        }
+        return storage_map.get(environment, self.primary_storage)
+
+storage_config = MultiStorageConfig()
+```
+
+### PostgreSQL Configuration (Production Scale)
+```python
+from agno.storage.postgres import PgStorage
+import os
+
+# Basic PostgreSQL setup
+basic_postgres = PgStorage(
+    table_name="workflows",
+    db_url=os.getenv("DATABASE_URL"),
+    mode="workflow_v2"
+)
+
+# Production PostgreSQL configuration
+production_postgres = PgStorage(
+    table_name="production_workflows",
+    db_url=os.getenv("PROD_DATABASE_URL"),
+    mode="workflow_v2",
+    debug=False,
+    connection_pool_size=20,
+    max_overflow=30
+)
+
+# Multi-tenant PostgreSQL configuration
+def create_tenant_storage(tenant_id: str) -> PgStorage:
+    """Create tenant-specific storage configuration"""
+    return PgStorage(
+        table_name=f"workflows_{tenant_id}",
+        db_url=os.getenv("DATABASE_URL"),
+        mode="workflow_v2",
+        schema=f"tenant_{tenant_id}"  # Separate schema per tenant
+    )
+
+# Connection with SSL and advanced options
+secure_postgres = PgStorage(
+    table_name="secure_workflows",
+    db_url="postgresql://user:pass@host:5432/db?sslmode=require&sslcert=client.crt&sslkey=client.key&sslrootcert=ca.crt",
+    mode="workflow_v2",
+    debug=False
+)
+
+# Read replica configuration for analytics
+analytics_postgres = PgStorage(
+    table_name="workflows",
+    db_url=os.getenv("READ_REPLICA_URL"),
+    mode="workflow_v2",
+    read_only=True  # Read-only for analytics queries
+)
+```
+
+## Event Management Configuration
+
+### Event Storage Settings
+```python
+from agno.run.v2.workflow import WorkflowRunEvent
+
+# Store all events (debugging/audit)
+full_event_workflow = Workflow(
+    name="Full Event Logging",
+    steps=[agent1, agent2],
+    store_events=True,  # Store all events
+    events_to_skip=[]   # Don't skip any events
+)
+
+# Production event filtering (performance optimization)
+production_event_workflow = Workflow(
+    name="Production Optimized",
+    steps=[agent1, agent2],
+    store_events=True,
+    events_to_skip=[
+        # Skip verbose events for performance
+        WorkflowRunEvent.step_started,
+        WorkflowRunEvent.step_completed,
+        WorkflowRunEvent.parallel_execution_started,
+        WorkflowRunEvent.condition_execution_started,
+        WorkflowRunEvent.loop_iteration_started,
+        WorkflowRunEvent.router_execution_started,
+        # Keep important events
+        # WorkflowRunEvent.workflow_started,
+        # WorkflowRunEvent.workflow_completed, 
+        # WorkflowRunEvent.workflow_error,
+    ]
+)
+
+# Custom event filtering based on workflow type
+def get_event_config(workflow_type: str):
+    """Get event configuration based on workflow type"""
+    
+    event_configs = {
+        "debug": {
+            "store_events": True,
+            "events_to_skip": []  # Store everything
+        },
+        "development": {
+            "store_events": True,
+            "events_to_skip": [
+                WorkflowRunEvent.step_started
+            ]
+        },
+        "production": {
+            "store_events": True,
+            "events_to_skip": [
+                WorkflowRunEvent.step_started,
+                WorkflowRunEvent.step_completed,
+                WorkflowRunEvent.parallel_execution_started,
+                WorkflowRunEvent.parallel_execution_completed,
+                WorkflowRunEvent.condition_execution_started,
+                WorkflowRunEvent.condition_execution_completed
+            ]
+        },
+        "minimal": {
+            "store_events": False,
+            "events_to_skip": []  # Not storing events anyway
+        }
+    }
+    
+    return event_configs.get(workflow_type, event_configs["production"])
+
+# Apply event configuration
+config = get_event_config("production")
+workflow = Workflow(
+    name="Configured Workflow",
+    steps=[agent1, agent2],
+    **config  # Unpack configuration
+)
+```
+
+### Event Analysis and Monitoring
+```python
+def analyze_workflow_events(workflow_response):
+    """Analyze workflow events for monitoring and debugging"""
+    
+    if not workflow_response.events:
+        return {"message": "No events stored"}
+    
+    event_analysis = {
+        "total_events": len(workflow_response.events),
+        "event_types": {},
+        "timeline": [],
+        "errors": [],
+        "performance": {}
+    }
+    
+    # Analyze event types and timeline
+    for event in workflow_response.events:
+        event_type = event.get("event", "unknown")
+        event_analysis["event_types"][event_type] = event_analysis["event_types"].get(event_type, 0) + 1
+        
+        # Build timeline
+        if "timestamp" in event:
+            event_analysis["timeline"].append({
+                "time": event["timestamp"],
+                "event": event_type,
+                "details": event.get("message", "")
+            })
+        
+        # Collect errors
+        if "error" in event_type.lower():
+            event_analysis["errors"].append(event)
+    
+    # Performance analysis
+    workflow_started = next((e for e in workflow_response.events if e.get("event") == "workflow_started"), None)
+    workflow_completed = next((e for e in workflow_response.events if e.get("event") == "workflow_completed"), None)
+    
+    if workflow_started and workflow_completed:
+        start_time = workflow_started.get("timestamp")
+        end_time = workflow_completed.get("timestamp") 
+        if start_time and end_time:
+            # Calculate duration if timestamps are available
+            event_analysis["performance"]["total_duration"] = "calculated from timestamps"
+    
+    return event_analysis
+
+# Usage
+response = workflow.run("Analysis task")
+analysis = analyze_workflow_events(response)
+print(f"Event analysis: {analysis}")
+```
+
+## Session State Management
+
+### Session State Initialization
+```python
+# Basic session state
+basic_session_state = {
+    "workflow_id": "content_pipeline_v1",
+    "created_at": datetime.now().isoformat()
+}
+
+# Comprehensive session state
+comprehensive_session_state = {
+    # Workflow metadata
+    "workflow_info": {
+        "version": "2.0",
+        "created_by": "system",
+        "environment": os.getenv("ENVIRONMENT", "development")
+    },
+    
+    # User preferences and configuration
+    "user_preferences": {
+        "output_format": "markdown",
+        "detail_level": "comprehensive",
+        "language": "english",
+        "tone": "professional"
+    },
+    
+    # Workflow tracking and analytics
+    "tracking": {
+        "run_count": 0,
+        "successful_runs": 0,
+        "failed_runs": 0,
+        "last_run": None,
+        "average_duration": None
+    },
+    
+    # Shared data across steps
+    "shared_data": {
+        "project_context": {},
+        "user_data": {},
+        "temporary_storage": {}
+    },
+    
+    # Configuration flags
+    "flags": {
+        "debug_mode": False,
+        "verbose_output": False,
+        "skip_validation": False
+    }
+}
+
+# Session state with initialization function
+def initialize_session_state(user_id=None, project_id=None):
+    """Initialize session state with context"""
+    return {
+        "session_id": f"session_{hash(f'{user_id}_{project_id}_{datetime.now()}')}",
+        "user_id": user_id,
+        "project_id": project_id,
+        "initialized_at": datetime.now().isoformat(),
+        "context": {
+            "user_preferences": get_user_preferences(user_id) if user_id else {},
+            "project_settings": get_project_settings(project_id) if project_id else {}
+        },
+        "runtime": {
+            "step_outputs": {},
+            "intermediate_data": {},
+            "performance_metrics": {}
+        }
+    }
+
+# Apply session state to workflow
+session_state = initialize_session_state(
+    user_id="user123",
+    project_id="proj456"
+)
+
+workflow = Workflow(
+    name="Stateful Workflow",
+    steps=[agent1, agent2],
+    workflow_session_state=session_state
+)
+```
+
+### Dynamic Session State Updates
+```python
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def session_state_manager(step_input: StepInput) -> StepOutput:
+    """Manage and update session state during workflow execution"""
+    
+    # Access current session state (if agent has access)
+    # Note: This requires agents to be configured with workflow_session_state access
+    
+    content = step_input.previous_step_content or ""
+    
+    # Update session state with step results
+    session_update = {
+        "last_step_output": content,
+        "step_completion_time": datetime.now().isoformat(),
+        "step_word_count": len(content.split())
+    }
+    
+    # Process content and update state
+    enhanced_content = f"""
+    ## Session State Management Report
+    
+    **Step Processing**: Completed successfully
+    **Content Length**: {len(content)} characters
+    **Session Update**: Applied new data to shared state
+    
+    **Processed Content**:
+    {content}
+    
+    **Session Metadata**: Updated with step completion data
+    """
+    
+    return StepOutput(
+        content=enhanced_content,
+        success=True
+    )
+
+# Workflow with session state management
+stateful_workflow = Workflow(
+    name="Session State Workflow",
+    steps=[
+        agent1,
+        session_state_manager,  # Custom state manager
+        agent2
+    ],
+    workflow_session_state={
+        "session_tracking": True,
+        "step_history": []
+    }
+)
+```
+
+## Advanced Configuration Patterns
+
+### Environment-Based Configuration
+```python
+import os
+from typing import Dict, Any
+
+class WorkflowConfigManager:
+    """Manage workflow configurations across environments"""
+    
+    def __init__(self):
+        self.environment = os.getenv("ENVIRONMENT", "development")
+        self.configs = self._load_environment_configs()
+    
+    def _load_environment_configs(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "development": {
+                "storage": SqliteStorage(
+                    table_name="dev_workflows",
+                    db_file="dev.db",
+                    mode="workflow_v2",
+                    debug=True
+                ),
+                "store_events": True,
+                "events_to_skip": [],
+                "session_state": {"debug_mode": True},
+                "stream_intermediate_steps": True
+            },
+            "staging": {
+                "storage": PgStorage(
+                    table_name="staging_workflows",
+                    db_url=os.getenv("STAGING_DATABASE_URL"),
+                    mode="workflow_v2"
+                ),
+                "store_events": True,
+                "events_to_skip": [WorkflowRunEvent.step_started],
+                "session_state": {"environment": "staging"},
+                "stream_intermediate_steps": False
+            },
+            "production": {
+                "storage": PgStorage(
+                    table_name="production_workflows",
+                    db_url=os.getenv("PROD_DATABASE_URL"),
+                    mode="workflow_v2",
+                    debug=False
+                ),
+                "store_events": True,
+                "events_to_skip": [
+                    WorkflowRunEvent.step_started,
+                    WorkflowRunEvent.step_completed,
+                    WorkflowRunEvent.parallel_execution_started,
+                    WorkflowRunEvent.parallel_execution_completed
+                ],
+                "session_state": {"environment": "production"},
+                "stream_intermediate_steps": False
+            }
+        }
+    
+    def get_config(self, environment=None):
+        """Get configuration for specified environment"""
+        env = environment or self.environment
+        return self.configs.get(env, self.configs["development"])
+    
+    def create_workflow(self, name: str, steps: list, environment=None):
+        """Create workflow with environment-specific configuration"""
+        config = self.get_config(environment)
+        
+        return Workflow(
+            name=name,
+            steps=steps,
+            storage=config["storage"],
+            store_events=config["store_events"], 
+            events_to_skip=config["events_to_skip"],
+            workflow_session_state=config["session_state"].copy()
+        )
+    
+    def get_execution_config(self, environment=None):
+        """Get execution-specific configuration"""
+        config = self.get_config(environment)
+        return {
+            "stream_intermediate_steps": config["stream_intermediate_steps"],
+            "markdown": environment == "production"
+        }
+
+# Usage
+config_manager = WorkflowConfigManager()
+
+# Create environment-specific workflow
+workflow = config_manager.create_workflow(
+    name="Multi-Environment Workflow",
+    steps=[researcher, analyzer, writer]
+)
+
+# Get execution configuration
+exec_config = config_manager.get_execution_config()
+
+# Run with environment-appropriate settings
+response = workflow.run(
+    "Analyze market trends",
+    **exec_config
+)
+```
+
+### Configuration Validation
+```python
+from pydantic import BaseModel, validator
+from typing import Optional, List
+
+class WorkflowConfig(BaseModel):
+    """Validated workflow configuration"""
+    
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(max_length=500)
+    environment: str = Field(default="development")
+    
+    # Storage configuration
+    storage_type: str = Field(default="sqlite", regex="^(sqlite|postgres)$")
+    storage_config: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Event configuration
+    store_events: bool = Field(default=True)
+    event_filter_level: str = Field(default="standard", regex="^(minimal|standard|verbose|debug)$")
+    
+    # Session state
+    enable_session_state: bool = Field(default=True)
+    initial_session_data: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Performance settings
+    enable_streaming: bool = Field(default=False)
+    stream_intermediate_steps: bool = Field(default=False)
+    timeout_seconds: Optional[int] = Field(ge=1, le=3600)
+    
+    @validator('name')
+    def validate_name(cls, v):
+        if not v.strip():
+            raise ValueError('Workflow name cannot be empty')
+        return v.strip()
+    
+    @validator('storage_config')
+    def validate_storage_config(cls, v, values):
+        storage_type = values.get('storage_type')
+        if storage_type == 'postgres' and 'db_url' not in v:
+            raise ValueError('PostgreSQL storage requires db_url')
+        if storage_type == 'sqlite' and 'db_file' not in v:
+            v['db_file'] = 'workflows.db'  # Default
+        return v
+    
+    def get_event_filter(self) -> List[WorkflowRunEvent]:
+        """Get event filter based on level"""
+        filters = {
+            "minimal": [
+                WorkflowRunEvent.step_started,
+                WorkflowRunEvent.step_completed,
+                WorkflowRunEvent.parallel_execution_started,
+                WorkflowRunEvent.parallel_execution_completed,
+                WorkflowRunEvent.condition_execution_started,
+                WorkflowRunEvent.condition_execution_completed
+            ],
+            "standard": [
+                WorkflowRunEvent.step_started,
+                WorkflowRunEvent.parallel_execution_started,
+                WorkflowRunEvent.condition_execution_started
+            ],
+            "verbose": [
+                WorkflowRunEvent.step_started
+            ],
+            "debug": []
+        }
+        return filters.get(self.event_filter_level, filters["standard"])
+    
+    def create_storage(self):
+        """Create storage instance from configuration"""
+        if self.storage_type == "postgres":
+            return PgStorage(
+                table_name=f"{self.name.lower()}_workflows",
+                mode="workflow_v2",
+                **self.storage_config
+            )
+        else:
+            return SqliteStorage(
+                table_name=f"{self.name.lower()}_workflows",
+                mode="workflow_v2",
+                **self.storage_config
+            )
+
+# Usage with validation
+try:
+    config = WorkflowConfig(
+        name="Production Analytics Pipeline",
+        description="Advanced analytics workflow for production use",
+        environment="production",
+        storage_type="postgres",
+        storage_config={
+            "db_url": os.getenv("DATABASE_URL"),
+            "debug": False
+        },
+        event_filter_level="standard",
+        enable_streaming=False
+    )
+    
+    # Create workflow from validated configuration
+    workflow = Workflow(
+        name=config.name,
+        description=config.description,
+        steps=[agent1, agent2],
+        storage=config.create_storage(),
+        store_events=config.store_events,
+        events_to_skip=config.get_event_filter(),
+        workflow_session_state=config.initial_session_data
+    )
+    
+except ValidationError as e:
+    print(f"Configuration validation failed: {e}")
+```
+
+## Speed Tips
+
+### Quick Configuration Templates
+```python
+# Configuration templates for rapid development
+QUICK_CONFIGS = {
+    "minimal": {
+        "storage": None,
+        "store_events": False
+    },
+    "basic": {
+        "storage": SqliteStorage(table_name="workflows", db_file="workflows.db", mode="workflow_v2"),
+        "store_events": True,
+        "events_to_skip": [WorkflowRunEvent.step_started]
+    },
+    "debug": {
+        "storage": SqliteStorage(table_name="debug_workflows", db_file="debug.db", mode="workflow_v2", debug=True),
+        "store_events": True,
+        "events_to_skip": []
+    }
+}
+
+def quick_workflow(name, steps, config_type="basic"):
+    """Create workflow with predefined configuration"""
+    config = QUICK_CONFIGS.get(config_type, QUICK_CONFIGS["basic"])
+    return Workflow(name=name, steps=steps, **config)
+
+# Usage
+debug_workflow = quick_workflow("Debug Test", [agent1, agent2], "debug")
+production_workflow = quick_workflow("Prod Pipeline", [team1, agent1], "basic")
+```
+
+### Configuration Caching
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=10)
+def get_cached_storage(storage_type: str, environment: str):
+    """Cache storage instances to avoid recreation"""
+    if storage_type == "postgres":
+        return PgStorage(
+            table_name=f"{environment}_workflows",
+            db_url=os.getenv(f"{environment.upper()}_DATABASE_URL"),
+            mode="workflow_v2"
+        )
+    else:
+        return SqliteStorage(
+            table_name=f"{environment}_workflows",
+            db_file=f"{environment}.db",
+            mode="workflow_v2"
+        )
+
+# Usage - storage instances are cached
+prod_storage = get_cached_storage("postgres", "production")
+dev_storage = get_cached_storage("sqlite", "development")
+```
+
+## Common Pitfalls
+
+### Storage Configuration Errors
+```python
+# ❌ DON'T: Use same table name across environments
+prod_storage = PgStorage(table_name="workflows", db_url=prod_url, mode="workflow_v2")
+dev_storage = SqliteStorage(table_name="workflows", db_file="dev.db", mode="workflow_v2")
+
+# ✅ DO: Use environment-specific table names
+prod_storage = PgStorage(table_name="prod_workflows", db_url=prod_url, mode="workflow_v2")
+dev_storage = SqliteStorage(table_name="dev_workflows", db_file="dev.db", mode="workflow_v2")
+```
+
+### Session State Mutations
+```python
+# ❌ DON'T: Share mutable session state between workflows
+shared_state = {"data": []}
+workflow1 = Workflow(name="W1", steps=[agent], workflow_session_state=shared_state)
+workflow2 = Workflow(name="W2", steps=[agent], workflow_session_state=shared_state)
+
+# ✅ DO: Use separate session state instances
+base_state = {"data": []}
+workflow1 = Workflow(name="W1", steps=[agent], workflow_session_state=base_state.copy())
+workflow2 = Workflow(name="W2", steps=[agent], workflow_session_state=base_state.copy())
+```
+
+### Event Configuration Issues
+```python
+# ❌ DON'T: Skip critical events in production
+workflow = Workflow(
+    name="Prod Workflow",
+    steps=[agent],
+    store_events=True,
+    events_to_skip=[
+        WorkflowRunEvent.workflow_completed,  # Critical event!
+        WorkflowRunEvent.workflow_error       # Critical event!
+    ]
+)
+
+# ✅ DO: Only skip verbose events, keep critical ones
+workflow = Workflow(
+    name="Prod Workflow",
+    steps=[agent],
+    store_events=True,
+    events_to_skip=[
+        WorkflowRunEvent.step_started,
+        WorkflowRunEvent.step_completed
+        # Keep workflow_completed and workflow_error
+    ]
+)
+```
+
+## Best Practices Summary
+
+- **Environment Separation**: Use different configurations for dev/staging/production
+- **Storage Strategy**: SQLite for development, PostgreSQL for production
+- **Event Management**: Filter events based on environment and performance needs
+- **Session State**: Initialize properly and avoid mutations between workflows
+- **Configuration Validation**: Use Pydantic models for configuration validation
+- **Caching**: Cache expensive configuration objects like storage instances
+- **Documentation**: Document configuration choices and environment differences
+- **Monitoring**: Include configuration metadata in workflow responses
+- **Security**: Keep sensitive configuration in environment variables
+- **Testing**: Test workflows with different configurations
+
+## References
+
+- [Storage Configuration](/docs/storage/configuration.md)
+- [Event Management](/docs/workflows_2/events.md)
+- [Session State Guide](/docs/workflows_2/workflow_session_state.md)
+- [Production Deployment](/docs/deployment/production.md)

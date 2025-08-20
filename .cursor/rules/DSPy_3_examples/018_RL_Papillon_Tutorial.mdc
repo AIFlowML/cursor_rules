@@ -1,0 +1,967 @@
+---
+description: DSPY 3 Implements GRPO optimization for multi-module LM programs that balance response quality with privacy protection by minimizing PII leakage to untrusted external LLMs
+alwaysApply: false
+---
+
+# DSPy Example: RL Privacy-Preserving Delegation with PAPILLON
+
+## Overview
+
+This example demonstrates how to use DSPy's experimental GRPO (Generalized Relative Policy Optimization) for training privacy-preserving delegation systems. PAPILLON teaches a small local model (1.7B parameters) to leverage powerful but untrusted external LLMs while minimizing privacy leakage.
+
+**Performance Results from Tutorial:**
+
+- Baseline Composite Score: 54.6%
+- GRPO-Optimized Score: 60.0% (9.9% relative improvement)
+- Training Duration: 3 hours on 4×H100 GPUs
+- Model Size: Qwen3-1.7B with LoRA fine-tuning
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        PAPILLON RL System                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
+│  │ Request Redactor │    │ External LLM     │    │ Response Composer│   │
+│  │                  │    │                  │    │                  │   │
+│  │ • Remove PII     │    │ • Powerful but   │    │ • Integrate      │   │
+│  │ • Craft privacy- │───▶│   untrusted      │───▶│   external info  │   │
+│  │   safe queries   │    │ • GPT-4 class    │    │ • Personalize    │   │
+│  │ • Context aware  │    │ • May save data  │    │ • Privacy-aware  │   │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘   │
+│           │                        │                        │          │
+│           ▼                        ▼                        ▼          │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐   │
+│  │ PII Detection    │    │ Query Analysis   │    │ Quality Judge    │   │
+│  │                  │    │                  │    │                  │   │
+│  │ • Named entities │    │ • Semantic sim.  │    │ • Response comp. │   │
+│  │ • Personal info  │    │ • Context match  │    │ • Target quality │   │
+│  │ • Sensitive data │    │ • Privacy score  │    │ • Helpfulness   │   │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘   │
+│                                   │                                     │
+│                                   ▼                                     │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                     GRPO Reward Function                        │   │
+│  │                                                                  │   │
+│  │ Composite Score = (Quality Score + (1 - Leakage Score)) / 2     │   │
+│  │                                                                  │   │
+│  │ • Quality: Response helpfulness vs. target                      │   │
+│  │ • Leakage: PII units exposed to external LLM                    │   │
+│  │ • Balance: Privacy protection vs. utility                       │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                         Production Features                             │
+│ • MLflow experiment tracking  • Multi-GPU distributed training         │
+│ • Privacy audit logging       • Real-time PII detection                │
+│ • Performance monitoring      • Checkpoint management                  │
+│ • A/B testing framework       • Enterprise compliance                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### 1. Core PAPILLON System
+
+```python
+import dspy
+import mlflow
+import logging
+import re
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass
+from datasets import load_dataset
+import time
+import json
+from dspy.clients.lm_local_arbor import ArborProvider
+from dspy.teleprompt.grpo import GRPO
+
+@dataclass
+class PapillonConfig:
+    """Configuration for PAPILLON privacy-preserving system."""
+    local_model: str = "Qwen/Qwen3-1.7B"
+    external_model: str = "openai/gpt-4.1-mini"
+    temperature: float = 0.7
+    beta: float = 0.04
+    learning_rate: float = 2e-6
+    max_train_steps: int = 500
+    batch_size: int = 8
+    gradient_accumulation_steps: int = 4
+    port: int = 7453
+
+class CraftRedactedRequest(dspy.Signature):
+    """
+    Given a private user query, create a privacy-preserving request for a powerful external LLM.
+    The LLM may assist without learning private information about the user.
+    """
+    user_query = dspy.InputField()
+    llm_request = dspy.OutputField()
+
+class RespondToQuery(dspy.Signature):
+    """
+    Respond to a user query.
+    For inspiration, we found a potentially related request to a powerful external LLM and its response.
+    """
+    related_llm_request = dspy.InputField()
+    related_llm_response = dspy.InputField(desc="information from a powerful LLM responding to a related request")
+    user_query = dspy.InputField(desc="the user's request you need to fulfill")
+    response = dspy.OutputField(desc="your final response to the user's request")
+
+class ProductionPAPILLON(dspy.Module):
+    """Production-ready PAPILLON system with comprehensive privacy protection."""
+
+    def __init__(self, config: PapillonConfig):
+        super().__init__()
+        self.config = config
+
+        # Initialize DSPy modules
+        self.craft_redacted_request = dspy.ChainOfThought(CraftRedactedRequest)
+        self.respond_to_query = dspy.Predict(RespondToQuery)
+
+        # Set up LLMs
+        self.setup_models()
+
+        # Privacy tracking
+        self.privacy_audit_log = []
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up logging for privacy and performance tracking."""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        return logger
+
+    def setup_models(self):
+        """Set up local and external language models."""
+        try:
+            # Local model via Arbor
+            self.local_lm = dspy.LM(
+                model=f"openai/arbor:{self.config.local_model}",
+                provider=ArborProvider(),
+                temperature=self.config.temperature,
+                api_base=f"http://localhost:{self.config.port}/v1/",
+                api_key="arbor",
+            )
+
+            # External untrusted model
+            self.external_lm = dspy.LM(model=self.config.external_model)
+
+            self.logger.info("Models configured successfully")
+
+        except Exception as e:
+            self.logger.error(f"Model setup failed: {e}")
+            raise
+
+    def detect_pii(self, text: str) -> List[str]:
+        """Detect potential PII in text using pattern matching."""
+        pii_patterns = {
+            'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            'phone': r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',
+            'ssn': r'\b\d{3}-?\d{2}-?\d{4}\b',
+            'credit_card': r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',
+            'ip_address': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
+            'name': r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',  # Simple name pattern
+            'address': r'\d+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)',
+        }
+
+        detected_pii = []
+        for pii_type, pattern in pii_patterns.items():
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                detected_pii.append(f"{pii_type}: {match}")
+
+        return detected_pii
+
+    def audit_privacy_request(self, user_query: str, llm_request: str, pii_units: List[str]) -> Dict[str, Any]:
+        """Audit privacy aspects of the request redaction."""
+        detected_pii = self.detect_pii(llm_request)
+
+        audit_entry = {
+            "timestamp": time.time(),
+            "user_query_length": len(user_query),
+            "llm_request_length": len(llm_request),
+            "detected_pii": detected_pii,
+            "known_pii_units": pii_units,
+            "potential_leakage": len(detected_pii) > 0,
+        }
+
+        self.privacy_audit_log.append(audit_entry)
+
+        if detected_pii:
+            self.logger.warning(f"Potential PII detected in request: {detected_pii}")
+
+        return audit_entry
+
+    def forward(self, user_query: str, pii_units: Optional[List[str]] = None) -> dspy.Prediction:
+        """Execute privacy-preserving delegation."""
+        try:
+            start_time = time.time()
+
+            # Craft redacted request
+            redaction_result = self.craft_redacted_request(user_query=user_query)
+            llm_request = redaction_result.llm_request
+
+            # Audit privacy
+            if pii_units:
+                privacy_audit = self.audit_privacy_request(user_query, llm_request, pii_units)
+
+            # Query external LLM
+            llm_response = self.external_lm(llm_request)[0]
+
+            # Compose final response
+            response_result = self.respond_to_query(
+                related_llm_request=llm_request,
+                related_llm_response=llm_response,
+                user_query=user_query
+            )
+
+            processing_time = time.time() - start_time
+
+            prediction = dspy.Prediction(
+                llm_request=llm_request,
+                llm_response=llm_response,
+                response=response_result.response,
+                processing_time=processing_time
+            )
+
+            if pii_units:
+                prediction.privacy_audit = privacy_audit
+
+            return prediction
+
+        except Exception as e:
+            self.logger.error(f"PAPILLON forward pass failed: {e}")
+            return dspy.Prediction(
+                llm_request="",
+                llm_response="",
+                response="I apologize, but I encountered an error processing your request.",
+                error=str(e)
+            )
+```
+
+### 2. Privacy-Aware Judgment System
+
+```python
+class JudgeQuality(dspy.Signature):
+    """
+    You are comparing the quality of two responses, given a user query.
+    Is response A at least as good as response B?
+    """
+    user_query = dspy.InputField(desc="The user's request to be fulfilled.")
+    response_A = dspy.InputField()
+    response_B = dspy.InputField()
+    judgment: bool = dspy.OutputField()
+
+class JudgeLeakage(dspy.Signature):
+    """
+    Count the number information pieces in `pii` that (i) are forms of PII *and* (ii) are leaked into the prompt given.
+    Don't count the cases where the leaked information is just a celebrity name.
+    Don't count the cases where the `pii` information does not appear in the prompt.
+    """
+    pii = dspy.InputField()
+    prompt = dspy.InputField()
+    num_pii_leaked: int = dspy.OutputField()
+
+class ProductionLLMJudge(dspy.Module):
+    """Production LLM judge for quality and privacy evaluation."""
+
+    def __init__(self, judge_model: str = "openai/gpt-4.1-mini"):
+        super().__init__()
+        self.quality_judge = dspy.ChainOfThought(JudgeQuality)
+        self.leakage_judge = dspy.ChainOfThought(JudgeLeakage)
+
+        # Set up judge model
+        self.judge_lm = dspy.LM(model=judge_model)
+        self.set_lm(self.judge_lm)
+
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up logging for judgment system."""
+        logger = logging.getLogger(f"{__name__}.judge")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def forward(
+        self,
+        user_query: str,
+        og_resp: str,
+        new_resp: str,
+        updated_query: str,
+        pii_str: str
+    ) -> dspy.Prediction:
+        """Evaluate both quality and privacy aspects."""
+        try:
+            # Quality assessment (bidirectional to handle inconsistencies)
+            judgment_1 = self.quality_judge(
+                user_query=user_query,
+                response_A=new_resp,
+                response_B=og_resp
+            ).judgment
+
+            judgment_2 = self.quality_judge(
+                user_query=user_query,
+                response_A=og_resp,
+                response_B=new_resp
+            ).judgment
+
+            # Quality is True if better or if judges are inconsistent
+            quality = judgment_1 or (judgment_1 == judgment_2)
+
+            # Privacy leakage assessment
+            pii_units = list(set(pii_str.split("||"))) if pii_str else []
+
+            if pii_units:
+                pii_leaked = self.leakage_judge(
+                    pii=pii_units,
+                    prompt=updated_query
+                ).num_pii_leaked
+
+                leakage_score = pii_leaked / len(pii_units)
+            else:
+                leakage_score = 0.0
+
+            return dspy.Prediction(
+                quality=quality,
+                leakage=leakage_score,
+                pii_units_total=len(pii_units),
+                pii_units_leaked=pii_leaked if pii_units else 0
+            )
+
+        except Exception as e:
+            self.logger.error(f"Judgment failed: {e}")
+            return dspy.Prediction(
+                quality=False,
+                leakage=1.0,  # Worst case assumption
+                error=str(e)
+            )
+```
+
+### 3. GRPO Training System
+
+```python
+class ProductionPapillonTrainer:
+    """Production GRPO trainer for PAPILLON systems."""
+
+    def __init__(self, config: PapillonConfig):
+        self.config = config
+        self.judge = ProductionLLMJudge()
+        self.logger = self._setup_logging()
+
+        # MLflow tracking
+        mlflow.set_experiment("papillon_privacy_rl")
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up training logger."""
+        logger = logging.getLogger(f"{__name__}.trainer")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def load_pupa_dataset(self) -> Tuple[List[dspy.Example], List[dspy.Example], List[dspy.Example]]:
+        """Load and prepare PUPA dataset for privacy training."""
+        try:
+            self.logger.info("Loading PUPA dataset...")
+
+            # Load PUPA dataset
+            pupa_new = load_dataset("Columbia-NLP/PUPA", "pupa_new")
+
+            examples = [
+                dspy.Example({
+                    "target_response": x["target_response"],
+                    "user_query": x["user_query"],
+                    "pii_str": x["pii_units"]
+                }).with_inputs("user_query")
+                for x in pupa_new["train"]
+            ]
+
+            # Split dataset
+            trainset = examples[:225]
+            devset = examples[225:450]
+            testset = examples[450:]
+
+            self.logger.info(
+                f"Dataset loaded: {len(trainset)} train, {len(devset)} dev, {len(testset)} test"
+            )
+
+            return trainset, devset, testset
+
+        except Exception as e:
+            self.logger.error(f"Dataset loading failed: {e}")
+            raise
+
+    def compute_metrics(self, gold: dspy.Example, pred: dspy.Prediction, trace=None) -> dspy.Prediction:
+        """Compute comprehensive metrics for PAPILLON evaluation."""
+        return self.judge(
+            user_query=gold.user_query,
+            new_resp=pred.response,
+            og_resp=gold.target_response,
+            updated_query=pred.llm_request,
+            pii_str=gold.pii_str,
+        )
+
+    def compute_quality(self, gold: dspy.Example, pred: dspy.Prediction, trace=None) -> bool:
+        """Compute quality metric."""
+        return self.compute_metrics(gold, pred, trace).quality
+
+    def compute_leakage(self, gold: dspy.Example, pred: dspy.Prediction, trace=None) -> float:
+        """Compute privacy leakage metric."""
+        return self.compute_metrics(gold, pred, trace).leakage
+
+    def compute_overall_score(self, gold: dspy.Example, pred: dspy.Prediction, trace=None) -> float:
+        """Compute composite score balancing quality and privacy."""
+        metrics = self.compute_metrics(gold, pred, trace)
+        composite_score = (metrics.quality + (1 - metrics.leakage)) / 2.0
+
+        # Return boolean for optimization, float for evaluation
+        return composite_score >= 1.0 if trace is not None else composite_score
+
+    def evaluate_baseline(self, program: ProductionPAPILLON, devset: List[dspy.Example]) -> float:
+        """Evaluate baseline performance."""
+        try:
+            evaluator = dspy.Evaluate(
+                metric=self.compute_overall_score,
+                devset=devset,
+                num_threads=16,
+                display_progress=True,
+                display_table=5,
+                max_errors=100
+            )
+
+            baseline_score = evaluator(program)
+            self.logger.info(f"Baseline composite score: {baseline_score:.3f}")
+
+            return baseline_score
+
+        except Exception as e:
+            self.logger.error(f"Baseline evaluation failed: {e}")
+            return 0.0
+
+    def train_with_grpo(
+        self,
+        program: ProductionPAPILLON,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example]
+    ) -> ProductionPAPILLON:
+        """Train PAPILLON system with GRPO optimization."""
+
+        with mlflow.start_run():
+            # Log configuration
+            mlflow.log_params({
+                "local_model": self.config.local_model,
+                "external_model": self.config.external_model,
+                "temperature": self.config.temperature,
+                "beta": self.config.beta,
+                "learning_rate": self.config.learning_rate,
+                "max_train_steps": self.config.max_train_steps,
+                "batch_size": self.config.batch_size
+            })
+
+            try:
+                # Set up training parameters
+                train_kwargs = {
+                    "per_device_train_batch_size": self.config.batch_size,
+                    "gradient_accumulation_steps": self.config.gradient_accumulation_steps,
+                    "temperature": self.config.temperature,
+                    "beta": self.config.beta,
+                    "learning_rate": self.config.learning_rate,
+                    "gradient_checkpointing": True,
+                    "gradient_checkpointing_kwargs": {"use_reentrant": False},
+                    "bf16": True,
+                    "lr_scheduler_type": "constant_with_warmup",
+                    "max_prompt_length": None,
+                    "max_completion_length": None,
+                    "scale_rewards": True,
+                    "max_grad_norm": 0.5,
+                    "lora": True,
+                }
+
+                # Initialize GRPO compiler
+                compiler = GRPO(
+                    metric=self.compute_overall_score,
+                    multitask=True,
+                    num_dspy_examples_per_grpo_step=4,
+                    num_samples_per_input=8,
+                    exclude_demos=True,
+                    num_train_steps=self.config.max_train_steps,
+                    num_threads=24,
+                    use_train_as_val=False,
+                    num_steps_for_val=10,
+                    train_kwargs=train_kwargs,
+                    report_train_scores=False,
+                )
+
+                # Set local model for training
+                program.set_lm(program.local_lm)
+
+                self.logger.info("Starting GRPO training...")
+                start_time = time.time()
+
+                # Compile with GRPO
+                optimized_program = compiler.compile(
+                    student=program,
+                    trainset=trainset,
+                    valset=devset,
+                )
+
+                training_time = time.time() - start_time
+                self.logger.info(f"Training completed in {training_time:.2f} seconds")
+
+                # Log training metrics
+                mlflow.log_metrics({
+                    "training_time_seconds": training_time,
+                    "training_time_hours": training_time / 3600
+                })
+
+                return optimized_program
+
+            except Exception as e:
+                self.logger.error(f"GRPO training failed: {e}")
+                mlflow.log_param("training_error", str(e))
+                raise
+```
+
+### 4. Complete Production System
+
+```python
+class ProductionPapillonSystem:
+    """Complete production system for privacy-preserving delegation with RL optimization."""
+
+    def __init__(self, config: PapillonConfig):
+        self.config = config
+        self.papillon = ProductionPAPILLON(config)
+        self.trainer = ProductionPapillonTrainer(config)
+        self.logger = self._setup_logging()
+
+        # Performance tracking
+        self.metrics_history = []
+        self.privacy_violations = []
+
+    def _setup_logging(self) -> logging.Logger:
+        """Set up system logging."""
+        logger = logging.getLogger(f"{__name__}.system")
+        logger.setLevel(logging.INFO)
+        return logger
+
+    def setup_environment(self):
+        """Set up the complete PAPILLON environment."""
+        try:
+            # Verify Arbor server is running
+            import requests
+            response = requests.get(f"http://localhost:{self.config.port}/health", timeout=5)
+            if response.status_code != 200:
+                raise ConnectionError("Arbor server not responding")
+
+            self.logger.info("Environment setup completed successfully")
+
+        except Exception as e:
+            self.logger.error(f"Environment setup failed: {e}")
+            self.logger.info("Make sure Arbor server is running: python -m arbor.cli serve --arbor-config arbor.yaml")
+            raise
+
+    def evaluate_detailed_performance(
+        self,
+        program: ProductionPAPILLON,
+        dataset: List[dspy.Example],
+        dataset_name: str = "eval"
+    ) -> Dict[str, float]:
+        """Evaluate detailed performance metrics."""
+        try:
+            # Overall composite score
+            overall_evaluator = dspy.Evaluate(
+                metric=self.trainer.compute_overall_score,
+                devset=dataset,
+                num_threads=16,
+                display_progress=True,
+                display_table=5,
+                max_errors=100
+            )
+            overall_score = overall_evaluator(program)
+
+            # Quality score
+            quality_evaluator = dspy.Evaluate(
+                metric=self.trainer.compute_quality,
+                devset=dataset,
+                num_threads=16,
+                display_progress=False
+            )
+            quality_score = quality_evaluator(program)
+
+            # Leakage score
+            leakage_evaluator = dspy.Evaluate(
+                metric=self.trainer.compute_leakage,
+                devset=dataset,
+                num_threads=16,
+                display_progress=False
+            )
+            leakage_score = leakage_evaluator(program)
+
+            # Privacy protection score (inverse of leakage)
+            privacy_score = 1.0 - leakage_score
+
+            results = {
+                f"{dataset_name}_overall_score": overall_score,
+                f"{dataset_name}_quality_score": quality_score,
+                f"{dataset_name}_leakage_score": leakage_score,
+                f"{dataset_name}_privacy_score": privacy_score,
+                f"{dataset_name}_samples": len(dataset)
+            }
+
+            # Log to MLflow
+            with mlflow.start_run():
+                mlflow.log_metrics(results)
+
+            self.metrics_history.append({
+                "dataset": dataset_name,
+                "timestamp": time.time(),
+                **results
+            })
+
+            self.logger.info(f"""
+            {dataset_name} Performance:
+            - Overall Score: {overall_score:.3f}
+            - Quality Score: {quality_score:.3f}
+            - Privacy Score: {privacy_score:.3f}
+            - Leakage Score: {leakage_score:.3f}
+            """)
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Detailed evaluation failed: {e}")
+            return {}
+
+    def run_optimization_pipeline(self) -> Dict[str, Any]:
+        """Run the complete PAPILLON optimization pipeline."""
+        try:
+            self.logger.info("Starting PAPILLON privacy-preserving optimization pipeline")
+
+            # Prepare dataset
+            trainset, devset, testset = self.trainer.load_pupa_dataset()
+
+            # Evaluate baseline performance
+            baseline_results = self.evaluate_detailed_performance(self.papillon, devset, "baseline")
+
+            # Train with GRPO
+            self.logger.info("Starting GRPO optimization...")
+            optimized_program = self.trainer.train_with_grpo(self.papillon, trainset, devset)
+
+            # Evaluate optimized performance
+            optimized_results = self.evaluate_detailed_performance(optimized_program, devset, "optimized")
+
+            # Final test evaluation
+            test_results = self.evaluate_detailed_performance(optimized_program, testset, "test")
+
+            # Calculate improvements
+            overall_improvement = (
+                (optimized_results["optimized_overall_score"] - baseline_results["baseline_overall_score"])
+                / baseline_results["baseline_overall_score"]
+            ) * 100
+
+            privacy_improvement = (
+                (optimized_results["optimized_privacy_score"] - baseline_results["baseline_privacy_score"])
+                / baseline_results["baseline_privacy_score"]
+            ) * 100
+
+            self.logger.info(f"""
+            PAPILLON Optimization Results:
+            - Baseline Overall Score: {baseline_results["baseline_overall_score"]:.3f}
+            - Optimized Overall Score: {optimized_results["optimized_overall_score"]:.3f}
+            - Test Overall Score: {test_results["test_overall_score"]:.3f}
+            - Overall Improvement: {overall_improvement:.1f}%
+            - Privacy Improvement: {privacy_improvement:.1f}%
+            """)
+
+            return {
+                "baseline_results": baseline_results,
+                "optimized_results": optimized_results,
+                "test_results": test_results,
+                "overall_improvement_percent": overall_improvement,
+                "privacy_improvement_percent": privacy_improvement,
+                "optimized_program": optimized_program
+            }
+
+        except Exception as e:
+            self.logger.error(f"Optimization pipeline failed: {e}")
+            raise
+
+    def demonstrate_privacy_protection(self, user_query: str, pii_units: List[str]) -> Dict[str, Any]:
+        """Demonstrate privacy protection capabilities."""
+        try:
+            # Process with privacy protection
+            result = self.papillon.forward(user_query, pii_units)
+
+            # Analyze privacy protection
+            original_pii = self.papillon.detect_pii(user_query)
+            redacted_pii = self.papillon.detect_pii(result.llm_request)
+
+            protection_analysis = {
+                "original_query": user_query,
+                "redacted_request": result.llm_request,
+                "external_response": result.llm_response,
+                "final_response": result.response,
+                "original_pii_detected": original_pii,
+                "redacted_pii_detected": redacted_pii,
+                "pii_units_provided": pii_units,
+                "privacy_protection_effective": len(redacted_pii) < len(original_pii),
+                "processing_time": result.processing_time
+            }
+
+            self.logger.info(f"""
+            Privacy Protection Demo:
+            - Original PII detected: {len(original_pii)}
+            - Redacted PII detected: {len(redacted_pii)}
+            - Protection effective: {protection_analysis["privacy_protection_effective"]}
+            """)
+
+            return protection_analysis
+
+        except Exception as e:
+            self.logger.error(f"Privacy protection demo failed: {e}")
+            return {"error": str(e)}
+
+# Usage example
+def main():
+    """Main execution function for PAPILLON system."""
+    config = PapillonConfig(
+        local_model="Qwen/Qwen3-1.7B",
+        external_model="openai/gpt-4.1-mini",
+        temperature=0.7,
+        beta=0.04,
+        learning_rate=2e-6,
+        max_train_steps=500,
+        batch_size=8
+    )
+
+    system = ProductionPapillonSystem(config)
+
+    # Setup environment
+    system.setup_environment()
+
+    # Run optimization pipeline
+    results = system.run_optimization_pipeline()
+
+    print(f"PAPILLON system optimized with {results['overall_improvement_percent']:.1f}% improvement")
+    print(f"Privacy protection improved by {results['privacy_improvement_percent']:.1f}%")
+
+    # Demonstrate privacy protection
+    demo_query = "My name is John Smith and I live at 123 Main Street. I need help with my social security number 123-45-6789."
+    demo_pii = ["John Smith", "123 Main Street", "123-45-6789"]
+
+    protection_demo = system.demonstrate_privacy_protection(demo_query, demo_pii)
+    print(f"Privacy protection effective: {protection_demo.get('privacy_protection_effective', False)}")
+
+    return results
+
+if __name__ == "__main__":
+    main()
+```
+
+## Production Enhancements
+
+### 1. Privacy Audit System
+
+```python
+class PrivacyAuditSystem:
+    """Comprehensive privacy audit and compliance system."""
+
+    def __init__(self):
+        self.audit_log = []
+        self.violation_thresholds = {
+            "email": 0,      # No email leakage allowed
+            "phone": 0,      # No phone leakage allowed
+            "ssn": 0,        # No SSN leakage allowed
+            "credit_card": 0,# No credit card leakage allowed
+            "name": 2,       # Allow up to 2 names (may be public figures)
+            "address": 0     # No address leakage allowed
+        }
+
+    def audit_request(self, original_query: str, redacted_request: str) -> Dict[str, Any]:
+        """Comprehensive audit of privacy protection."""
+        original_pii = self._advanced_pii_detection(original_query)
+        redacted_pii = self._advanced_pii_detection(redacted_request)
+
+        audit_result = {
+            "timestamp": time.time(),
+            "original_pii": original_pii,
+            "redacted_pii": redacted_pii,
+            "leakage_detected": self._analyze_leakage(original_pii, redacted_pii),
+            "compliance_score": self._calculate_compliance_score(redacted_pii),
+            "risk_level": self._assess_risk_level(redacted_pii)
+        }
+
+        self.audit_log.append(audit_result)
+        return audit_result
+
+    def _advanced_pii_detection(self, text: str) -> Dict[str, List[str]]:
+        """Advanced PII detection with named entity recognition."""
+        # Implement advanced NER-based PII detection
+        # This is a simplified version
+        pii_types = {
+            'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            'phone': r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',
+            'ssn': r'\b\d{3}-?\d{2}-?\d{4}\b',
+            'credit_card': r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b'
+        }
+
+        detected = {}
+        for pii_type, pattern in pii_types.items():
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            detected[pii_type] = matches
+
+        return detected
+```
+
+### 2. Real-time Monitoring
+
+```python
+class RealTimeMonitor:
+    """Real-time monitoring for PAPILLON system performance."""
+
+    def __init__(self):
+        self.metrics_buffer = []
+        self.alert_thresholds = {
+            "privacy_violation_rate": 0.05,  # 5% max violation rate
+            "response_latency": 10.0,        # 10 seconds max latency
+            "quality_degradation": 0.10      # 10% max quality drop
+        }
+
+    def track_request(self, request_metrics: Dict[str, Any]):
+        """Track individual request metrics."""
+        self.metrics_buffer.append(request_metrics)
+
+        # Check for immediate alerts
+        self._check_alerts(request_metrics)
+
+        # Maintain buffer size
+        if len(self.metrics_buffer) > 1000:
+            self.metrics_buffer = self.metrics_buffer[-1000:]
+
+    def _check_alerts(self, metrics: Dict[str, Any]):
+        """Check for alert conditions."""
+        if metrics.get("privacy_violation", False):
+            logging.warning("Privacy violation detected in real-time")
+
+        if metrics.get("latency", 0) > self.alert_thresholds["response_latency"]:
+            logging.warning(f"High latency detected: {metrics['latency']:.2f}s")
+```
+
+### 3. A/B Testing Framework
+
+```python
+class ABTestingFramework:
+    """A/B testing framework for PAPILLON optimization strategies."""
+
+    def __init__(self):
+        self.experiments = {}
+        self.results = {}
+
+    def create_experiment(
+        self,
+        name: str,
+        control_program: ProductionPAPILLON,
+        treatment_program: ProductionPAPILLON,
+        traffic_split: float = 0.5
+    ):
+        """Create A/B test experiment."""
+        self.experiments[name] = {
+            "control": control_program,
+            "treatment": treatment_program,
+            "traffic_split": traffic_split,
+            "start_time": time.time(),
+            "results": {"control": [], "treatment": []}
+        }
+
+    def route_request(self, experiment_name: str, request_data: Dict[str, Any]) -> str:
+        """Route request to control or treatment group."""
+        import random
+
+        experiment = self.experiments[experiment_name]
+
+        if random.random() < experiment["traffic_split"]:
+            return "treatment"
+        else:
+            return "control"
+```
+
+## Best Practices
+
+### 1. Privacy Protection
+
+- **PII Detection**: Implement comprehensive PII detection using NLP models
+- **Redaction Strategies**: Use multiple redaction techniques (masking, generalization, removal)
+- **Audit Trails**: Maintain detailed logs of all privacy-related operations
+
+### 2. Training Optimization
+
+- **Resource Management**: Use distributed training across multiple GPUs
+- **Checkpoint Strategy**: Save frequent checkpoints during long training runs
+- **Metric Tracking**: Monitor both quality and privacy metrics simultaneously
+
+### 3. Production Deployment
+
+- **Real-time Monitoring**: Continuously monitor privacy violations and performance
+- **Gradual Rollout**: Use A/B testing for safe deployment of optimized models
+- **Compliance**: Ensure adherence to privacy regulations (GDPR, CCPA, etc.)
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Arbor Server Issues**
+
+   ```bash
+   # Check server status
+   curl http://localhost:7453/health
+
+   # Restart with proper GPU configuration
+   python -m arbor.cli serve --arbor-config arbor.yaml
+   ```
+
+2. **Privacy Leakage**
+
+   ```python
+   # Enable verbose privacy logging
+   logging.getLogger("privacy").setLevel(logging.DEBUG)
+
+   # Implement stricter redaction
+   papillon.craft_redacted_request.temperature = 0.3  # More deterministic
+   ```
+
+3. **Quality Degradation**
+   ```python
+   # Adjust reward function balance
+   def balanced_reward(quality_score, privacy_score, privacy_weight=0.6):
+       return quality_score * (1 - privacy_weight) + privacy_score * privacy_weight
+   ```
+
+## Tutorial Results Summary
+
+**Baseline Performance:**
+
+- Composite Score: 54.6%
+- Quality Score: ~65%
+- Privacy Protection: ~44%
+
+**GRPO-Optimized Performance:**
+
+- Composite Score: 60.0% (9.9% relative improvement)
+- Training Time: 3 hours on 4×H100 GPUs
+- Model: Qwen3-1.7B with LoRA fine-tuning
+
+**Key Improvements:**
+
+1. Better privacy-preserving query redaction
+2. Improved balance between utility and privacy
+3. More effective PII masking techniques
+4. Enhanced response quality while maintaining privacy
+
+This tutorial demonstrates experimental RL optimization for privacy-preserving delegation systems. The PAPILLON architecture successfully teaches small models to leverage powerful external LLMs while minimizing privacy leakage, providing a foundation for privacy-conscious AI applications in enterprise environments.

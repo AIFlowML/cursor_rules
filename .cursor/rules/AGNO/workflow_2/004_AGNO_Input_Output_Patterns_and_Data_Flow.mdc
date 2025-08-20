@@ -1,0 +1,683 @@
+---
+description: AGNO Workflows 2.0 - Master input/output patterns and data flow for seamless workflow integration
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 input/output patterns and data flow management. Master all data types and flow patterns for maximum workflow flexibility.
+
+## Data Flow Architecture
+
+```
+Input Types → Workflow Entry → Step Processing → Output Generation → Response
+     ↓             ↓              ↓                ↓                ↓
+String/Dict/   Serialization   StepInput       StepOutput      WorkflowRun
+Pydantic/List  for Agents      Processing      Generation      Response
+     ↓             ↓              ↓                ↓                ↓
+Type Safe     Agent/Team       Custom Logic    Content/Media   Structured
+Input         Compatible       Access Data     Artifacts       Access
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Input Types
+```python
+from agno.workflow.v2 import Workflow
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Create simple workflow
+agent = Agent(name="Assistant", model=OpenAIChat(id="gpt-4o-mini"))
+workflow = Workflow(name="Data Flow Demo", steps=[agent])
+
+# String input (most common)
+response1 = workflow.run("Analyze AI trends in healthcare")
+
+# Dictionary input
+response2 = workflow.run({
+    "topic": "AI in healthcare", 
+    "focus": "recent developments",
+    "timeframe": "2024"
+})
+
+# List input
+response3 = workflow.run([
+    "Machine Learning",
+    "Deep Learning", 
+    "Natural Language Processing"
+])
+
+# Access outputs
+print(f"String result: {response1.content}")
+print(f"Dict result: {response2.content}")
+print(f"List result: {response3.content}")
+```
+
+### Production Ready - Structured Data Flow
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput
+from agno.workflow.v2.types import StepInput
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+from datetime import datetime
+
+# Define structured input models
+class ResearchRequest(BaseModel):
+    topic: str = Field(description="Research topic")
+    depth: int = Field(description="Research depth (1-10)", ge=1, le=10)
+    sources: List[str] = Field(description="Preferred information sources")
+    deadline: Optional[datetime] = Field(description="Research deadline")
+    metadata: Dict[str, str] = Field(default_factory=dict)
+
+class ResearchFindings(BaseModel):
+    topic: str
+    key_points: List[str]
+    sources_used: List[str]
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    word_count: int
+    research_quality: str
+
+class AnalysisReport(BaseModel):
+    research_topic: str
+    analysis_summary: str
+    insights: List[str]
+    recommendations: List[str]
+    risk_factors: List[str]
+    confidence_level: float
+
+# Configure agents with structured output
+research_agent = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=ResearchFindings,  # Structured output
+    role="Conduct comprehensive research with structured results"
+)
+
+analysis_agent = Agent(
+    name="Analysis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=AnalysisReport,   # Structured output
+    role="Analyze research data and provide insights"
+)
+
+# Custom function that handles structured data
+def data_transformer(step_input: StepInput) -> StepOutput:
+    """Transform structured research data to analysis format"""
+    
+    # Access structured data from previous step
+    research_data = step_input.previous_step_content
+    
+    # Type checking and validation
+    if isinstance(research_data, ResearchFindings):
+        # Access structured fields
+        topic = research_data.topic
+        key_points = research_data.key_points
+        confidence = research_data.confidence_score
+        
+        # Transform data for next step
+        transformed_data = {
+            "research_topic": topic,
+            "extracted_insights": key_points,
+            "data_quality": research_data.research_quality,
+            "confidence_threshold": confidence > 0.7
+        }
+        
+        enhanced_content = f"""
+        ## Data Transformation Report
+        
+        **Original Topic**: {topic}
+        **Key Insights**: {len(key_points)} points extracted
+        **Quality Score**: {confidence:.2f}
+        **Ready for Analysis**: {'✅ Yes' if confidence > 0.7 else '⚠️ Needs review'}
+        
+        **Transformed Data**:
+        {transformed_data}
+        """
+        
+        return StepOutput(
+            content=enhanced_content,
+            success=True
+        )
+    else:
+        return StepOutput(
+            content="❌ Invalid research data format received",
+            success=False,
+            error="Expected ResearchFindings model"
+        )
+
+# Production workflow with structured data flow
+structured_workflow = Workflow(
+    name="Structured Research Pipeline",
+    description="End-to-end structured data processing",
+    steps=[
+        Step(name="research", agent=research_agent),     # Outputs ResearchFindings
+        Step(name="transform", executor=data_transformer), # Processes structured data
+        Step(name="analyze", agent=analysis_agent)       # Outputs AnalysisReport
+    ]
+)
+
+# Execute with structured input
+request = ResearchRequest(
+    topic="Quantum Computing in Healthcare",
+    depth=8,
+    sources=["academic", "industry", "clinical"],
+    deadline=datetime(2024, 12, 31),
+    metadata={"priority": "high", "client": "healthcare-corp"}
+)
+
+response = structured_workflow.run(request)
+print(f"Final Analysis: {response.content}")
+```
+
+## Supported Input Types
+
+### 1. String Input - Simple Text
+```python
+# Most common input type - direct text
+workflow.run("Analyze renewable energy trends")
+workflow.run("Create a marketing strategy for AI startups")
+
+# Multi-line strings
+long_prompt = """
+Please analyze the following business requirements:
+1. Market research for fintech sector
+2. Competitive analysis of top 5 players  
+3. Strategic recommendations for market entry
+"""
+workflow.run(long_prompt)
+```
+
+### 2. Dictionary Input - Key-Value Pairs
+```python
+# Structured dictionary input
+workflow.run({
+    "action": "research",
+    "topic": "artificial intelligence",
+    "focus_areas": ["healthcare", "finance", "education"],
+    "depth": "comprehensive",
+    "sources": ["academic", "industry", "news"],
+    "output_format": "detailed_report"
+})
+
+# Nested dictionaries
+complex_input = {
+    "project": {
+        "name": "AI Market Analysis",
+        "priority": "high",
+        "stakeholders": ["CTO", "Product Manager", "Research Team"]
+    },
+    "requirements": {
+        "timeline": "2 weeks",
+        "deliverables": ["market_report", "competitive_analysis"],
+        "budget_range": "$50k-100k"
+    },
+    "constraints": {
+        "confidentiality": "high",
+        "data_sources": ["public", "licensed"]
+    }
+}
+workflow.run(complex_input)
+```
+
+### 3. List Input - Multiple Items
+```python
+# Simple list processing
+topics = [
+    "Machine Learning Applications",
+    "Natural Language Processing", 
+    "Computer Vision Advances",
+    "Robotics Innovation"
+]
+workflow.run(topics)
+
+# List of dictionaries
+research_tasks = [
+    {"topic": "AI Ethics", "priority": "high"},
+    {"topic": "ML Bias", "priority": "medium"},
+    {"topic": "AI Governance", "priority": "high"}
+]
+workflow.run(research_tasks)
+
+# Mixed type lists
+mixed_input = [
+    "Primary research topic",
+    {"subtopic": "Technical Analysis", "depth": 5},
+    ["keyword1", "keyword2", "keyword3"]
+]
+workflow.run(mixed_input)
+```
+
+### 4. Pydantic Model Input - Type-Safe Structured Data
+```python
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional
+from datetime import datetime
+from enum import Enum
+
+class Priority(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+class AnalysisRequest(BaseModel):
+    """Type-safe analysis request"""
+    
+    # Required fields
+    topic: str = Field(description="Main analysis topic")
+    priority: Priority = Field(description="Analysis priority level")
+    
+    # Optional fields with defaults
+    depth: int = Field(default=5, description="Analysis depth (1-10)", ge=1, le=10)
+    sources: List[str] = Field(default_factory=lambda: ["web", "academic"])
+    deadline: Optional[datetime] = Field(description="Analysis deadline")
+    
+    # Complex fields
+    metadata: Dict[str, any] = Field(default_factory=dict)
+    tags: List[str] = Field(default_factory=list)
+    
+    # Field validation
+    @validator('topic')
+    def topic_must_not_be_empty(cls, v):
+        if not v.strip():
+            raise ValueError('Topic cannot be empty')
+        return v.strip()
+    
+    @validator('sources')
+    def validate_sources(cls, v):
+        valid_sources = ['web', 'academic', 'industry', 'news', 'internal']
+        for source in v:
+            if source not in valid_sources:
+                raise ValueError(f'Invalid source: {source}')
+        return v
+
+# Usage with validation
+analysis_request = AnalysisRequest(
+    topic="Sustainable Energy Technologies",
+    priority=Priority.high,
+    depth=8,
+    sources=["academic", "industry"],
+    deadline=datetime(2024, 12, 15),
+    metadata={"client": "green-tech-corp", "budget": "high"},
+    tags=["sustainability", "renewable", "innovation"]
+)
+
+response = workflow.run(analysis_request)
+
+# Invalid request will raise validation error
+try:
+    invalid_request = AnalysisRequest(
+        topic="",  # Empty topic - will fail validation
+        priority=Priority.high
+    )
+except ValueError as e:
+    print(f"Validation error: {e}")
+```
+
+## Data Flow Between Steps
+
+### Step Input Data Access
+```python
+from agno.workflow.v2.types import StepInput
+
+def comprehensive_step_processor(step_input: StepInput) -> StepOutput:
+    """Example showing all input data access methods"""
+    
+    # 1. Current step input (from previous step or initial message)
+    current_input = step_input.message
+    print(f"Current input: {current_input}")
+    
+    # 2. Previous step output content
+    previous_output = step_input.previous_step_content
+    print(f"Previous step content: {previous_output}")
+    
+    # 3. Original workflow message (initial input)
+    original_message = step_input.workflow_message
+    print(f"Original workflow input: {original_message}")
+    
+    # 4. Additional data (metadata passed to workflow.run())
+    additional_data = step_input.additional_data or {}
+    print(f"Additional data: {additional_data}")
+    
+    # 5. Specific step content by name
+    research_data = step_input.get_step_content("research_phase")
+    analysis_data = step_input.get_step_content("analysis_phase")
+    
+    # 6. All previous step content combined
+    all_previous = step_input.get_all_previous_content()
+    
+    # Process all available data
+    combined_data = f"""
+    ## Comprehensive Data Processing
+    
+    **Current Input**: {current_input}
+    **Previous Content**: {len(str(previous_output))} characters
+    **Original Message**: {original_message}
+    **Additional Metadata**: {len(additional_data)} items
+    **Research Data Available**: {'✅' if research_data else '❌'}
+    **Analysis Data Available**: {'✅' if analysis_data else '❌'}
+    **Total Previous Content**: {len(all_previous)} characters
+    """
+    
+    return StepOutput(content=combined_data)
+```
+
+### Parallel Step Output Handling
+```python
+from agno.workflow.v2 import Parallel, Step
+
+def handle_parallel_outputs(step_input: StepInput) -> StepOutput:
+    """Handle outputs from parallel steps"""
+    
+    # When accessing parallel step outputs, they come as a dictionary
+    parallel_data = step_input.get_step_content("parallel_research")
+    
+    if isinstance(parallel_data, dict):
+        # Each parallel step's output is keyed by step name
+        hn_research = parallel_data.get("hackernews_research", "")
+        web_research = parallel_data.get("web_research", "")
+        academic_research = parallel_data.get("academic_research", "")
+        
+        combined_report = f"""
+        ## Parallel Research Results Synthesis
+        
+        **HackerNews Insights** ({len(hn_research)} chars):
+        {hn_research[:200]}...
+        
+        **Web Research** ({len(web_research)} chars):
+        {web_research[:200]}...
+        
+        **Academic Research** ({len(academic_research)} chars):
+        {academic_research[:200]}...
+        
+        **Synthesis**: Combined {len(str(parallel_data))} total characters from parallel research
+        """
+        
+        return StepOutput(content=combined_report)
+    else:
+        return StepOutput(
+            content="❌ Expected parallel step outputs not found",
+            success=False
+        )
+
+# Workflow with parallel step output handling
+parallel_workflow = Workflow(
+    name="Parallel Research Synthesis",
+    steps=[
+        Parallel(
+            Step(name="hackernews_research", agent=hn_agent),
+            Step(name="web_research", agent=web_agent), 
+            Step(name="academic_research", agent=academic_agent),
+            name="parallel_research"
+        ),
+        Step(name="synthesis", executor=handle_parallel_outputs)
+    ]
+)
+```
+
+## Output Patterns and Response Handling
+
+### WorkflowRunResponse Structure
+```python
+from agno.run.v2.workflow import WorkflowRunResponse
+
+def analyze_workflow_response(response: WorkflowRunResponse):
+    """Comprehensive response analysis"""
+    
+    print("=== Workflow Response Analysis ===")
+    
+    # Core response data
+    print(f"Run ID: {response.run_id}")
+    print(f"Status: {response.status}")
+    print(f"Created: {response.created_at}")
+    print(f"Updated: {response.updated_at}")
+    
+    # Content analysis
+    content = response.content or ""
+    print(f"Content length: {len(content)} characters")
+    print(f"Word count: {len(content.split())} words")
+    
+    # Media and artifacts
+    if hasattr(response, 'images') and response.images:
+        print(f"Images: {len(response.images)} generated")
+    
+    if hasattr(response, 'videos') and response.videos:
+        print(f"Videos: {len(response.videos)} generated")
+        
+    if hasattr(response, 'audio') and response.audio:
+        print(f"Audio: {len(response.audio)} files generated")
+    
+    # Events (if stored)
+    if response.events:
+        print(f"Events: {len(response.events)} recorded")
+        event_types = {}
+        for event in response.events:
+            event_type = event.get('event', 'unknown')
+            event_types[event_type] = event_types.get(event_type, 0) + 1
+        
+        print("Event breakdown:")
+        for event_type, count in event_types.items():
+            print(f"  - {event_type}: {count}")
+    
+    # Extract structured data if available
+    if hasattr(response, 'parsed_data'):
+        print(f"Structured data: {type(response.parsed_data)}")
+    
+    return {
+        "summary": {
+            "run_id": response.run_id,
+            "content_length": len(content),
+            "word_count": len(content.split()),
+            "has_media": bool(getattr(response, 'images', None)),
+            "event_count": len(response.events) if response.events else 0
+        },
+        "content": content
+    }
+
+# Usage
+response = workflow.run("Comprehensive analysis task")
+analysis = analyze_workflow_response(response)
+```
+
+### Streaming Response Handling
+```python
+from agno.run.v2.workflow import WorkflowRunResponseEvent
+
+def handle_streaming_response(workflow, message):
+    """Handle streaming workflow responses"""
+    
+    collected_content = []
+    step_outputs = {}
+    
+    for event in workflow.run(message, stream=True, stream_intermediate_steps=True):
+        event_type = event.event
+        
+        # Handle different event types
+        if event_type == "workflow_started":
+            print(f"🚀 Workflow started: {event.workflow_name}")
+            
+        elif event_type == "step_started":
+            print(f"⚡ Step started: {event.step_name}")
+            
+        elif event_type == "step_completed":
+            print(f"✅ Step completed: {event.step_name}")
+            if hasattr(event, 'content') and event.content:
+                step_outputs[event.step_name] = event.content
+                collected_content.append(event.content)
+                
+        elif event_type == "workflow_completed":
+            print(f"🎉 Workflow completed: {event.workflow_name}")
+            
+        # Agent/Team response events
+        elif hasattr(event, 'content') and event.content:
+            collected_content.append(event.content)
+            print(f"📝 Content received: {event.content[:100]}...")
+    
+    return {
+        "final_content": "\n".join(collected_content),
+        "step_outputs": step_outputs,
+        "total_events": len(collected_content)
+    }
+
+# Usage
+streaming_result = handle_streaming_response(
+    workflow, 
+    "Analyze market trends with detailed steps"
+)
+print(f"Final result: {streaming_result['final_content'][:200]}...")
+```
+
+## Additional Data and Metadata Flow
+
+### Passing Additional Data
+```python
+# Additional data flows through the entire workflow
+response = workflow.run(
+    message="Primary analysis task",
+    additional_data={
+        "priority": "high",
+        "client": "enterprise-corp",
+        "deadline": "2024-12-31",
+        "budget": "$100k",
+        "stakeholders": ["CTO", "Product Team"],
+        "constraints": ["confidentiality", "speed"],
+        "preferences": {
+            "format": "executive_summary",
+            "length": "detailed",
+            "charts": True
+        }
+    }
+)
+
+# Access in custom functions
+def metadata_aware_processor(step_input: StepInput) -> StepOutput:
+    additional_data = step_input.additional_data or {}
+    
+    priority = additional_data.get("priority", "normal")
+    client = additional_data.get("client", "unknown")
+    preferences = additional_data.get("preferences", {})
+    
+    # Adjust processing based on metadata
+    if priority == "high":
+        processing_mode = "expedited"
+    else:
+        processing_mode = "standard"
+    
+    output_format = preferences.get("format", "standard")
+    
+    processed_content = f"""
+    ## Metadata-Aware Processing Results
+    
+    **Client**: {client}
+    **Priority**: {priority} ({processing_mode} processing)
+    **Output Format**: {output_format}
+    
+    **Processing Details**: Customized based on client requirements
+    """
+    
+    return StepOutput(content=processed_content)
+```
+
+## Speed Tips
+
+### Efficient Input Patterns
+```python
+# Pre-structure complex inputs
+def create_analysis_input(topic, priority="medium", sources=None):
+    """Quick input creator for common analysis tasks"""
+    return {
+        "topic": topic,
+        "priority": priority,
+        "sources": sources or ["web", "academic"],
+        "timestamp": datetime.now().isoformat(),
+        "request_id": f"req_{hash(topic)}"
+    }
+
+# Batch input processing
+analysis_inputs = [
+    create_analysis_input("AI in Healthcare", "high"),
+    create_analysis_input("Renewable Energy", "medium"),
+    create_analysis_input("Quantum Computing", "high")
+]
+
+results = [workflow.run(input_data) for input_data in analysis_inputs]
+```
+
+### Response Processing Optimization
+```python
+# Quick response extraction
+def extract_key_data(response: WorkflowRunResponse):
+    """Extract essential data quickly"""
+    return {
+        "id": response.run_id,
+        "content": response.content,
+        "length": len(response.content or ""),
+        "success": response.status == "completed"
+    }
+
+# Batch response processing
+extracted_data = [extract_key_data(response) for response in results]
+```
+
+## Common Pitfalls
+
+### Input Serialization Issues
+```python
+# ❌ DON'T: Assume complex objects serialize correctly
+class ComplexObject:
+    def __init__(self):
+        self.data = "complex"
+
+workflow.run(ComplexObject())  # May not serialize properly
+
+# ✅ DO: Use serializable types or Pydantic models
+workflow.run({"type": "complex", "data": "serializable"})
+```
+
+### Output Access Errors
+```python
+# ❌ DON'T: Assume response structure
+response = workflow.run("task")
+content = response.data  # Attribute may not exist
+
+# ✅ DO: Check attributes exist
+response = workflow.run("task")
+if hasattr(response, 'content') and response.content:
+    content = response.content
+else:
+    print("No content in response")
+```
+
+### Step Data Flow Mistakes
+```python
+# ❌ DON'T: Assume previous step output format
+def bad_processor(step_input: StepInput) -> StepOutput:
+    data = step_input.previous_step_content
+    return StepOutput(content=data.upper())  # data might be None
+
+# ✅ DO: Validate input data
+def good_processor(step_input: StepInput) -> StepOutput:
+    data = step_input.previous_step_content or ""
+    if isinstance(data, str):
+        return StepOutput(content=data.upper())
+    else:
+        return StepOutput(content=f"Processed: {str(data)}")
+```
+
+## Best Practices Summary
+
+- **Use Appropriate Input Types**: Choose the right input format for your use case
+- **Validate Input Data**: Use Pydantic models for type safety and validation
+- **Handle None Values**: Always check for None in step inputs
+- **Access Response Safely**: Check response attributes before accessing
+- **Structure Additional Data**: Organize metadata consistently
+- **Type Check Structured Data**: Validate data types in custom functions  
+- **Handle Parallel Outputs**: Understand dictionary format for parallel step results
+- **Stream When Appropriate**: Use streaming for long-running workflows
+- **Extract Data Efficiently**: Create helper functions for common response patterns
+
+## References
+
+- [StepInput API](/docs/api/workflows_2/step_input.md)
+- [StepOutput API](/docs/api/workflows_2/step_output.md) 
+- [WorkflowRunResponse API](/docs/api/workflows_2/workflow_run_response.md)
+- [Pydantic Models Guide](/docs/structured_data/pydantic.md)

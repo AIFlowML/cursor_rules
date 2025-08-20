@@ -1,0 +1,684 @@
+---
+description: DSPy 3.0.1 Refine Module - Master iterative refinement with automatic feedback for optimal results
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's Refine module. Master iterative refinement through intelligent retry strategies, automatic feedback generation, and reward-based optimization.
+
+## Refine Architecture Flow
+
+```
+Define Module → Set Reward → Configure Attempts → Execute Refine → Return Best
+      ↓              ↓              ↓                ↓              ↓
+Base Module     Reward Function   N Attempts    Try + Feedback   Optimal Result
+Performance     Quality Metric    Temperature   Intelligent      Threshold Met
+      ↓              ↓              ↓                ↓              ↓
+Quality Check   Threshold Target  Heat Schedule  Self-Improve    Production Ready
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Refinement
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.7)
+dspy.configure(lm=lm)
+
+# Define reward function for quality
+def quality_reward(inputs, prediction):
+    """Reward function that checks answer quality."""
+    answer = prediction.answer
+    # Longer, more detailed answers score higher
+    detail_score = min(len(answer.split()) / 20.0, 1.0)
+    # Answers with reasoning score higher
+    reasoning_score = 1.0 if any(word in answer.lower() 
+                                for word in ['because', 'since', 'therefore']) else 0.5
+    return (detail_score + reasoning_score) / 2.0
+
+# Create base module
+qa_module = dspy.ChainOfThought("question -> answer")
+
+# Create refining module
+refined_qa = dspy.Refine(
+    module=qa_module,
+    N=3,                    # Try up to 3 times
+    reward_fn=quality_reward,
+    threshold=0.8           # Stop when quality >= 0.8
+)
+
+# Use with automatic refinement
+result = refined_qa(question="Why is the sky blue?")
+print(f"Best answer: {result.answer}")
+```
+
+### Production Ready - Advanced Refinement System
+
+```python
+import dspy
+from typing import Dict, Any
+
+class ComprehensiveAnalysisSignature(dspy.Signature):
+    """Perform comprehensive analysis with detailed reasoning and evidence."""
+    
+    topic: str = dspy.InputField(desc="Topic to analyze comprehensively")
+    context: str = dspy.InputField(desc="Background context and information")
+    requirements: str = dspy.InputField(desc="Specific analysis requirements")
+    
+    analysis: str = dspy.OutputField(desc="Detailed analytical breakdown")
+    evidence: str = dspy.OutputField(desc="Supporting evidence and examples")
+    conclusion: str = dspy.OutputField(desc="Well-reasoned conclusion")
+    confidence: float = dspy.OutputField(desc="Confidence in analysis (0-1)")
+
+def comprehensive_reward(inputs: Dict[str, Any], prediction) -> float:
+    """Multi-dimensional reward function for comprehensive analysis."""
+    analysis = prediction.analysis
+    evidence = prediction.evidence
+    conclusion = prediction.conclusion
+    confidence = getattr(prediction, 'confidence', 0.5)
+    
+    # Length quality (detailed responses)
+    analysis_length_score = min(len(analysis.split()) / 100.0, 1.0)
+    evidence_length_score = min(len(evidence.split()) / 50.0, 1.0)
+    
+    # Structure quality (organized thinking)
+    structure_keywords = ['first', 'second', 'third', 'furthermore', 'however', 'therefore']
+    structure_score = min(
+        sum(1 for keyword in structure_keywords if keyword in analysis.lower()) / 3.0,
+        1.0
+    )
+    
+    # Evidence quality (specific examples)
+    evidence_keywords = ['example', 'instance', 'case', 'study', 'research', 'data']
+    evidence_score = min(
+        sum(1 for keyword in evidence_keywords if keyword in evidence.lower()) / 2.0,
+        1.0
+    )
+    
+    # Confidence calibration (penalize overconfidence without evidence)
+    confidence_penalty = 0.0
+    if confidence > 0.8 and evidence_score < 0.5:
+        confidence_penalty = 0.2
+    
+    # Weighted final score
+    total_score = (
+        analysis_length_score * 0.3 +
+        structure_score * 0.3 +
+        evidence_score * 0.3 +
+        confidence * 0.1
+    ) - confidence_penalty
+    
+    return max(0.0, min(1.0, total_score))
+
+# Create sophisticated analysis system
+base_analyzer = dspy.ChainOfThought(ComprehensiveAnalysisSignature)
+
+# Create refined analyzer with high standards
+refined_analyzer = dspy.Refine(
+    module=base_analyzer,
+    N=5,                        # Up to 5 refinement attempts
+    reward_fn=comprehensive_reward,
+    threshold=0.85,             # High quality threshold
+    fail_count=3                # Allow 3 failures before giving up
+)
+
+# Use for complex analysis
+result = refined_analyzer(
+    topic="Impact of artificial intelligence on employment",
+    context="Current AI adoption trends in various industries",
+    requirements="Include economic data, specific examples, and policy implications"
+)
+
+print("Analysis Quality Achieved!")
+print(f"Analysis: {result.analysis}")
+print(f"Evidence: {result.evidence}")
+print(f"Conclusion: {result.conclusion}")
+```
+
+## Core Refine Patterns
+
+### Quality-Based Refinement
+
+```python
+# Text quality refinement
+def text_quality_reward(inputs, prediction):
+    text = prediction.response
+    
+    # Grammar and clarity indicators
+    quality_indicators = [
+        len(text.split()) >= 20,           # Sufficient length
+        '.' in text,                       # Proper sentences
+        text[0].isupper(),                 # Proper capitalization
+        not any(word in text.lower() for word in ['um', 'uh', 'like']),  # No filler words
+        any(word in text.lower() for word in ['because', 'therefore', 'thus'])  # Reasoning
+    ]
+    
+    return sum(quality_indicators) / len(quality_indicators)
+
+text_refiner = dspy.Refine(
+    module=dspy.Predict("prompt -> response"),
+    N=4,
+    reward_fn=text_quality_reward,
+    threshold=0.8
+)
+
+# Accuracy-based refinement
+def accuracy_reward(inputs, prediction):
+    # Custom logic to check factual accuracy
+    answer = prediction.answer.lower()
+    correct_keywords = inputs.get('expected_keywords', [])
+    accuracy = sum(1 for keyword in correct_keywords if keyword in answer)
+    return accuracy / max(len(correct_keywords), 1)
+
+accuracy_refiner = dspy.Refine(
+    module=dspy.ChainOfThought("question -> answer"),
+    N=3,
+    reward_fn=accuracy_reward,
+    threshold=1.0  # Perfect accuracy required
+)
+```
+
+### Domain-Specific Refinement
+
+```python
+# Code generation refinement
+def code_quality_reward(inputs, prediction):
+    code = prediction.code
+    
+    quality_checks = [
+        'def ' in code or 'class ' in code,    # Has functions/classes
+        code.count('\n') >= 5,                 # Multi-line code
+        '#' in code,                           # Has comments
+        'return' in code,                      # Has return statements
+        code.count('(') == code.count(')'),    # Balanced parentheses
+    ]
+    
+    return sum(quality_checks) / len(quality_checks)
+
+code_refiner = dspy.Refine(
+    module=dspy.ChainOfThought("problem -> reasoning, code"),
+    N=4,
+    reward_fn=code_quality_reward,
+    threshold=0.8
+)
+
+# Creative writing refinement
+def creativity_reward(inputs, prediction):
+    story = prediction.story
+    
+    creativity_indicators = [
+        len(set(story.split())) / len(story.split()),  # Vocabulary diversity
+        story.count(',') >= 3,                         # Complex sentences
+        any(word in story.lower() for word in ['suddenly', 'mysterious', 'unexpected']),
+        len(story.split()) >= 100,                     # Adequate length
+        story.count('"') >= 2,                         # Has dialogue
+    ]
+    
+    return sum(creativity_indicators) / len(creativity_indicators)
+
+creative_refiner = dspy.Refine(
+    module=dspy.ChainOfThought("prompt -> imagination, story"),
+    N=5,
+    reward_fn=creativity_reward,
+    threshold=0.7
+)
+```
+
+### Multi-Criteria Refinement
+
+```python
+class MultiCriteriaRefinement:
+    def __init__(self, criteria_weights: Dict[str, float]):
+        self.criteria_weights = criteria_weights
+        self.total_weight = sum(criteria_weights.values())
+    
+    def create_reward_function(self, criteria_functions: Dict[str, callable]):
+        def multi_reward(inputs, prediction):
+            total_score = 0.0
+            
+            for criterion, weight in self.criteria_weights.items():
+                if criterion in criteria_functions:
+                    criterion_score = criteria_functions[criterion](inputs, prediction)
+                    weighted_score = criterion_score * (weight / self.total_weight)
+                    total_score += weighted_score
+            
+            return total_score
+        
+        return multi_reward
+
+# Define individual criteria
+def length_criterion(inputs, prediction):
+    return min(len(prediction.response.split()) / 50.0, 1.0)
+
+def clarity_criterion(inputs, prediction):
+    text = prediction.response
+    clear_indicators = ['first', 'second', 'in conclusion', 'therefore']
+    return min(sum(1 for indicator in clear_indicators if indicator in text.lower()) / 2.0, 1.0)
+
+def relevance_criterion(inputs, prediction):
+    # Check if response addresses the input topic
+    topic_words = inputs['topic'].lower().split()
+    response_words = prediction.response.lower().split()
+    overlap = len(set(topic_words) & set(response_words))
+    return overlap / len(topic_words)
+
+# Create multi-criteria refiner
+multi_criteria = MultiCriteriaRefinement({
+    'length': 0.3,
+    'clarity': 0.4,
+    'relevance': 0.3
+})
+
+multi_reward = multi_criteria.create_reward_function({
+    'length': length_criterion,
+    'clarity': clarity_criterion,
+    'relevance': relevance_criterion
+})
+
+comprehensive_refiner = dspy.Refine(
+    module=dspy.ChainOfThought("topic -> response"),
+    N=6,
+    reward_fn=multi_reward,
+    threshold=0.75
+)
+```
+
+## Advanced Refinement Patterns
+
+### Progressive Refinement
+
+```python
+class ProgressiveRefiner(dspy.Module):
+    def __init__(self, base_module, reward_stages: list):
+        super().__init__()
+        self.base_module = base_module
+        self.refiners = []
+        
+        # Create refiners for each progressive stage
+        for i, (reward_fn, threshold, attempts) in enumerate(reward_stages):
+            refiner = dspy.Refine(
+                module=base_module,
+                N=attempts,
+                reward_fn=reward_fn,
+                threshold=threshold
+            )
+            self.refiners.append(refiner)
+    
+    def forward(self, **kwargs):
+        result = None
+        
+        # Apply refiners progressively
+        for i, refiner in enumerate(self.refiners):
+            if result is None:
+                result = refiner(**kwargs)
+            else:
+                # Use previous result as context for next refinement
+                enhanced_kwargs = {**kwargs, 'previous_attempt': str(result)}
+                result = refiner(**enhanced_kwargs)
+        
+        return result
+
+# Usage with progressive refinement stages
+def basic_quality(inputs, prediction):
+    return min(len(prediction.answer.split()) / 10.0, 1.0)
+
+def detailed_quality(inputs, prediction):
+    answer = prediction.answer
+    detail_words = ['specifically', 'detailed', 'comprehensive', 'thorough']
+    return min(sum(1 for word in detail_words if word in answer.lower()) / 2.0, 1.0)
+
+def expert_quality(inputs, prediction):
+    answer = prediction.answer
+    expert_indicators = ['research shows', 'studies indicate', 'evidence suggests']
+    return min(sum(1 for phrase in expert_indicators if phrase in answer.lower()) / 1.0, 1.0)
+
+progressive_stages = [
+    (basic_quality, 0.5, 2),      # Basic quality first
+    (detailed_quality, 0.7, 3),   # Then detail
+    (expert_quality, 0.8, 4)      # Finally expertise
+]
+
+progressive_refiner = ProgressiveRefiner(
+    dspy.ChainOfThought("question -> answer"),
+    progressive_stages
+)
+```
+
+### Adaptive Threshold Refinement
+
+```python
+class AdaptiveRefiner(dspy.Module):
+    def __init__(self, base_module, initial_threshold=0.8, max_attempts=5):
+        super().__init__()
+        self.base_module = base_module
+        self.initial_threshold = initial_threshold
+        self.max_attempts = max_attempts
+        self.performance_history = []
+    
+    def adaptive_reward(self, inputs, prediction):
+        # Your custom reward logic here
+        score = min(len(prediction.response.split()) / 30.0, 1.0)
+        self.performance_history.append(score)
+        return score
+    
+    def get_adaptive_threshold(self):
+        if len(self.performance_history) < 3:
+            return self.initial_threshold
+        
+        # Lower threshold if consistently failing
+        recent_scores = self.performance_history[-3:]
+        avg_recent = sum(recent_scores) / len(recent_scores)
+        
+        if avg_recent < self.initial_threshold * 0.7:
+            return self.initial_threshold * 0.8  # Lower threshold
+        else:
+            return self.initial_threshold
+    
+    def forward(self, **kwargs):
+        current_threshold = self.get_adaptive_threshold()
+        
+        refiner = dspy.Refine(
+            module=self.base_module,
+            N=self.max_attempts,
+            reward_fn=self.adaptive_reward,
+            threshold=current_threshold
+        )
+        
+        return refiner(**kwargs)
+```
+
+### Ensemble Refinement
+
+```python
+class EnsembleRefiner(dspy.Module):
+    def __init__(self, base_module, ensemble_size=3):
+        super().__init__()
+        self.base_module = base_module
+        self.ensemble_size = ensemble_size
+    
+    def ensemble_reward(self, inputs, prediction):
+        # Reward based on consensus across multiple attempts
+        attempts = getattr(self, '_current_attempts', [])
+        if len(attempts) < 2:
+            return 0.5  # Not enough for consensus
+        
+        # Simple consensus: check similarity across attempts
+        current = prediction.response.lower()
+        similarities = []
+        
+        for attempt in attempts:
+            previous = attempt.response.lower()
+            # Simple word overlap similarity
+            current_words = set(current.split())
+            previous_words = set(previous.split())
+            if len(current_words | previous_words) > 0:
+                similarity = len(current_words & previous_words) / len(current_words | previous_words)
+                similarities.append(similarity)
+        
+        return sum(similarities) / len(similarities) if similarities else 0.5
+    
+    def forward(self, **kwargs):
+        self._current_attempts = []
+        
+        # Create ensemble of refiners
+        results = []
+        for i in range(self.ensemble_size):
+            refiner = dspy.Refine(
+                module=self.base_module,
+                N=3,
+                reward_fn=self.ensemble_reward,
+                threshold=0.6
+            )
+            result = refiner(**kwargs)
+            results.append(result)
+            self._current_attempts.append(result)
+        
+        # Return best result based on ensemble evaluation
+        best_result = max(results, key=lambda r: self.ensemble_reward(kwargs, r))
+        return best_result
+```
+
+## Refinement Monitoring and Analysis
+
+### Performance Tracking
+
+```python
+class TrackedRefiner(dspy.Module):
+    def __init__(self, base_module, reward_fn, threshold=0.8, N=3):
+        super().__init__()
+        self.refiner = dspy.Refine(
+            module=base_module,
+            N=N,
+            reward_fn=self._tracked_reward,
+            threshold=threshold
+        )
+        self.original_reward_fn = reward_fn
+        self.attempt_scores = []
+        self.successful_attempts = []
+        self.total_attempts = 0
+    
+    def _tracked_reward(self, inputs, prediction):
+        score = self.original_reward_fn(inputs, prediction)
+        self.attempt_scores.append(score)
+        self.total_attempts += 1
+        
+        if score >= self.refiner.threshold:
+            self.successful_attempts.append(self.total_attempts)
+        
+        return score
+    
+    def get_performance_stats(self):
+        if not self.attempt_scores:
+            return {"status": "No attempts yet"}
+        
+        return {
+            "total_attempts": self.total_attempts,
+            "successful_rate": len(self.successful_attempts) / self.total_attempts,
+            "average_score": sum(self.attempt_scores) / len(self.attempt_scores),
+            "best_score": max(self.attempt_scores),
+            "improvement_trend": self.attempt_scores[-5:] if len(self.attempt_scores) >= 5 else self.attempt_scores
+        }
+    
+    def forward(self, **kwargs):
+        result = self.refiner(**kwargs)
+        return result
+
+# Usage with performance tracking
+def simple_reward(inputs, prediction):
+    return min(len(prediction.answer.split()) / 20.0, 1.0)
+
+tracked_refiner = TrackedRefiner(
+    base_module=dspy.ChainOfThought("question -> answer"),
+    reward_fn=simple_reward,
+    threshold=0.7,
+    N=4
+)
+
+# Use and monitor
+result = tracked_refiner(question="Explain quantum computing")
+stats = tracked_refiner.get_performance_stats()
+print(f"Performance: {stats}")
+```
+
+## Speed Tips
+
+### Efficient Refinement Strategies
+
+```python
+# Quick quality check for early termination
+def fast_quality_check(inputs, prediction):
+    # Simple, fast quality indicators
+    text = prediction.response
+    basic_quality = (
+        len(text) > 50 and                    # Minimum length
+        text.endswith('.') and                # Proper ending
+        text[0].isupper()                     # Proper start
+    )
+    return 1.0 if basic_quality else 0.0
+
+# Use low N for simple tasks
+simple_refiner = dspy.Refine(
+    module=dspy.Predict("input -> output"),
+    N=2,                                      # Just 2 attempts
+    reward_fn=fast_quality_check,
+    threshold=1.0                            # Binary quality
+)
+
+# Cache reward computations for complex metrics
+from functools import lru_cache
+
+class CachedRewardRefiner:
+    def __init__(self):
+        self.cache = {}
+    
+    @lru_cache(maxsize=1000)
+    def _compute_complex_reward(self, text_hash):
+        # Expensive reward computation here
+        # Use hash of text as cache key
+        pass
+    
+    def reward_function(self, inputs, prediction):
+        text = prediction.response
+        text_hash = hash(text)
+        return self._compute_complex_reward(text_hash)
+```
+
+### Temperature Strategy Optimization
+
+```python
+# Custom temperature strategies for different scenarios
+class OptimizedRefiner(dspy.Module):
+    def __init__(self, base_module, task_type="general"):
+        super().__init__()
+        
+        # Different strategies for different tasks
+        strategies = {
+            "factual": {                      # Factual tasks need consistency
+                "temperatures": [0.1, 0.2, 0.3],
+                "N": 3,
+                "threshold": 0.9
+            },
+            "creative": {                     # Creative tasks need exploration
+                "temperatures": [0.7, 0.8, 0.9],
+                "N": 5,
+                "threshold": 0.6
+            },
+            "analytical": {                   # Analytical tasks need balance
+                "temperatures": [0.3, 0.5, 0.7],
+                "N": 4,
+                "threshold": 0.8
+            }
+        }
+        
+        config = strategies.get(task_type, strategies["general"])
+        
+        # Override default temperature strategy in Refine
+        self.refiner = dspy.Refine(
+            module=base_module,
+            N=config["N"],
+            reward_fn=self._task_specific_reward,
+            threshold=config["threshold"]
+        )
+        self.temperatures = config["temperatures"]
+    
+    def _task_specific_reward(self, inputs, prediction):
+        # Implement task-specific reward logic
+        return min(len(prediction.response.split()) / 25.0, 1.0)
+    
+    def forward(self, **kwargs):
+        return self.refiner(**kwargs)
+```
+
+## Common Pitfalls
+
+### Over-Refinement
+
+```python
+# ❌ DON'T: Set threshold too high for simple tasks
+over_refiner = dspy.Refine(
+    module=dspy.Predict("name -> greeting"),
+    N=10,                                    # Too many attempts
+    reward_fn=lambda i, p: 0.99,           # Impossible threshold
+    threshold=0.99
+)
+
+# ✅ DO: Use reasonable thresholds
+good_refiner = dspy.Refine(
+    module=dspy.Predict("name -> greeting"),
+    N=3,                                     # Reasonable attempts
+    reward_fn=lambda i, p: len(p.greeting.split()) / 5.0,
+    threshold=0.6                           # Achievable threshold
+)
+```
+
+### Poor Reward Functions
+
+```python
+# ❌ DON'T: Use non-discriminative reward functions
+def bad_reward(inputs, prediction):
+    return 0.5  # Always same score - no improvement signal!
+
+# ✅ DO: Create discriminative reward functions
+def good_reward(inputs, prediction):
+    quality_score = 0.0
+    text = prediction.response
+    
+    # Multiple quality dimensions
+    if len(text.split()) >= 10:
+        quality_score += 0.3
+    if '.' in text:
+        quality_score += 0.2
+    if any(word in text.lower() for word in ['because', 'therefore']):
+        quality_score += 0.3
+    if text[0].isupper():
+        quality_score += 0.2
+    
+    return quality_score
+```
+
+### Ignoring Refinement Context
+
+```python
+# ❌ DON'T: Ignore that refinement provides feedback
+simple_module = dspy.ChainOfThought("question -> answer")
+refiner = dspy.Refine(simple_module, N=3, reward_fn=some_reward, threshold=0.8)
+
+# ✅ DO: Design modules to benefit from refinement feedback
+class RefinementAwareModule(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.predictor = dspy.ChainOfThought(
+            "question, hint_ -> reasoning, answer",  # Note: hint_ field for feedback
+        )
+    
+    def forward(self, question, hint_="", **kwargs):
+        # Use hint from refinement feedback if available
+        return self.predictor(question=question, hint_=hint_, **kwargs)
+
+aware_refiner = dspy.Refine(
+    RefinementAwareModule(),
+    N=3,
+    reward_fn=quality_reward,
+    threshold=0.8
+)
+```
+
+## Best Practices Summary
+
+- **Smart thresholds**: Set achievable but challenging quality thresholds
+- **Discriminative rewards**: Create reward functions that provide clear improvement signals
+- **Appropriate N**: Use reasonable attempt counts based on task complexity
+- **Monitor performance**: Track refinement success rates and adjust parameters
+- **Task-specific design**: Tailor refinement strategies to specific task requirements
+- **Feedback awareness**: Design modules to benefit from refinement feedback
+- **Progressive refinement**: Use staged approaches for complex quality requirements
+- **Ensemble strategies**: Combine multiple refinement approaches for robustness
+
+## References
+
+- [Refine Module API Documentation](/docs/api/modules/Refine.md)
+- [Reward Function Design Guide](/docs/guides/reward_functions.md)
+- [Quality Optimization Tutorial](/docs/tutorials/quality_optimization/)
+- [Advanced Refinement Patterns](/docs/examples/refinement/)

@@ -1,0 +1,919 @@
+---
+description: DSPY 3 GEPA Papillon Tutorial - Privacy-conscious delegation optimization with 77% to 86% improvement
+alwaysApply: false
+---
+
+> You are an expert in GEPA optimization for privacy-conscious delegation using DSPy 3.0.1 based on the official PAPILLON tutorial.
+
+## GEPA Privacy-Conscious Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                GEPA PAPILLON Privacy Optimization                  │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────┐  │
+│  │ Private Query    │    │ Redacted Request │    │ External LLM │  │
+│  │ (User Input)     │───▶│ Craft Module     │───▶│ Processing   │  │
+│  │                  │    │ (Local LM)       │    │ (Untrusted)  │  │
+│  └──────────────────┘    └──────────────────┘    └──────────────┘  │
+│           │                         │                       │       │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                    Privacy Filter System                       │  │
+│  │  • PII Detection     • Information Anonymization              │  │
+│  │  • Context Removal   • Generalization Strategies             │  │
+│  │  • Entity Masking    • Safe Prompt Generation                │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│           │                         │                       │       │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────┐  │
+│  │ Response         │    │ Final Response   │    │ LLM Response │  │
+│  │ Integration      │◄───│ Generation       │◄───│ Processing   │  │
+│  │ (Local LM)       │    │ (Local LM)       │    │              │  │
+│  └──────────────────┘    └──────────────────┘    └──────────────┘  │
+│           │                         │                       │       │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                  GEPA Feedback System                          │  │
+│  │  • Quality Score (vs target response)                         │  │
+│  │  • Leakage Score (PII detection)                             │  │
+│  │  • Composite Score = (Quality + (1-Leakage)) / 2             │  │
+│  │  • Rich textual feedback for improvement                      │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### PAPILLON System Architecture (From Tutorial)
+
+```python
+import dspy
+from datasets import load_dataset
+
+# Configure models - Local LM for privacy, External LM for power
+api_key = "your-openai-api-key"
+local_lm = dspy.LM(model="openai/gpt-4.1-nano", api_key=api_key)  # Small, privacy-focused
+large_lm = dspy.LM(model="openai/gpt-4.1-mini", api_key=api_key)  # Powerful, untrusted
+dspy.configure(lm=local_lm)
+
+class CraftRedactedRequest(dspy.Signature):
+    """
+    Given a private user query, create a privacy-preserving request for a powerful external LLM.
+    The LLM may assist without learning private information about the user.
+    """
+    user_query = dspy.InputField()
+    llm_request = dspy.OutputField()
+
+class RespondToQuery(dspy.Signature):
+    """
+    Respond to a user query.
+    For inspiration, we found a potentially related request to a powerful external LLM and its response.
+    """
+    related_llm_request = dspy.InputField()
+    related_llm_response = dspy.InputField(desc="information from a powerful LLM responding to a related request")
+    user_query = dspy.InputField(desc="the user's request you need to fulfill")
+    response = dspy.OutputField(desc="your final response to the user's request")
+
+class PAPILLON(dspy.Module):
+    def __init__(self, untrusted_model):
+        self.craft_redacted_request = dspy.ChainOfThought(CraftRedactedRequest)
+        self.respond_to_query = dspy.Predict(RespondToQuery)
+        self.untrusted_model = untrusted_model
+
+    def forward(self, user_query):
+        try:
+            # Step 1: Create privacy-preserving request (local LM)
+            llm_request = self.craft_redacted_request(user_query=user_query).llm_request
+
+            # Step 2: Send to untrusted external LLM
+            llm_response = self.untrusted_model(llm_request)[0]
+
+            # Step 3: Generate final response using external info (local LM)
+            response = self.respond_to_query(
+                related_llm_request=llm_request,
+                related_llm_response=llm_response,
+                user_query=user_query
+            ).response
+
+        except Exception:
+            return dspy.Prediction(llm_request="", llm_response="", response="")
+
+        return dspy.Prediction(
+            llm_request=llm_request,
+            llm_response=llm_response,
+            response=response
+        )
+
+# Initialize PAPILLON system
+papillon = PAPILLON(untrusted_model=large_lm)
+```
+
+### Privacy Dataset Setup (From Tutorial)
+
+```python
+# Load PUPA privacy dataset
+pupa_tnb = load_dataset("Columbia-NLP/PUPA", "pupa_tnb")
+pupa_new = load_dataset("Columbia-NLP/PUPA", "pupa_new")
+
+examples = [
+    dspy.Example({
+        "target_response": x["target_response"],
+        "user_query": x["user_query"],
+        "pii_str": x["pii_units"]
+    }).with_inputs("user_query")
+    for x in pupa_new["train"]
+]
+
+trainset, devset, testset = examples[:225], examples[225:450], examples[450:]
+print(f"Loaded {len(trainset)} training, {len(devset)} dev, {len(testset)} test examples")
+# Output: Loaded 225 training, 225 dev, 214 test examples
+```
+
+### Performance Results (From Official Tutorial)
+
+- **Baseline Performance**: 163.71/214 (76.5% composite score)
+- **GEPA Optimized (1 iteration)**: 184.26/214 (86.1% composite score)
+- **Improvement**: 9.6 percentage points (12.6% relative improvement)
+- **Sample Efficiency**: Significant improvement with just 1 candidate generation
+- **Optimization Time**: ~7 minutes for single iteration
+
+### Privacy-Aware Evaluation System
+
+```python
+class JudgeQuality(dspy.Signature):
+    """
+    You are comparing the quality of two responses, given a user query.
+    Is response A at least as good as response B?
+    """
+    user_query = dspy.InputField(desc="The user's request to be fulfilled.")
+    response_A = dspy.InputField()
+    response_B = dspy.InputField()
+    judgment: bool = dspy.OutputField()
+
+class JudgeLeakage(dspy.Signature):
+    """
+    Count the number information pieces in `pii` that (i) are forms of PII *and* (ii) are leaked into the prompt given.
+    Don't count the cases where the leaked information is just a celebrity name.
+    Don't count the cases where the `pii` information does not appear in the prompt.
+    """
+    pii = dspy.InputField()
+    prompt = dspy.InputField()
+    num_pii_leaked: int = dspy.OutputField()
+
+class LLMJudge(dspy.Module):
+    def __init__(self):
+        self.quality_judge = dspy.ChainOfThought(JudgeQuality)
+        self.fact_checker = dspy.ChainOfThought(JudgeLeakage)
+
+    def forward(self, user_query, og_resp, new_resp=None, updated_query=None, pii_str=None):
+        # Bidirectional quality comparison
+        judgment_1 = self.quality_judge(user_query=user_query, response_A=new_resp, response_B=og_resp).judgment
+        judgment_2 = self.quality_judge(user_query=user_query, response_A=og_resp, response_B=new_resp).judgment
+        judgment = judgment_1 or (judgment_1 == judgment_2)  # True if better or if judge is inconsistent
+
+        # Privacy leakage assessment
+        pii = list(set(pii_str.split("||")))  # The pii_str field must be separated by `||`
+        pii_score = self.fact_checker(pii=pii, prompt=updated_query).num_pii_leaked
+        pii_score = pii_score / len(pii) if len(pii) > 0 else 0
+
+        return dspy.Prediction(quality=judgment, leakage=pii_score)
+
+# Initialize privacy-aware judge
+llm_judge = LLMJudge()
+llm_judge.set_lm(large_lm)  # Use powerful model for evaluation
+
+def compute_overall_score(gold, pred, trace=None):
+    """Composite privacy-quality metric"""
+    metrics = llm_judge(
+        user_query=gold.user_query,
+        new_resp=pred.response,
+        og_resp=gold.target_response,
+        updated_query=pred.llm_request,
+        pii_str=gold.pii_str,
+    )
+    # Balanced scoring: quality + privacy
+    overall_score = (metrics.quality + (1 - metrics.leakage)) / 2.0
+    return overall_score
+```
+
+### Production Privacy-Conscious GEPA System
+
+```python
+import mlflow
+from typing import Dict, List, Any, Optional
+import logging
+import re
+from datetime import datetime
+
+class PrivacyGEPAOptimizer:
+    def __init__(
+        self,
+        local_lm: str = "openai/gpt-4.1-nano",
+        external_lm: str = "openai/gpt-4.1-mini",
+        reflection_lm: str = "openai/gpt-4.1",
+        budget: str = "light",
+        api_key: str = None
+    ):
+        # Configure privacy-conscious models
+        self.local_lm = dspy.LM(local_lm, api_key=api_key)      # Privacy-focused
+        self.external_lm = dspy.LM(external_lm, api_key=api_key) # Power-focused
+        self.reflection_lm = dspy.LM(reflection_lm, api_key=api_key) # Analysis
+        self.budget = budget
+
+        # Setup privacy tracking
+        mlflow.set_experiment("GEPA-Privacy-Optimization")
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+        self.pii_patterns = self.compile_pii_patterns()
+
+    def compile_pii_patterns(self) -> Dict[str, str]:
+        """Compile regex patterns for PII detection"""
+        return {
+            'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            'phone': r'\b(?:\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})\b',
+            'ssn': r'\b\d{3}-?\d{2}-?\d{4}\b',
+            'name': r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b',
+            'address': r'\d+\s+\w+\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)',
+            'date': r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b'
+        }
+
+    def create_privacy_feedback_metric(self) -> callable:
+        """Create feedback metric optimized for privacy-quality balance"""
+
+        def privacy_feedback_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+            try:
+                # Evaluate with privacy-aware judge
+                judge_result = llm_judge(
+                    user_query=example.user_query,
+                    new_resp=prediction.response,
+                    og_resp=example.target_response,
+                    updated_query=prediction.llm_request,
+                    pii_str=example.pii_str,
+                )
+
+                quality_score = float(judge_result.quality)
+                leakage_score = float(judge_result.leakage)
+                overall_score = (quality_score + (1 - leakage_score)) / 2.0
+
+                # Generate rich feedback
+                feedback_components = []
+
+                # Overall performance assessment
+                if overall_score >= 0.9:
+                    feedback_components.append("🏆 EXCELLENT privacy-quality balance")
+                elif overall_score >= 0.7:
+                    feedback_components.append("✅ GOOD privacy-quality balance")
+                elif overall_score >= 0.5:
+                    feedback_components.append("⚠️ MODERATE performance - needs improvement")
+                else:
+                    feedback_components.append("❌ POOR performance - significant issues")
+
+                # Quality analysis
+                if quality_score >= 0.8:
+                    feedback_components.append("Quality: High response quality maintained")
+                else:
+                    feedback_components.append(f"Quality: Response quality needs improvement (score: {quality_score:.2f})")
+
+                # Privacy analysis
+                if leakage_score <= 0.1:
+                    feedback_components.append("Privacy: Excellent PII protection")
+                elif leakage_score <= 0.3:
+                    feedback_components.append("Privacy: Good PII protection with minor leaks")
+                else:
+                    feedback_components.append(f"Privacy: SIGNIFICANT PII leakage detected ({leakage_score:.2f})")
+
+                # Specific improvement guidance
+                if hasattr(prediction, 'llm_request'):
+                    privacy_issues = self.analyze_privacy_issues(prediction.llm_request, example.pii_str)
+                    if privacy_issues:
+                        feedback_components.append(f"Privacy Issues: {privacy_issues}")
+
+                # Quality improvement suggestions
+                if quality_score < 0.7:
+                    quality_suggestions = self.suggest_quality_improvements(
+                        prediction.response, example.target_response
+                    )
+                    feedback_components.append(f"Quality Improvements: {quality_suggestions}")
+
+                feedback_text = " | ".join(feedback_components)
+
+                return dspy.Prediction(score=overall_score, feedback=feedback_text)
+
+            except Exception as e:
+                error_feedback = f"EVALUATION_ERROR: {str(e)} | Check privacy pipeline integrity"
+                return dspy.Prediction(score=0.0, feedback=error_feedback)
+
+        return privacy_feedback_metric
+
+    def analyze_privacy_issues(self, llm_request: str, pii_str: str) -> str:
+        """Analyze specific privacy issues in the request"""
+        issues = []
+        pii_items = pii_str.split("||") if pii_str else []
+
+        for pii_item in pii_items:
+            if pii_item.strip() and pii_item.lower().strip() in llm_request.lower():
+                issues.append(f"Leaked: '{pii_item}'")
+
+        # Pattern-based detection
+        for pii_type, pattern in self.pii_patterns.items():
+            matches = re.findall(pattern, llm_request)
+            if matches:
+                issues.append(f"Pattern leak ({pii_type}): {len(matches)} instances")
+
+        return "; ".join(issues) if issues else "No specific issues detected"
+
+    def suggest_quality_improvements(self, response: str, target_response: str) -> str:
+        """Suggest quality improvements based on response comparison"""
+        suggestions = []
+
+        # Length comparison
+        if len(response.split()) < len(target_response.split()) * 0.7:
+            suggestions.append("Provide more detailed response")
+        elif len(response.split()) > len(target_response.split()) * 1.5:
+            suggestions.append("Make response more concise")
+
+        # Structure analysis
+        if ":" in target_response and ":" not in response:
+            suggestions.append("Include structured formatting")
+
+        if "\n" in target_response and "\n" not in response:
+            suggestions.append("Use paragraph breaks for clarity")
+
+        return "; ".join(suggestions) if suggestions else "Focus on matching target response style"
+
+    def optimize_privacy_system(
+        self,
+        trainset: List[dspy.Example],
+        devset: List[dspy.Example],
+        testset: List[dspy.Example]
+    ) -> dspy.Module:
+        """Run privacy-conscious GEPA optimization"""
+
+        with mlflow.start_run(run_name=f"GEPA-Privacy-{self.budget}"):
+            # Log privacy configuration
+            mlflow.log_params({
+                "optimization_type": "privacy_conscious",
+                "local_lm": str(self.local_lm),
+                "external_lm": str(self.external_lm),
+                "budget": self.budget,
+                "train_size": len(trainset),
+                "dev_size": len(devset),
+                "test_size": len(testset)
+            })
+
+            # Create privacy-optimized PAPILLON system
+            papillon = PAPILLON(untrusted_model=self.external_lm)
+            papillon.set_lm(self.local_lm)
+
+            # Baseline evaluation
+            baseline_evaluator = dspy.Evaluate(
+                devset=testset,
+                metric=compute_overall_score,
+                num_threads=16,
+                display_progress=True,
+                display_table=5,
+                max_errors=100
+            )
+
+            baseline_score = baseline_evaluator(papillon)
+            mlflow.log_metric("baseline_composite_score", baseline_score)
+            logging.info(f"Baseline privacy-quality score: {baseline_score:.1%}")
+
+            # Create enhanced feedback metric
+            privacy_feedback = self.create_privacy_feedback_metric()
+
+            # Configure GEPA for privacy optimization
+            compiler = dspy.GEPA(
+                metric=privacy_feedback,
+                reflection_lm=self.reflection_lm,
+                num_threads=16,
+                track_stats=True,
+                track_best_outputs=True,
+                max_full_evals=1 if self.budget == "light" else None,  # Ultra-efficient as shown in tutorial
+                auto=self.budget if self.budget != "light" else None
+            )
+
+            # Run optimization
+            logging.info("Starting GEPA privacy optimization...")
+            start_time = datetime.now()
+
+            optimized_papillon = compiler.compile(
+                student=papillon,
+                trainset=trainset,
+                valset=devset,
+            )
+
+            optimization_time = (datetime.now() - start_time).total_seconds()
+
+            # Final evaluation
+            final_score = baseline_evaluator(optimized_papillon)
+            improvement = final_score - baseline_score
+            improvement_percent = (improvement / baseline_score) * 100
+
+            # Log optimization results
+            mlflow.log_metrics({
+                "final_composite_score": final_score,
+                "absolute_improvement": improvement,
+                "improvement_percent": improvement_percent,
+                "optimization_time_seconds": optimization_time,
+                "sample_efficiency": improvement / max(len(trainset) + len(devset), 1)
+            })
+
+            # Analyze privacy-quality components separately
+            privacy_analysis = self.analyze_privacy_quality_components(
+                optimized_papillon, testset[:20]  # Sample for detailed analysis
+            )
+            mlflow.log_dict(privacy_analysis, "privacy_quality_analysis.json")
+
+            logging.info(f"Privacy GEPA Optimization Complete:")
+            logging.info(f"  Baseline: {baseline_score:.1%}")
+            logging.info(f"  Optimized: {final_score:.1%}")
+            logging.info(f"  Improvement: {improvement:.1%} ({improvement_percent:+.1f}%)")
+            logging.info(f"  Time: {optimization_time:.1f}s")
+
+            return optimized_papillon
+
+    def analyze_privacy_quality_components(
+        self,
+        program: dspy.Module,
+        test_examples: List[dspy.Example]
+    ) -> Dict[str, Any]:
+        """Analyze privacy and quality components separately"""
+
+        quality_scores = []
+        privacy_scores = []
+        pii_leakage_types = {}
+
+        for example in test_examples:
+            try:
+                prediction = program(**example.inputs())
+
+                # Get component scores
+                judge_result = llm_judge(
+                    user_query=example.user_query,
+                    new_resp=prediction.response,
+                    og_resp=example.target_response,
+                    updated_query=prediction.llm_request,
+                    pii_str=example.pii_str,
+                )
+
+                quality_scores.append(float(judge_result.quality))
+                privacy_scores.append(1.0 - float(judge_result.leakage))
+
+                # Analyze PII leakage patterns
+                pii_items = example.pii_str.split("||") if example.pii_str else []
+                for pii_item in pii_items:
+                    if pii_item.strip():
+                        pii_type = self.classify_pii_type(pii_item)
+                        if pii_type not in pii_leakage_types:
+                            pii_leakage_types[pii_type] = {'leaked': 0, 'total': 0}
+
+                        pii_leakage_types[pii_type]['total'] += 1
+                        if pii_item.lower() in prediction.llm_request.lower():
+                            pii_leakage_types[pii_type]['leaked'] += 1
+
+            except Exception as e:
+                logging.warning(f"Analysis failed for example: {str(e)}")
+                continue
+
+        # Calculate summary statistics
+        analysis = {
+            "quality_metrics": {
+                "mean": np.mean(quality_scores) if quality_scores else 0,
+                "std": np.std(quality_scores) if quality_scores else 0,
+                "min": min(quality_scores) if quality_scores else 0,
+                "max": max(quality_scores) if quality_scores else 0
+            },
+            "privacy_metrics": {
+                "mean": np.mean(privacy_scores) if privacy_scores else 0,
+                "std": np.std(privacy_scores) if privacy_scores else 0,
+                "min": min(privacy_scores) if privacy_scores else 0,
+                "max": max(privacy_scores) if privacy_scores else 0
+            },
+            "pii_leakage_by_type": {
+                pii_type: {
+                    "leakage_rate": stats['leaked'] / stats['total'],
+                    "instances": stats['total']
+                }
+                for pii_type, stats in pii_leakage_types.items()
+            }
+        }
+
+        return analysis
+
+    def classify_pii_type(self, pii_item: str) -> str:
+        """Classify PII item by type"""
+        pii_lower = pii_item.lower().strip()
+
+        if re.match(self.pii_patterns['email'], pii_item):
+            return "email"
+        elif re.match(self.pii_patterns['phone'], pii_item):
+            return "phone"
+        elif re.match(self.pii_patterns['ssn'], pii_item):
+            return "ssn"
+        elif len(pii_lower.split()) == 2 and pii_lower.istitle():
+            return "name"
+        elif any(word in pii_lower for word in ['st', 'street', 'ave', 'avenue']):
+            return "address"
+        else:
+            return "other"
+
+# Usage example
+def run_privacy_optimization():
+    """Complete privacy optimization pipeline"""
+
+    optimizer = PrivacyGEPAOptimizer(
+        budget="light",  # Ultra-efficient as shown in tutorial
+        api_key="your-api-key"
+    )
+
+    # Load privacy dataset
+    trainset, devset, testset = load_privacy_dataset()
+
+    # Run optimization
+    optimized_system = optimizer.optimize_privacy_system(
+        trainset=trainset,
+        devset=devset,
+        testset=testset
+    )
+
+    return optimized_system
+```
+
+## Production Enhancements
+
+### Enhanced Privacy Protection System
+
+```python
+class AdvancedPrivacyProtection:
+    def __init__(self):
+        self.entity_replacements = {
+            'PERSON': ['John Doe', 'Jane Smith', 'Alex Johnson'],
+            'ORGANIZATION': ['Company A', 'Organization X', 'Entity Corp'],
+            'LOCATION': ['City A', 'Location B', 'Place X'],
+            'DATE': ['recent date', 'earlier this year', 'some time ago']
+        }
+
+        self.sensitive_patterns = {
+            'financial': r'\$\d+|\d+\s*dollars|salary|income|payment',
+            'health': r'medical|health|doctor|hospital|diagnosis|treatment',
+            'personal': r'family|spouse|child|parent|relationship|private'
+        }
+
+    def create_advanced_redaction_prompt(self) -> str:
+        """Create sophisticated privacy-preserving prompt instructions"""
+        return """
+You are a privacy protection specialist. Transform private user queries into safe, generalized requests.
+
+PRIVACY PROTECTION PRINCIPLES:
+1. Remove ALL personally identifiable information (names, addresses, phone numbers, emails)
+2. Generalize specific personal contexts to universal scenarios
+3. Replace private entities with generic placeholders
+4. Maintain the core request intent and complexity
+5. Ensure the external LLM cannot infer private details
+
+TRANSFORMATION STRATEGIES:
+- Names → "a person", "someone", "an individual"
+- Companies → "a company", "an organization"
+- Specific locations → "a location", "a place"
+- Personal relationships → "professional context", "academic setting"
+- Private events → "a similar situation", "comparable scenario"
+
+QUALITY REQUIREMENTS:
+- Preserve sufficient detail for helpful LLM response
+- Maintain technical complexity and specificity where non-private
+- Use professional, neutral tone
+- Include relevant context that aids response quality
+
+OUTPUT FORMAT:
+reasoning: Brief explanation of privacy transformations applied
+llm_request: The privacy-safe request for external LLM
+        """
+
+    def enhanced_response_integration_prompt(self) -> str:
+        """Create advanced response integration instructions"""
+        return """
+You are integrating external LLM assistance while maintaining user privacy and context.
+
+INTEGRATION PRINCIPLES:
+1. Adapt external response to user's specific private context
+2. Maintain professional quality and accuracy
+3. Personalize appropriately using original user query
+4. Ensure response directly addresses user's actual situation
+5. Add relevant details that external LLM couldn't provide
+
+ADAPTATION STRATEGIES:
+- Map generic external advice to specific user context
+- Add personalized examples relevant to user's situation
+- Include specific next steps for user's actual scenario
+- Maintain consistency with user's communication style
+- Address any gaps due to privacy generalization
+
+QUALITY STANDARDS:
+- Response should be as helpful as if external LLM had full context
+- Maintain accuracy while adding personalization
+- Professional tone appropriate for user's context
+- Complete and actionable advice
+        """
+
+class PrivacyAwareGEPA(dspy.Module):
+    def __init__(self, local_lm, external_lm):
+        self.craft_redacted_request = dspy.ChainOfThought(
+            signature="user_query -> reasoning, llm_request",
+            instructions=AdvancedPrivacyProtection().create_advanced_redaction_prompt()
+        )
+
+        self.respond_to_query = dspy.ChainOfThought(
+            signature="user_query, related_llm_request, related_llm_response -> response",
+            instructions=AdvancedPrivacyProtection().enhanced_response_integration_prompt()
+        )
+
+        self.external_lm = external_lm
+
+    def forward(self, user_query):
+        # Privacy-preserving request generation
+        redaction_result = self.craft_redacted_request(user_query=user_query)
+
+        # External LLM query
+        llm_response = self.external_lm(redaction_result.llm_request)[0]
+
+        # Context-aware response integration
+        final_response = self.respond_to_query(
+            user_query=user_query,
+            related_llm_request=redaction_result.llm_request,
+            related_llm_response=llm_response
+        )
+
+        return dspy.Prediction(
+            llm_request=redaction_result.llm_request,
+            llm_response=llm_response,
+            response=final_response.response,
+            privacy_reasoning=redaction_result.reasoning
+        )
+```
+
+### MLflow Privacy Tracking
+
+```python
+class PrivacyExperimentTracking:
+    def __init__(self):
+        self.privacy_metrics = {}
+        self.quality_metrics = {}
+
+    def log_privacy_optimization(
+        self,
+        baseline_program: dspy.Module,
+        optimized_program: dspy.Module,
+        test_set: List[dspy.Example]
+    ):
+        """Comprehensive privacy optimization tracking"""
+
+        with mlflow.start_run(run_name="Privacy-Analysis"):
+            # Compare privacy protection
+            privacy_comparison = self.compare_privacy_protection(
+                baseline_program, optimized_program, test_set
+            )
+
+            # Log privacy metrics
+            for metric_name, value in privacy_comparison.items():
+                mlflow.log_metric(f"privacy_{metric_name}", value)
+
+            # Quality preservation analysis
+            quality_comparison = self.compare_quality_preservation(
+                baseline_program, optimized_program, test_set
+            )
+
+            for metric_name, value in quality_comparison.items():
+                mlflow.log_metric(f"quality_{metric_name}", value)
+
+            # Create privacy-quality tradeoff visualization
+            self.create_privacy_quality_plots(
+                privacy_comparison, quality_comparison
+            )
+
+    def compare_privacy_protection(
+        self,
+        baseline: dspy.Module,
+        optimized: dspy.Module,
+        test_set: List[dspy.Example]
+    ) -> Dict[str, float]:
+        """Compare privacy protection between models"""
+
+        baseline_leakage = []
+        optimized_leakage = []
+
+        for example in test_set[:50]:  # Sample for efficiency
+            try:
+                # Baseline privacy
+                base_pred = baseline(**example.inputs())
+                base_judge = llm_judge(
+                    user_query=example.user_query,
+                    new_resp=base_pred.response,
+                    og_resp=example.target_response,
+                    updated_query=base_pred.llm_request,
+                    pii_str=example.pii_str
+                )
+                baseline_leakage.append(base_judge.leakage)
+
+                # Optimized privacy
+                opt_pred = optimized(**example.inputs())
+                opt_judge = llm_judge(
+                    user_query=example.user_query,
+                    new_resp=opt_pred.response,
+                    og_resp=example.target_response,
+                    updated_query=opt_pred.llm_request,
+                    pii_str=example.pii_str
+                )
+                optimized_leakage.append(opt_judge.leakage)
+
+            except Exception as e:
+                continue
+
+        return {
+            'baseline_avg_leakage': np.mean(baseline_leakage),
+            'optimized_avg_leakage': np.mean(optimized_leakage),
+            'leakage_reduction': np.mean(baseline_leakage) - np.mean(optimized_leakage),
+            'privacy_improvement_rate': len([x for x, y in zip(baseline_leakage, optimized_leakage) if x > y]) / len(baseline_leakage)
+        }
+```
+
+## Optimization Strategies
+
+### When to Use Privacy-Conscious GEPA
+
+- **Sensitive data processing** requiring external LLM capabilities
+- **Regulatory compliance** contexts (GDPR, HIPAA, etc.)
+- **Enterprise applications** with confidential information
+- **Personal assistant systems** handling private user data
+- **Multi-tenant platforms** requiring isolation
+
+### Privacy-Quality Tradeoff Optimization
+
+```python
+def optimize_privacy_quality_tradeoff(
+    base_program: dspy.Module,
+    privacy_weight: float = 0.6,  # Higher = more privacy focus
+    quality_weight: float = 0.4   # Higher = more quality focus
+) -> dspy.Module:
+    """Optimize for specific privacy-quality tradeoff"""
+
+    def weighted_privacy_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+        # Get component scores
+        judge_result = llm_judge(
+            user_query=example.user_query,
+            new_resp=prediction.response,
+            og_resp=example.target_response,
+            updated_query=prediction.llm_request,
+            pii_str=example.pii_str,
+        )
+
+        quality_score = float(judge_result.quality)
+        privacy_score = 1.0 - float(judge_result.leakage)  # Higher = better privacy
+
+        # Weighted combination
+        weighted_score = (privacy_weight * privacy_score + quality_weight * quality_score)
+
+        # Rich feedback based on weighting
+        feedback_parts = []
+
+        if privacy_weight > quality_weight:
+            feedback_parts.append(f"Privacy-focused optimization (weight: {privacy_weight:.1f})")
+            if privacy_score < 0.8:
+                feedback_parts.append("🔒 PRIORITY: Reduce PII leakage in external requests")
+        else:
+            feedback_parts.append(f"Quality-focused optimization (weight: {quality_weight:.1f})")
+            if quality_score < 0.8:
+                feedback_parts.append("📝 PRIORITY: Improve response quality and completeness")
+
+        feedback_parts.append(f"Privacy: {privacy_score:.2f}, Quality: {quality_score:.2f}")
+
+        return dspy.Prediction(
+            score=weighted_score,
+            feedback=" | ".join(feedback_parts)
+        )
+
+    # Configure GEPA with weighted metric
+    optimizer = dspy.GEPA(
+        metric=weighted_privacy_metric,
+        auto="light",
+        reflection_lm=dspy.LM("openai/gpt-4.1")
+    )
+
+    return optimizer
+```
+
+## Speed Tips
+
+- **Use "light" budget**: Proven highly effective (77% → 86% in 1 iteration)
+- **Leverage LLM judge caching**: Cache privacy evaluations for repeated patterns
+- **Optimize parallel processing**: Run privacy checks concurrently
+- **Sample-efficient validation**: 20-50 examples sufficient for privacy analysis
+- **Pre-compile PII patterns**: Use regex compilation for faster detection
+- **Batch external LLM calls**: Group redacted requests when possible
+
+## Common Issues
+
+### PII Leakage Detection
+
+```python
+def robust_pii_detection(text: str, pii_items: List[str]) -> Dict[str, bool]:
+    """Robust detection of PII leakage with fuzzy matching"""
+    import difflib
+
+    leakage_detected = {}
+    text_lower = text.lower()
+
+    for pii_item in pii_items:
+        if not pii_item.strip():
+            continue
+
+        pii_lower = pii_item.lower().strip()
+
+        # Exact match
+        if pii_lower in text_lower:
+            leakage_detected[pii_item] = True
+            continue
+
+        # Fuzzy match for near-matches
+        close_matches = difflib.get_close_matches(
+            pii_lower, text_lower.split(), n=1, cutoff=0.8
+        )
+
+        if close_matches:
+            leakage_detected[pii_item] = True
+        else:
+            leakage_detected[pii_item] = False
+
+    return leakage_detected
+```
+
+### Privacy-Quality Balance Issues
+
+```python
+def diagnose_privacy_quality_issues(
+    privacy_scores: List[float],
+    quality_scores: List[float]
+) -> Dict[str, str]:
+    """Diagnose common privacy-quality balance issues"""
+
+    issues = {}
+
+    avg_privacy = np.mean(privacy_scores)
+    avg_quality = np.mean(quality_scores)
+
+    if avg_privacy < 0.7 and avg_quality > 0.8:
+        issues['privacy_leak'] = "High quality but poor privacy - over-sharing information"
+    elif avg_privacy > 0.9 and avg_quality < 0.6:
+        issues['over_redaction'] = "Good privacy but poor quality - excessive information removal"
+    elif avg_privacy < 0.7 and avg_quality < 0.7:
+        issues['general_performance'] = "Both privacy and quality need improvement"
+
+    # Consistency analysis
+    privacy_std = np.std(privacy_scores)
+    quality_std = np.std(quality_scores)
+
+    if privacy_std > 0.3:
+        issues['privacy_consistency'] = "Inconsistent privacy protection across examples"
+    if quality_std > 0.3:
+        issues['quality_consistency'] = "Inconsistent response quality across examples"
+
+    return issues
+```
+
+## Best Practices Summary
+
+### Privacy-Conscious GEPA Optimization
+
+1. **Dual-Objective Optimization**: Balance privacy protection with response quality
+2. **Rich Privacy Feedback**: Include specific PII leakage analysis in feedback
+3. **Context Preservation**: Maintain enough context for quality external LLM responses
+4. **Bidirectional Evaluation**: Use comparative quality assessment
+5. **Pattern-Based Detection**: Implement robust PII detection patterns
+6. **Sample Efficiency**: Leverage GEPA's ability to improve in few iterations
+7. **Component Analysis**: Track privacy and quality metrics separately
+
+### Production Privacy Systems
+
+- **Regulatory Compliance**: Ensure GDPR/HIPAA compliance in optimization
+- **Audit Trails**: Maintain logs of privacy protection decisions
+- **User Consent**: Implement consent mechanisms for external LLM use
+- **Data Retention**: Manage retention of optimization data appropriately
+- **Privacy by Design**: Build privacy considerations into system architecture
+
+### Quality Assurance for Privacy
+
+- **Privacy Testing**: Test with known PII patterns and edge cases
+- **Quality Validation**: Ensure response quality meets user expectations
+- **Bias Detection**: Monitor for privacy-related biases in optimization
+- **Performance Monitoring**: Track privacy-quality tradeoffs over time
+- **User Feedback**: Incorporate user satisfaction with privacy protection
+
+## References
+
+- [GEPA Papillon Tutorial](https://dspy.ai/docs/tutorials/gepa_papillon/) - Official tutorial with 77% → 86% results
+- [PUPA Privacy Dataset](https://huggingface.co/datasets/Columbia-NLP/PUPA) - Privacy-conscious delegation dataset
+- [PAPILLON Paper](https://arxiv.org/abs/2401.00288) - Privacy-preserving delegation methodology
+- [GEPA Paper](https://arxiv.org/abs/2507.19457) - Reflective prompt evolution for optimization
+- [Privacy-Preserving AI Guidelines](https://dspy.ai/docs/deep-dive/privacy-preservation/)

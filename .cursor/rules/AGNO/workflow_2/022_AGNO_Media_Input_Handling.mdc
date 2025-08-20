@@ -1,0 +1,749 @@
+---
+description: AGNO Workflows 2.0 - Master media input handling for images, videos, and audio processing
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 media input handling. Master multimedia workflow processing for comprehensive AI-powered media analysis.
+
+## Media Processing Flow
+
+```
+Media Input → Workflow Entry → Agent Processing → Media Analysis → Output Generation
+     ↓             ↓              ↓                ↓               ↓
+Image/Video/   Automatic      Multimodal       Content/Object   Text + Media
+Audio Files    Conversion     Agent Analysis   Recognition      Artifacts
+     ↓             ↓              ↓                ↓               ↓
+Supported      Media Flow     AI Processing    Structured       Complete
+Formats        Through Steps   Capabilities     Results         Response
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Media Input
+```python
+from agno.workflow.v2 import Workflow, Step
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.media import Image, Video, Audio
+
+# Media-capable agent
+media_analyst = Agent(
+    name="Media Analysis Specialist",
+    model=OpenAIChat(id="gpt-4o"),  # Vision-capable model
+    role="Analyze images, videos, and audio content"
+)
+
+# Basic media workflow
+media_workflow = Workflow(
+    name="Media Analysis Pipeline",
+    steps=[media_analyst]
+)
+
+# Execute with image input
+media_workflow.print_response(
+    message="Analyze this image and describe what you see",
+    images=[Image(url="https://example.com/image.jpg")],
+    markdown=True
+)
+
+# Execute with video input
+media_workflow.print_response(
+    message="Analyze this video content",
+    videos=[Video(path="/path/to/video.mp4")],
+    markdown=True
+)
+```
+
+### Production Ready - Advanced Media Processing
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput, Parallel
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.media import Image, Video, Audio
+from agno.storage.sqlite import SqliteStorage
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+import os
+
+# Structured media analysis models
+class ImageAnalysis(BaseModel):
+    """Structured image analysis results"""
+    description: str = Field(description="Detailed image description")
+    objects_detected: List[str] = Field(description="Objects identified in image")
+    scene_type: str = Field(description="Type of scene or setting")
+    colors: List[str] = Field(description="Dominant colors")
+    mood_tone: str = Field(description="Overall mood or tone")
+    technical_quality: str = Field(regex="^(excellent|good|fair|poor)$")
+    suggested_use_cases: List[str] = Field(description="Potential applications")
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+class VideoAnalysis(BaseModel):
+    """Structured video analysis results"""
+    summary: str = Field(description="Video content summary")
+    key_scenes: List[str] = Field(description="Important scenes or moments")
+    duration_estimate: str = Field(description="Estimated duration")
+    content_type: str = Field(description="Type of video content")
+    visual_elements: List[str] = Field(description="Key visual elements")
+    audio_elements: List[str] = Field(description="Audio characteristics")
+    production_quality: str = Field(regex="^(professional|amateur|poor)$")
+    target_audience: str = Field(description="Likely target audience")
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+class MediaInsights(BaseModel):
+    """Comprehensive media insights"""
+    media_type: str = Field(description="Type of media analyzed")
+    content_summary: str = Field(description="Overall content summary")
+    key_insights: List[str] = Field(description="Important insights extracted")
+    recommendations: List[str] = Field(description="Usage recommendations")
+    technical_assessment: Dict[str, str] = Field(description="Technical quality assessment")
+    business_applications: List[str] = Field(description="Potential business uses")
+    
+# Specialized media agents
+image_analyzer = Agent(
+    name="Image Analysis Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=ImageAnalysis,
+    role="Expert image analysis and visual content understanding",
+    instructions=[
+        "Analyze images comprehensively for content, objects, and context",
+        "Identify technical quality and artistic elements",
+        "Assess commercial and practical applications",
+        "Provide confidence scores based on clarity and recognizability",
+        "Structure findings using ImageAnalysis model"
+    ]
+)
+
+video_analyzer = Agent(
+    name="Video Content Specialist", 
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=VideoAnalysis,
+    role="Comprehensive video content analysis and understanding",
+    instructions=[
+        "Analyze video content for narrative, visual, and audio elements",
+        "Identify key scenes, transitions, and production techniques",
+        "Assess content type, quality, and target audience",
+        "Extract actionable insights for content strategy",
+        "Structure findings using VideoAnalysis model"
+    ]
+)
+
+audio_analyzer = Agent(
+    name="Audio Content Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Audio content analysis and transcription",
+    instructions=[
+        "Analyze audio content for speech, music, and ambient sounds",
+        "Identify speakers, topics, and key information",
+        "Assess audio quality and production characteristics",
+        "Extract actionable insights from audio content"
+    ]
+)
+
+content_strategist = Agent(
+    name="Media Strategy Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=MediaInsights,
+    role="Strategic analysis of media content for business applications",
+    instructions=[
+        "Synthesize media analysis into strategic recommendations",
+        "Identify business applications and monetization opportunities",
+        "Assess market fit and audience alignment",
+        "Provide content optimization recommendations"
+    ]
+)
+
+# Custom media processing functions
+def media_metadata_extractor(step_input: StepInput) -> StepOutput:
+    """Extract and process media metadata"""
+    
+    # Access media inputs from workflow
+    additional_data = step_input.additional_data or {}
+    media_info = additional_data.get("media_info", {})
+    
+    # Simulate metadata extraction
+    metadata_report = f"""
+    ## Media Metadata Analysis
+    
+    **Processing Context**: {step_input.message}
+    
+    **Media Information**:
+    - Images provided: {media_info.get('image_count', 0)}
+    - Videos provided: {media_info.get('video_count', 0)} 
+    - Audio files provided: {media_info.get('audio_count', 0)}
+    
+    **Technical Metadata**:
+    - File formats detected: {media_info.get('formats', 'Not specified')}
+    - Estimated total size: {media_info.get('total_size', 'Unknown')}
+    - Processing complexity: {media_info.get('complexity', 'Standard')}
+    
+    **Processing Recommendations**:
+    - Recommended analysis depth: Based on content complexity
+    - Suggested workflow path: Multi-modal analysis
+    - Quality expectations: High-fidelity results expected
+    """
+    
+    return StepOutput(
+        content=metadata_report,
+        success=True
+    )
+
+def cross_media_synthesizer(step_input: StepInput) -> StepOutput:
+    """Synthesize insights across multiple media types"""
+    
+    # Get analysis from previous steps (could be structured data)
+    previous_analysis = step_input.previous_step_content
+    all_previous = step_input.get_all_previous_content()
+    
+    # Extract insights from different media analyses
+    synthesis_report = f"""
+    ## Cross-Media Analysis Synthesis
+    
+    **Multi-Modal Content Analysis Summary**
+    
+    **Primary Analysis Results**: 
+    {str(previous_analysis)[:400] if previous_analysis else 'No primary analysis'}...
+    
+    **Comprehensive Content Overview**:
+    {all_previous[:500] if all_previous else 'No comprehensive data'}...
+    
+    **Cross-Media Insights**:
+    - Visual-Audio Correlation: Analysis of how visual and audio elements complement each other
+    - Content Consistency: Assessment of message consistency across media types
+    - Engagement Potential: Evaluation of multi-modal engagement effectiveness
+    - Technical Quality: Overall technical production assessment
+    
+    **Strategic Recommendations**:
+    - Content Optimization: Suggestions for improving multi-modal content
+    - Platform Suitability: Best platforms for this type of media content
+    - Audience Targeting: Recommended audience segments based on media analysis
+    - Distribution Strategy: Optimal distribution approach for maximum impact
+    
+    **Synthesis Quality Score**: Based on depth and consistency of analysis across media types
+    """
+    
+    return StepOutput(
+        content=synthesis_report,
+        success=True
+    )
+
+# Comprehensive media processing workflow
+comprehensive_media_workflow = Workflow(
+    name="Advanced Multi-Modal Media Analysis Pipeline",
+    description="Complete media processing with cross-modal analysis",
+    steps=[
+        # Metadata extraction and preparation
+        Step(
+            name="media_metadata", 
+            description="Extract and analyze media metadata",
+            executor=media_metadata_extractor
+        ),
+        
+        # Parallel media analysis by type
+        Parallel(
+            Step(
+                name="image_analysis",
+                description="Comprehensive image content analysis",
+                agent=image_analyzer
+            ),
+            Step(
+                name="video_analysis", 
+                description="Detailed video content analysis",
+                agent=video_analyzer
+            ),
+            Step(
+                name="audio_analysis",
+                description="Audio content analysis and transcription",
+                agent=audio_analyzer
+            ),
+            name="parallel_media_analysis"
+        ),
+        
+        # Cross-media synthesis
+        Step(
+            name="cross_media_synthesis",
+            description="Synthesize insights across all media types", 
+            executor=cross_media_synthesizer
+        ),
+        
+        # Strategic analysis
+        Step(
+            name="strategic_analysis",
+            description="Strategic business analysis of media content",
+            agent=content_strategist
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="media_workflows",
+        db_file="tmp/media_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True
+)
+
+# Execute comprehensive media analysis
+media_response = comprehensive_media_workflow.run(
+    message="Analyze this marketing campaign media for effectiveness and audience engagement",
+    images=[
+        Image(url="https://example.com/campaign-image.jpg"),
+        Image(path="/local/path/product-photo.png")
+    ],
+    videos=[
+        Video(url="https://example.com/campaign-video.mp4")
+    ],
+    audio=[
+        Audio(path="/local/path/campaign-audio.mp3")
+    ],
+    additional_data={
+        "media_info": {
+            "image_count": 2,
+            "video_count": 1,
+            "audio_count": 1,
+            "formats": ["jpg", "png", "mp4", "mp3"],
+            "total_size": "125MB",
+            "complexity": "High"
+        },
+        "analysis_focus": "marketing_effectiveness",
+        "target_audience": "millennials_professionals"
+    }
+)
+
+print(f"Media analysis results: {media_response.content}")
+```
+
+## Media Input Types and Patterns
+
+### Image Processing Patterns
+```python
+from agno.media import Image
+
+# Different image input methods
+image_workflow = Workflow(
+    name="Image Processing Pipeline",
+    steps=[image_specialist]
+)
+
+# URL-based images
+image_workflow.run(
+    "Analyze product images for e-commerce optimization",
+    images=[
+        Image(url="https://example.com/product1.jpg"),
+        Image(url="https://example.com/product2.png")
+    ]
+)
+
+# Local file images
+image_workflow.run(
+    "Analyze local marketing materials",
+    images=[
+        Image(path="/path/to/marketing/banner.jpg"),
+        Image(path="/path/to/marketing/logo.png")
+    ]
+)
+
+# Mixed image sources
+image_workflow.run(
+    "Compare online vs local product images", 
+    images=[
+        Image(url="https://competitor.com/product.jpg"),  # Online comparison
+        Image(path="/local/our-product.jpg")             # Local version
+    ]
+)
+```
+
+### Video Processing Patterns
+```python
+from agno.media import Video
+
+# Video analysis workflow
+video_workflow = Workflow(
+    name="Video Content Analysis",
+    steps=[video_analyzer, content_strategist]
+)
+
+# Various video input methods
+video_workflow.run(
+    "Analyze training video effectiveness",
+    videos=[
+        Video(path="/training-content/module1.mp4"),
+        Video(url="https://training-site.com/module2.mp4")
+    ]
+)
+
+# Video with additional context
+video_workflow.run(
+    "Evaluate marketing video performance",
+    videos=[Video(url="https://youtube.com/watch?v=example")],
+    additional_data={
+        "video_context": "social_media_marketing",
+        "target_metrics": ["engagement", "conversion", "brand_awareness"]
+    }
+)
+```
+
+### Audio Processing Patterns
+```python
+from agno.media import Audio
+
+# Audio analysis workflow
+audio_workflow = Workflow(
+    name="Audio Content Processing",
+    steps=[audio_analyzer]
+)
+
+# Audio file analysis
+audio_workflow.run(
+    "Transcribe and analyze podcast episode",
+    audio=[
+        Audio(path="/podcasts/episode-142.mp3")
+    ]
+)
+
+# Multiple audio sources
+audio_workflow.run(
+    "Compare audio quality across recordings",
+    audio=[
+        Audio(path="/recordings/studio-version.wav"),
+        Audio(path="/recordings/remote-version.mp3"),
+        Audio(url="https://audio-cdn.com/broadcast-version.mp3")
+    ]
+)
+```
+
+### Mixed Media Processing
+```python
+# Multi-modal media workflow
+mixed_media_workflow = Workflow(
+    name="Multi-Modal Content Analysis", 
+    steps=[
+        Parallel(
+            Step(name="visual_analysis", agent=image_analyzer),
+            Step(name="video_analysis", agent=video_analyzer), 
+            Step(name="audio_analysis", agent=audio_analyzer),
+            name="multi_modal_analysis"
+        ),
+        Step(name="synthesis", executor=cross_media_synthesizer)
+    ]
+)
+
+# Execute with all media types
+mixed_media_workflow.run(
+    message="Analyze complete multimedia presentation",
+    images=[Image(path="/presentation/slides/slide-1.png")],
+    videos=[Video(path="/presentation/demo-video.mp4")],
+    audio=[Audio(path="/presentation/narration.mp3")],
+    additional_data={
+        "presentation_context": "product_launch",
+        "audience": "enterprise_clients"
+    }
+)
+```
+
+## Media-Specific Agent Configuration
+
+### Vision-Optimized Agents
+```python
+# Specialized image analysis agent
+detailed_image_analyst = Agent(
+    name="Detailed Visual Analyst",
+    model=OpenAIChat(id="gpt-4o", temperature=0.2),  # Low temp for accurate description
+    role="Comprehensive visual content analysis specialist",
+    instructions=[
+        "Analyze visual content with extreme attention to detail",
+        "Identify all objects, people, text, and contextual elements",
+        "Assess composition, lighting, color palette, and artistic elements",
+        "Evaluate technical quality including resolution, focus, and exposure",
+        "Consider commercial applications and marketing potential",
+        "Provide specific recommendations for optimization"
+    ],
+    response_model=ImageAnalysis,
+    markdown=True
+)
+
+# Creative visual interpretation agent
+creative_image_analyst = Agent(
+    name="Creative Visual Interpreter",
+    model=OpenAIChat(id="gpt-4o", temperature=0.7),  # Higher temp for creative interpretation
+    role="Creative interpretation of visual content",
+    instructions=[
+        "Interpret images with creative and artistic perspective",
+        "Identify emotional impact, mood, and artistic intent",
+        "Suggest creative applications and artistic improvements",
+        "Analyze aesthetic appeal and visual storytelling elements",
+        "Consider cultural and contextual significance"
+    ]
+)
+```
+
+### Multi-Modal Agents
+```python
+# Comprehensive multi-modal agent
+multimodal_specialist = Agent(
+    name="Multi-Modal Content Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Cross-media content analysis and optimization",
+    instructions=[
+        "Analyze content across multiple media types simultaneously",
+        "Identify relationships between visual, audio, and textual elements",
+        "Assess consistency of messaging across different media",
+        "Recommend optimizations for multi-modal presentations",
+        "Consider platform-specific requirements for different media types"
+    ]
+)
+
+# Media production consultant
+production_consultant = Agent(
+    name="Media Production Consultant", 
+    model=OpenAIChat(id="gpt-4o"),
+    role="Technical and creative guidance for media production",
+    instructions=[
+        "Assess technical quality of media production",
+        "Identify areas for improvement in lighting, audio, composition",
+        "Suggest equipment and technique recommendations",
+        "Provide guidance for different distribution platforms",
+        "Consider budget and resource constraints in recommendations"
+    ]
+)
+```
+
+## Advanced Media Processing Features
+
+### Media Quality Assessment
+```python
+def media_quality_assessor(step_input: StepInput) -> StepOutput:
+    """Comprehensive media quality assessment"""
+    
+    previous_analysis = step_input.previous_step_content
+    additional_data = step_input.additional_data or {}
+    
+    # Extract quality indicators from analysis
+    quality_indicators = {
+        "visual_clarity": "good",  # Would be extracted from actual analysis
+        "audio_quality": "excellent",
+        "production_value": "professional",
+        "content_relevance": "high"
+    }
+    
+    # Calculate overall quality score
+    quality_scores = {
+        "excellent": 5, "good": 4, "fair": 3, "poor": 2, "very_poor": 1
+    }
+    
+    total_score = sum(quality_scores.get(score, 3) for score in quality_indicators.values())
+    max_score = len(quality_indicators) * 5
+    overall_quality = total_score / max_score
+    
+    quality_report = f"""
+    ## Comprehensive Media Quality Assessment
+    
+    **Overall Quality Score**: {overall_quality:.2f}/1.0
+    
+    **Individual Quality Metrics**:
+    - Visual Clarity: {quality_indicators['visual_clarity']}
+    - Audio Quality: {quality_indicators['audio_quality']}
+    - Production Value: {quality_indicators['production_value']}
+    - Content Relevance: {quality_indicators['content_relevance']}
+    
+    **Quality Recommendations**:
+    - {"Excellence achieved across all metrics" if overall_quality > 0.8 else "Improvements needed in some areas"}
+    - Technical Enhancement: {'Minimal adjustments needed' if overall_quality > 0.7 else 'Significant improvements recommended'}
+    
+    **Detailed Analysis**:
+    {str(previous_analysis)[:500]}...
+    
+    **Quality Assurance**: {'Passed' if overall_quality > 0.6 else 'Requires review'}
+    """
+    
+    return StepOutput(
+        content=quality_report,
+        success=True
+    )
+```
+
+### Media Optimization Recommendations
+```python
+def media_optimizer(step_input: StepInput) -> StepOutput:
+    """Generate media optimization recommendations"""
+    
+    analysis_data = step_input.previous_step_content
+    context = step_input.additional_data or {}
+    
+    # Generate platform-specific recommendations
+    platform_optimizations = {
+        "social_media": [
+            "Optimize aspect ratios for different platforms",
+            "Add captions for accessibility and silent viewing",
+            "Create thumbnail versions for previews",
+            "Compress files for faster loading"
+        ],
+        "website": [
+            "Optimize file sizes for web performance", 
+            "Create responsive image variants",
+            "Implement lazy loading for better UX",
+            "Add alt text for SEO and accessibility"
+        ],
+        "presentations": [
+            "Ensure high resolution for projection",
+            "Optimize color contrast for visibility",
+            "Create speaker notes integration",
+            "Prepare backup formats"
+        ]
+    }
+    
+    target_platform = context.get("platform", "general")
+    optimizations = platform_optimizations.get(target_platform, platform_optimizations["general"])
+    
+    optimization_report = f"""
+    ## Media Optimization Recommendations
+    
+    **Target Platform**: {target_platform}
+    **Analysis Context**: {step_input.message}
+    
+    **Platform-Specific Optimizations**:
+    {chr(10).join(f"- {opt}" for opt in optimizations)}
+    
+    **Technical Optimizations**:
+    - File Format: Optimize for intended use case
+    - Compression: Balance quality vs. file size
+    - Resolution: Match target platform requirements
+    - Color Space: Ensure color accuracy across devices
+    
+    **Content Optimizations**:
+    - Message Clarity: Enhance key message visibility
+    - Audience Alignment: Align with target audience preferences
+    - Engagement: Increase visual/audio engagement elements
+    - Accessibility: Improve accessibility features
+    
+    **Based on Analysis**:
+    {str(analysis_data)[:300]}...
+    """
+    
+    return StepOutput(
+        content=optimization_report,
+        success=True
+    )
+```
+
+## Speed Tips
+
+### Quick Media Workflows
+```python
+def quick_media_analysis(media_type: str = "image"):
+    """Quick media analysis workflow factory"""
+    
+    agent_map = {
+        "image": image_analyzer,
+        "video": video_analyzer,
+        "audio": audio_analyzer,
+        "mixed": multimodal_specialist
+    }
+    
+    agent = agent_map.get(media_type, multimodal_specialist)
+    
+    return Workflow(
+        name=f"Quick {media_type.title()} Analysis",
+        steps=[agent]
+    )
+
+# Usage
+image_workflow = quick_media_analysis("image")
+video_workflow = quick_media_analysis("video")
+```
+
+### Media Template Library
+```python
+class MediaWorkflowTemplates:
+    """Pre-configured media workflow templates"""
+    
+    @staticmethod
+    def product_analysis():
+        return Workflow(
+            name="Product Media Analysis",
+            steps=[
+                image_analyzer,
+                Step(name="optimization", executor=media_optimizer)
+            ]
+        )
+    
+    @staticmethod
+    def marketing_review():
+        return Workflow(
+            name="Marketing Media Review",
+            steps=[
+                Parallel(
+                    Step(name="visual", agent=image_analyzer),
+                    Step(name="video", agent=video_analyzer),
+                    name="media_analysis"
+                ),
+                content_strategist
+            ]
+        )
+    
+    @staticmethod
+    def quality_assessment():
+        return Workflow(
+            name="Media Quality Assessment",
+            steps=[
+                multimodal_specialist,
+                Step(name="quality", executor=media_quality_assessor)
+            ]
+        )
+```
+
+## Common Pitfalls
+
+### Media File Access Issues
+```python
+# ❌ DON'T: Assume files exist without checking
+workflow.run(
+    "Analyze image",
+    images=[Image(path="/nonexistent/file.jpg")]  # May fail
+)
+
+# ✅ DO: Check file existence for local files
+import os
+
+def safe_media_workflow(image_path: str):
+    if os.path.exists(image_path):
+        return workflow.run(
+            "Analyze image", 
+            images=[Image(path=image_path)]
+        )
+    else:
+        return "Image file not found"
+```
+
+### Media Format Assumptions
+```python
+# ❌ DON'T: Assume specific media formats
+def bad_media_handler(step_input: StepInput):
+    # Assumes specific analysis structure
+    return step_input.previous_step_content.objects_detected
+
+# ✅ DO: Handle different analysis formats
+def good_media_handler(step_input: StepInput):
+    analysis = step_input.previous_step_content
+    if hasattr(analysis, 'objects_detected'):
+        return analysis.objects_detected
+    else:
+        return "Analysis format not supported"
+```
+
+## Best Practices Summary
+
+- **Vision-Capable Models**: Use models like GPT-4o for image/video analysis
+- **Media Validation**: Validate media files exist and are accessible
+- **Structured Outputs**: Use Pydantic models for consistent media analysis results
+- **Multi-Modal Analysis**: Leverage parallel processing for multiple media types
+- **Platform Optimization**: Consider target platforms in media recommendations
+- **Quality Assessment**: Implement quality gates for media processing workflows
+- **Error Handling**: Handle media processing failures gracefully
+- **Performance**: Optimize for media file sizes and processing time
+- **Accessibility**: Include accessibility considerations in media analysis
+
+## References
+
+- [Media Input API](/docs/api/workflows_2/media_input.md)
+- [Vision Models Guide](/docs/models/vision_capabilities.md)
+- [Multi-Modal Processing](/docs/workflows_2/multimodal.md)
+- [Media Optimization](/docs/workflows_2/media_optimization.md)

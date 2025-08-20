@@ -1,0 +1,568 @@
+---
+description: DSPy 3.0.1 BestOfN Module - Master multi-candidate selection for highest quality outputs
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's BestOfN module. Master quality-driven selection by generating multiple candidates and choosing the best one based on custom metrics.
+
+## BestOfN Development Flow
+
+```
+Define Base Module → Set Candidates → Create Metric → Execute → Evaluate All → Select Best
+       ↓               ↓              ↓         ↓          ↓            ↓
+   Any DSPy Module   n Parameter    Quality     Forward    Multiple     Highest Score
+   (Predict/CoT)     Count         Function     Method     Results      Wins
+       ↓               ↓              ↓         ↓          ↓            ↓
+   Configurable      Generation     Custom      Parallel   Scored       Quality Output
+   Foundation        Control        Logic       Execution  Candidates   Guaranteed
+```
+
+## Instant Patterns
+
+### Quick Start - Basic BestOfN
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.7)  # Higher temp for variety
+dspy.configure(lm=lm)
+
+# Simple quality metric
+def answer_length_metric(prediction, example=None):
+    """Prefer longer, more detailed answers."""
+    return len(prediction.answer.split())
+
+# Create BestOfN module
+best_qa = dspy.BestOfN(
+    dspy.Predict("question -> answer"),
+    n=3,  # Generate 3 candidates
+    metric=answer_length_metric
+)
+
+# Use for highest quality output
+result = best_qa(question="Explain machine learning in detail")
+print(f"Best answer: {result.answer}")
+```
+
+### Production Ready - Advanced Quality Selection
+
+```python
+import dspy
+from typing import List, Dict
+
+class QualityMetrics:
+    @staticmethod
+    def comprehensive_quality(prediction, example=None):
+        """Multi-factor quality assessment."""
+        answer = prediction.answer
+
+        # Length factor (detailed answers preferred)
+        length_score = min(len(answer.split()) / 100, 1.0)
+
+        # Coherence factor (check for logical structure)
+        coherence_score = 0.8 if any(word in answer.lower()
+                                   for word in ['because', 'therefore', 'however', 'furthermore']) else 0.3
+
+        # Specificity factor (specific examples/numbers)
+        specificity_score = 0.9 if any(char.isdigit() for char in answer) else 0.5
+
+        # Confidence factor (avoid uncertain language)
+        confidence_score = 0.7 if not any(word in answer.lower()
+                                        for word in ['maybe', 'possibly', 'might']) else 0.4
+
+        # Weighted combination
+        total_score = (
+            length_score * 0.3 +
+            coherence_score * 0.3 +
+            specificity_score * 0.2 +
+            confidence_score * 0.2
+        )
+
+        return total_score
+
+    @staticmethod
+    def accuracy_focused(prediction, example=None):
+        """Focus on factual accuracy indicators."""
+        answer = prediction.answer
+
+        # Check for specific facts, numbers, references
+        fact_indicators = ['study', 'research', 'data', 'analysis', '%', 'according to']
+        fact_score = sum(1 for indicator in fact_indicators if indicator in answer.lower()) / len(fact_indicators)
+
+        # Avoid vague language
+        vague_penalties = ['some', 'many', 'often', 'usually', 'generally']
+        vague_score = 1.0 - (sum(1 for vague in vague_penalties if vague in answer.lower()) * 0.1)
+
+        return (fact_score + max(vague_score, 0)) / 2
+
+class AdvancedQASignature(dspy.Signature):
+    """Provide comprehensive answers with supporting evidence."""
+
+    question: str = dspy.InputField(desc="Question requiring detailed answer")
+    context: List[str] = dspy.InputField(desc="Background context", default=[])
+
+    answer: str = dspy.OutputField(desc="Comprehensive, accurate answer")
+    confidence: float = dspy.OutputField(desc="Confidence in answer accuracy")
+    sources: List[str] = dspy.OutputField(desc="Supporting evidence or references")
+
+# Create high-quality QA system
+premium_qa = dspy.BestOfN(
+    dspy.ChainOfThought(AdvancedQASignature),
+    n=5,  # Generate 5 candidates for best quality
+    metric=QualityMetrics.comprehensive_quality
+)
+
+result = premium_qa(
+    question="How does climate change affect ocean ecosystems?",
+    context=["Rising temperatures", "Ocean acidification", "Sea level changes"]
+)
+
+print(f"Highest quality answer: {result.answer}")
+print(f"Confidence: {result.confidence}")
+print(f"Sources: {result.sources}")
+```
+
+## Core BestOfN Patterns
+
+### Quality-Based Selection
+
+```python
+# Content quality metrics
+def content_quality_metric(prediction, example=None):
+    """Evaluate content quality comprehensively."""
+    content = prediction.answer if hasattr(prediction, 'answer') else str(prediction)
+
+    score = 0.0
+
+    # Length appropriateness (not too short, not too long)
+    length = len(content.split())
+    if 20 <= length <= 200:
+        score += 0.3
+    elif 10 <= length <= 300:
+        score += 0.1
+
+    # Structure quality (paragraphs, punctuation)
+    if '\n' in content or '. ' in content:
+        score += 0.2
+
+    # Vocabulary richness (unique words)
+    words = content.lower().split()
+    unique_ratio = len(set(words)) / max(len(words), 1)
+    score += unique_ratio * 0.3
+
+    # Specificity (numbers, examples, details)
+    specific_indicators = ['example', 'such as', 'specifically', 'namely']
+    if any(indicator in content.lower() for indicator in specific_indicators):
+        score += 0.2
+
+    return min(score, 1.0)
+
+# Task-specific metrics
+def summarization_metric(prediction, example=None):
+    """Metric for summarization quality."""
+    summary = prediction.summary
+
+    # Conciseness vs completeness balance
+    word_count = len(summary.split())
+    conciseness_score = 1.0 - min(word_count / 100, 0.5)  # Prefer shorter summaries
+
+    # Key information retention (check for important terms)
+    important_terms = ['key', 'main', 'important', 'significant', 'primary']
+    retention_score = sum(1 for term in important_terms if term in summary.lower()) / len(important_terms)
+
+    return (conciseness_score + retention_score) / 2
+
+def creativity_metric(prediction, example=None):
+    """Metric for creative content quality."""
+    content = prediction.story if hasattr(prediction, 'story') else prediction.content
+
+    # Originality indicators
+    original_phrases = ['unique', 'novel', 'innovative', 'creative', 'original']
+    originality_score = min(sum(1 for phrase in original_phrases if phrase in content.lower()) / 3, 1.0)
+
+    # Narrative structure
+    narrative_elements = ['character', 'plot', 'setting', 'conflict', 'resolution']
+    structure_score = sum(1 for element in narrative_elements if element in content.lower()) / len(narrative_elements)
+
+    # Engagement factor
+    engaging_words = ['exciting', 'mysterious', 'surprising', 'dramatic', 'captivating']
+    engagement_score = min(sum(1 for word in engaging_words if word in content.lower()) / 2, 1.0)
+
+    return (originality_score + structure_score + engagement_score) / 3
+```
+
+### Comparative Selection Systems
+
+```python
+class ComparativeBestOfN(dspy.Module):
+    def __init__(self, base_module, n=5, metrics=None):
+        super().__init__()
+        self.base_module = base_module
+        self.n = n
+        self.metrics = metrics or []
+
+        # Comparative evaluator
+        self.comparator = dspy.Predict(
+            "candidate1: str, candidate2: str -> better_candidate: int, reasoning: str"
+        )
+
+    def forward(self, **kwargs):
+        # Generate multiple candidates
+        candidates = []
+        for i in range(self.n):
+            candidate = self.base_module(**kwargs)
+            candidates.append((i, candidate))
+
+        # Apply multiple metrics if available
+        if self.metrics:
+            scored_candidates = []
+            for idx, candidate in candidates:
+                total_score = sum(metric(candidate) for metric in self.metrics) / len(self.metrics)
+                scored_candidates.append((total_score, idx, candidate))
+
+            # Return highest scoring candidate
+            best_score, best_idx, best_candidate = max(scored_candidates)
+
+            return dspy.Prediction(
+                **{k: v for k, v in best_candidate.__dict__.items()},
+                selection_score=best_score,
+                selected_from=self.n,
+                selection_method="multi_metric"
+            )
+
+        # Fallback to pairwise comparison
+        return self._pairwise_selection(candidates, **kwargs)
+
+    def _pairwise_selection(self, candidates, **kwargs):
+        """Select best candidate through pairwise comparisons."""
+        current_best = candidates[0][1]
+
+        for i in range(1, len(candidates)):
+            comparison = self.comparator(
+                candidate1=str(current_best),
+                candidate2=str(candidates[i][1])
+            )
+
+            if comparison.better_candidate == 2:
+                current_best = candidates[i][1]
+
+        return current_best
+```
+
+### Domain-Specific BestOfN Applications
+
+```python
+class DomainSpecificBestOfN:
+    @staticmethod
+    def create_writing_assistant():
+        """Create BestOfN optimized for writing tasks."""
+        def writing_quality(prediction, example=None):
+            text = prediction.text
+
+            # Grammar and style indicators
+            grammar_score = 0.8 if not any(error in text.lower()
+                                         for error in ['aint', 'gonna', 'wanna']) else 0.3
+
+            # Vocabulary sophistication
+            sophisticated_words = ['consequently', 'furthermore', 'nevertheless', 'moreover']
+            vocab_score = min(sum(1 for word in sophisticated_words if word in text.lower()) / 2, 1.0)
+
+            # Structure and flow
+            flow_indicators = ['first', 'second', 'finally', 'in conclusion', 'therefore']
+            flow_score = min(sum(1 for indicator in flow_indicators if indicator in text.lower()) / 3, 1.0)
+
+            return (grammar_score + vocab_score + flow_score) / 3
+
+        return dspy.BestOfN(
+            dspy.ChainOfThought("topic, style -> reasoning, text"),
+            n=4,
+            metric=writing_quality
+        )
+
+    @staticmethod
+    def create_code_generator():
+        """Create BestOfN optimized for code generation."""
+        def code_quality(prediction, example=None):
+            code = prediction.code
+
+            # Code structure indicators
+            structure_score = 0.0
+            if 'def ' in code:
+                structure_score += 0.3
+            if 'class ' in code:
+                structure_score += 0.2
+            if '"""' in code or "'''" in code:
+                structure_score += 0.2  # Documentation
+            if 'try:' in code and 'except' in code:
+                structure_score += 0.2  # Error handling
+            if any(keyword in code for keyword in ['import ', 'from ']):
+                structure_score += 0.1  # Proper imports
+
+            return min(structure_score, 1.0)
+
+        return dspy.BestOfN(
+            dspy.ProgramOfThought("problem -> code, explanation"),
+            n=3,
+            metric=code_quality
+        )
+
+    @staticmethod
+    def create_research_synthesizer():
+        """Create BestOfN optimized for research synthesis."""
+        def research_quality(prediction, example=None):
+            synthesis = prediction.synthesis
+
+            # Citation and reference quality
+            reference_score = 0.0
+            if 'study' in synthesis.lower():
+                reference_score += 0.3
+            if 'research' in synthesis.lower():
+                reference_score += 0.2
+            if any(year in synthesis for year in ['2020', '2021', '2022', '2023', '2024']):
+                reference_score += 0.2
+            if 'according to' in synthesis.lower():
+                reference_score += 0.3
+
+            return min(reference_score, 1.0)
+
+        return dspy.BestOfN(
+            dspy.ChainOfThought("research_papers, question -> reasoning, synthesis"),
+            n=6,
+            metric=research_quality
+        )
+```
+
+## Advanced Configuration Patterns
+
+### Adaptive Candidate Generation
+
+```python
+class AdaptiveBestOfN(dspy.Module):
+    def __init__(self, base_module, min_n=2, max_n=8, quality_threshold=0.8):
+        super().__init__()
+        self.base_module = base_module
+        self.min_n = min_n
+        self.max_n = max_n
+        self.quality_threshold = quality_threshold
+
+        # Quality assessor
+        self.quality_assessor = dspy.Predict(
+            "response: str -> quality_score: float, meets_threshold: bool"
+        )
+
+    def forward(self, **kwargs):
+        candidates = []
+        best_quality = 0.0
+
+        # Generate minimum candidates
+        for i in range(self.min_n):
+            candidate = self.base_module(**kwargs)
+            quality_assessment = self.quality_assessor(response=str(candidate))
+            quality_score = quality_assessment.quality_score
+
+            candidates.append((quality_score, candidate))
+            best_quality = max(best_quality, quality_score)
+
+        # Generate additional candidates if quality threshold not met
+        current_n = self.min_n
+        while best_quality < self.quality_threshold and current_n < self.max_n:
+            candidate = self.base_module(**kwargs)
+            quality_assessment = self.quality_assessor(response=str(candidate))
+            quality_score = quality_assessment.quality_score
+
+            candidates.append((quality_score, candidate))
+            best_quality = max(best_quality, quality_score)
+            current_n += 1
+
+        # Return best candidate
+        best_score, best_candidate = max(candidates)
+
+        return dspy.Prediction(
+            **{k: v for k, v in best_candidate.__dict__.items()},
+            final_quality_score=best_score,
+            candidates_generated=len(candidates),
+            quality_threshold_met=best_score >= self.quality_threshold
+        )
+```
+
+### Multi-Metric Selection
+
+```python
+class MultiMetricBestOfN(dspy.Module):
+    def __init__(self, base_module, n=5, metrics=None, weights=None):
+        super().__init__()
+        self.base_module = base_module
+        self.n = n
+        self.metrics = metrics or []
+        self.weights = weights or [1.0] * len(self.metrics)
+
+        assert len(self.metrics) == len(self.weights), "Metrics and weights must have same length"
+
+    def forward(self, **kwargs):
+        # Generate candidates
+        candidates = []
+        for i in range(self.n):
+            candidate = self.base_module(**kwargs)
+            candidates.append(candidate)
+
+        # Score candidates with multiple metrics
+        scored_candidates = []
+        for candidate in candidates:
+            metric_scores = []
+
+            for metric in self.metrics:
+                score = metric(candidate)
+                metric_scores.append(score)
+
+            # Calculate weighted average
+            weighted_score = sum(score * weight for score, weight in zip(metric_scores, self.weights))
+            weighted_score /= sum(self.weights)
+
+            scored_candidates.append((weighted_score, candidate, metric_scores))
+
+        # Select best candidate
+        best_score, best_candidate, best_metric_scores = max(scored_candidates)
+
+        return dspy.Prediction(
+            **{k: v for k, v in best_candidate.__dict__.items()},
+            overall_score=best_score,
+            metric_scores=best_metric_scores,
+            selection_details={
+                'total_candidates': self.n,
+                'winning_score': best_score,
+                'metric_breakdown': dict(zip(range(len(self.metrics)), best_metric_scores))
+            }
+        )
+```
+
+## Speed Tips
+
+### Performance Optimization
+
+```python
+# Optimize candidate generation
+class EfficientBestOfN(dspy.Module):
+    def __init__(self, base_module, n=5, metric=None, parallel=True):
+        super().__init__()
+        self.base_module = base_module
+        self.n = n
+        self.metric = metric
+        self.parallel = parallel
+
+    async def aforward(self, **kwargs):
+        """Async version for parallel candidate generation."""
+        import asyncio
+
+        if self.parallel:
+            # Generate candidates in parallel
+            tasks = [self.base_module.acall(**kwargs) for _ in range(self.n)]
+            candidates = await asyncio.gather(*tasks)
+        else:
+            # Sequential generation
+            candidates = []
+            for i in range(self.n):
+                candidate = await self.base_module.acall(**kwargs)
+                candidates.append(candidate)
+
+        # Apply metric selection
+        if self.metric:
+            scored_candidates = [(self.metric(c), c) for c in candidates]
+            best_score, best_candidate = max(scored_candidates)
+            return best_candidate
+        else:
+            return candidates[0]  # Return first if no metric
+
+# Cache expensive metric calculations
+from functools import lru_cache
+
+class CachedMetric:
+    def __init__(self, metric_func, cache_size=1000):
+        self.metric_func = metric_func
+        self._cached_metric = lru_cache(maxsize=cache_size)(self._compute_metric)
+
+    def _compute_metric(self, content_hash):
+        # In real implementation, reconstruct content from hash
+        return self.metric_func(content_hash)
+
+    def __call__(self, prediction, example=None):
+        content_str = str(prediction)
+        content_hash = hash(content_str)
+        return self._cached_metric(content_hash)
+```
+
+## Common Pitfalls
+
+### Poor Metric Design
+
+```python
+# ❌ DON'T: Use overly simple metrics
+def bad_metric(prediction, example=None):
+    return len(prediction.answer)  # Only considers length
+
+# ✅ DO: Design comprehensive metrics
+def good_metric(prediction, example=None):
+    answer = prediction.answer
+
+    # Multiple quality factors
+    length_appropriate = 0.3 if 50 <= len(answer.split()) <= 200 else 0.1
+    has_structure = 0.3 if '. ' in answer and answer.count('.') >= 2 else 0.1
+    specific_content = 0.2 if any(char.isdigit() for char in answer) else 0.0
+    coherent_language = 0.2 if 'because' in answer.lower() or 'therefore' in answer.lower() else 0.0
+
+    return length_appropriate + has_structure + specific_content + coherent_language
+```
+
+### Excessive Candidate Generation
+
+```python
+# ❌ DON'T: Generate too many candidates unnecessarily
+expensive_bestof = dspy.BestOfN(
+    expensive_module,
+    n=20,  # Too many for most use cases
+    metric=simple_metric
+)
+
+# ✅ DO: Use reasonable candidate counts
+efficient_bestof = dspy.BestOfN(
+    expensive_module,
+    n=3,  # Usually sufficient for quality improvement
+    metric=comprehensive_metric
+)
+```
+
+### Ignoring Metric Validation
+
+```python
+# ❌ DON'T: Use metrics without validation
+def untested_metric(prediction, example=None):
+    # Complex logic without validation
+    return some_complex_calculation(prediction)
+
+# ✅ DO: Validate metric behavior
+def tested_metric(prediction, example=None):
+    try:
+        score = some_complex_calculation(prediction)
+        # Ensure score is in valid range
+        return max(0.0, min(1.0, score))
+    except Exception:
+        return 0.0  # Safe fallback
+```
+
+## Best Practices Summary
+
+- **Design meaningful metrics**: Create quality functions that align with task objectives
+- **Optimize candidate count**: Use 3-5 candidates for most tasks, adjust based on quality needs
+- **Balance quality vs cost**: Consider computational cost when setting n and metric complexity
+- **Use domain-specific metrics**: Tailor quality assessment to specific use cases
+- **Validate metric behavior**: Test metrics with known good/bad examples
+- **Consider parallel generation**: Use async for better performance with multiple candidates
+- **Cache expensive computations**: Store metric results for repeated evaluations
+- **Monitor selection patterns**: Track which candidates are selected to improve metrics
+
+## References
+
+- [BestOfN Module API](/docs/api/modules/BestOfN.md)
+- [Quality Metrics Guide](/docs/tutorials/quality_metrics/)
+- [Multi-Candidate Selection Tutorial](/docs/tutorials/output_refinement/)
+- [Performance Optimization](/docs/tutorials/performance/)

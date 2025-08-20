@@ -1,0 +1,449 @@
+---
+description: DSPy BootstrapFewShot - Core few-shot optimization for rapid development
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 BootstrapFewShot core optimization for maximum development speed.
+
+## BootstrapFewShot Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Teacher         │───▶│ Bootstrap        │───▶│ Demo            │
+│ Execution       │    │ Generation       │    │ Selection       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Labeled         │    │ Quality          │    │ Optimized       │
+│ Examples        │    │ Filtering        │    │ Student         │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant BootstrapFewShot Patterns
+
+### Quick Start
+
+```python
+import dspy
+
+# Initialize BootstrapFewShot for few-shot optimization
+def accuracy_metric(gold, pred):
+    """Simple accuracy metric for bootstrap filtering"""
+    return float(gold.answer.strip() == pred.answer.strip())
+
+bootstrap = dspy.BootstrapFewShot(
+    metric=accuracy_metric,
+    max_bootstrapped_demos=4,    # Generated examples
+    max_labeled_demos=16,        # Direct examples from trainset
+    max_rounds=1                 # Bootstrap attempts
+)
+
+# Optimize with teacher-student approach
+optimized = bootstrap.compile(
+    student=student_program,
+    teacher=teacher_program,     # Optional: uses student if None
+    trainset=trainset
+)
+```
+
+### Production Configuration
+
+```python
+# Enterprise BootstrapFewShot setup
+bootstrap = dspy.BootstrapFewShot(
+    metric=comprehensive_metric,
+    metric_threshold=0.8,        # Quality threshold for demos
+
+    # Demo configuration
+    max_bootstrapped_demos=8,    # More generated examples
+    max_labeled_demos=12,        # Balanced labeled examples
+    max_rounds=3,               # Multiple bootstrap attempts
+
+    # Teacher settings
+    teacher_settings={
+        'temperature': 0.7,      # Diverse generation
+        'max_tokens': 1024,
+        'top_p': 0.9
+    },
+
+    # Error handling
+    max_errors=5                # Continue through errors
+)
+
+# Compile with separate teacher
+strong_teacher = create_teacher_program()  # Use stronger model
+optimized = bootstrap.compile(
+    student=student_program,
+    teacher=strong_teacher,
+    trainset=trainset
+)
+```
+
+## Core BootstrapFewShot Patterns
+
+### Advanced Teacher-Student Configuration
+
+```python
+def create_teacher_student_bootstrap(student_config, teacher_config, trainset):
+    """Advanced teacher-student bootstrap configuration"""
+
+    # Create student with weaker/faster model
+    student = dspy.ChainOfThought("question -> answer")
+    student.set_lm(dspy.LM(**student_config))
+
+    # Create teacher with stronger model
+    teacher = dspy.ChainOfThought("question -> answer")
+    teacher.set_lm(dspy.LM(**teacher_config))
+
+    def quality_aware_metric(gold, pred):
+        """Quality-aware metric for teacher-student distillation"""
+
+        # Primary accuracy
+        accuracy = float(gold.answer.strip() == pred.answer.strip())
+
+        # Quality factors
+        reasoning_quality = 0.0
+        if hasattr(pred, 'reasoning') and pred.reasoning:
+            # Check reasoning length and coherence
+            reasoning_length = len(pred.reasoning.split())
+            if 10 <= reasoning_length <= 100:  # Reasonable length
+                reasoning_quality = 0.1
+
+        # Confidence bonus
+        confidence_bonus = 0.0
+        if hasattr(pred, 'confidence') and pred.confidence > 0.8:
+            confidence_bonus = 0.05
+
+        return min(1.0, accuracy + reasoning_quality + confidence_bonus)
+
+    bootstrap = dspy.BootstrapFewShot(
+        metric=quality_aware_metric,
+        metric_threshold=0.85,       # High quality threshold
+        max_bootstrapped_demos=6,
+        max_labeled_demos=10,
+        max_rounds=2,
+        teacher_settings={
+            'temperature': 0.3,      # More focused teacher
+            'max_tokens': 512
+        }
+    )
+
+    return bootstrap.compile(
+        student=student,
+        teacher=teacher,
+        trainset=trainset
+    )
+
+def self_bootstrap_optimization(program, trainset, iterations=2):
+    """Self-bootstrap optimization with iterative improvement"""
+
+    current_program = program
+
+    for iteration in range(iterations):
+        print(f"Bootstrap iteration {iteration + 1}/{iterations}")
+
+        bootstrap = dspy.BootstrapFewShot(
+            metric=accuracy_metric,
+            max_bootstrapped_demos=4 + iteration * 2,  # Progressive demos
+            max_labeled_demos=8 + iteration * 4,
+            max_rounds=1,
+            metric_threshold=0.7 + iteration * 0.1    # Progressive quality
+        )
+
+        # Use current program as both student and teacher
+        current_program = bootstrap.compile(
+            student=current_program.reset_copy(),
+            teacher=current_program,  # Self-teaching
+            trainset=trainset
+        )
+
+        # Evaluate iteration
+        score = evaluate_program(current_program, valset)
+        print(f"Iteration {iteration + 1} score: {score:.3f}")
+
+    return current_program
+```
+
+### Demo Quality Analysis and Selection
+
+```python
+def analyze_bootstrap_quality(optimized_program):
+    """Analyze quality of bootstrapped demonstrations"""
+
+    demo_analysis = {}
+
+    for name, predictor in optimized_program.named_predictors():
+        demos = predictor.demos
+
+        analysis = {
+            'total_demos': len(demos),
+            'bootstrap_demos': 0,
+            'labeled_demos': 0,
+            'avg_input_length': 0,
+            'avg_output_length': 0,
+            'demo_diversity': 0
+        }
+
+        if demos:
+            # Analyze demo characteristics
+            input_lengths = []
+            output_lengths = []
+
+            for demo in demos:
+                # Assume demos have input/output attributes
+                input_text = str(demo.question) if hasattr(demo, 'question') else str(demo)
+                output_text = str(demo.answer) if hasattr(demo, 'answer') else str(demo)
+
+                input_lengths.append(len(input_text.split()))
+                output_lengths.append(len(output_text.split()))
+
+            analysis['avg_input_length'] = sum(input_lengths) / len(input_lengths)
+            analysis['avg_output_length'] = sum(output_lengths) / len(output_lengths)
+
+            # Simple diversity measure (unique inputs)
+            unique_inputs = len(set(str(demo.question) if hasattr(demo, 'question') else str(demo) for demo in demos))
+            analysis['demo_diversity'] = unique_inputs / len(demos)
+
+        demo_analysis[name] = analysis
+
+    return demo_analysis
+
+def selective_bootstrap_by_difficulty(trainset, difficulty_scores):
+    """Bootstrap focusing on examples by difficulty"""
+
+    # Sort examples by difficulty
+    indexed_examples = list(zip(trainset, difficulty_scores))
+    indexed_examples.sort(key=lambda x: x[1], reverse=True)  # Hardest first
+
+    # Create difficulty-stratified bootstrap
+    def difficulty_aware_metric(gold, pred):
+        """Metric that considers example difficulty"""
+        base_accuracy = accuracy_metric(gold, pred)
+
+        # Find example difficulty
+        example_difficulty = 0.5  # Default
+        for example, difficulty in indexed_examples:
+            if example.question == gold.question:
+                example_difficulty = difficulty
+                break
+
+        # Weight by difficulty (harder examples get more weight)
+        weighted_score = base_accuracy * (1.0 + example_difficulty)
+        return min(1.0, weighted_score)
+
+    # Focus on hardest examples
+    hard_examples = [ex for ex, diff in indexed_examples[:len(trainset)//2]]
+    easy_examples = [ex for ex, diff in indexed_examples[len(trainset)//2:]]
+
+    # Bootstrap with hard examples, validate on easy ones
+    bootstrap = dspy.BootstrapFewShot(
+        metric=difficulty_aware_metric,
+        metric_threshold=0.7,
+        max_bootstrapped_demos=8,
+        max_labeled_demos=4,
+        max_rounds=2
+    )
+
+    return bootstrap, hard_examples, easy_examples
+```
+
+### Multi-Round Bootstrap Optimization
+
+```python
+def multi_round_bootstrap_strategy(program, trainset, max_rounds=3):
+    """Multi-round bootstrap with progressive improvement"""
+
+    round_results = []
+    current_program = program
+
+    for round_num in range(max_rounds):
+        print(f"\nBootstrap Round {round_num + 1}/{max_rounds}")
+
+        # Progressive configuration
+        round_config = {
+            'max_bootstrapped_demos': 3 + round_num,
+            'max_labeled_demos': 8 + round_num * 2,
+            'metric_threshold': 0.6 + round_num * 0.1,
+            'max_rounds': 1 + round_num  # More attempts in later rounds
+        }
+
+        bootstrap = dspy.BootstrapFewShot(
+            metric=accuracy_metric,
+            **round_config
+        )
+
+        # Use previous round's output as teacher
+        optimized = bootstrap.compile(
+            student=current_program.reset_copy(),
+            teacher=current_program,
+            trainset=trainset
+        )
+
+        # Evaluate round
+        score = evaluate_program(optimized, valset)
+
+        round_results.append({
+            'round': round_num + 1,
+            'score': score,
+            'config': round_config,
+            'program': optimized
+        })
+
+        print(f"Round {round_num + 1} score: {score:.3f}")
+
+        # Early stopping if no improvement
+        if round_num > 0 and score <= round_results[-2]['score']:
+            print("No improvement, stopping early")
+            break
+
+        current_program = optimized
+
+    # Return best round result
+    best_round = max(round_results, key=lambda x: x['score'])
+    return best_round['program'], round_results
+
+def bootstrap_with_error_analysis(program, trainset, max_errors=10):
+    """Bootstrap with detailed error analysis and recovery"""
+
+    error_log = []
+
+    def error_aware_metric(gold, pred):
+        """Metric that logs errors for analysis"""
+        try:
+            score = accuracy_metric(gold, pred)
+            return score
+        except Exception as e:
+            error_log.append({
+                'example': gold,
+                'prediction': pred,
+                'error': str(e),
+                'error_type': type(e).__name__
+            })
+            return 0.0  # Return 0 for errors
+
+    bootstrap = dspy.BootstrapFewShot(
+        metric=error_aware_metric,
+        metric_threshold=0.7,
+        max_bootstrapped_demos=6,
+        max_labeled_demos=10,
+        max_rounds=2,
+        max_errors=max_errors
+    )
+
+    optimized = bootstrap.compile(
+        student=program,
+        trainset=trainset
+    )
+
+    # Analyze errors
+    if error_log:
+        error_analysis = analyze_bootstrap_errors(error_log)
+        print(f"Bootstrap completed with {len(error_log)} errors")
+        print(f"Error types: {error_analysis['error_types']}")
+
+    return optimized, error_log
+
+def analyze_bootstrap_errors(error_log):
+    """Analyze bootstrap errors for debugging"""
+
+    error_types = {}
+    for error_entry in error_log:
+        error_type = error_entry['error_type']
+        error_types[error_type] = error_types.get(error_type, 0) + 1
+
+    return {
+        'total_errors': len(error_log),
+        'error_types': error_types,
+        'sample_errors': error_log[:3]  # First 3 for debugging
+    }
+```
+
+## Performance Insights
+
+### BootstrapFewShot vs Other Optimizers
+
+- **Sample Efficiency**: Best for tasks with 100-1000 training examples
+- **Quality Control**: Metric threshold crucial for demo quality
+- **Teacher Effect**: 15-25% improvement with stronger teacher models
+- **Convergence**: Usually converges in 1-2 rounds for most tasks
+
+### Configuration Guidelines
+
+```python
+def bootstrap_config_recommendations(task_type, dataset_size, model_strength):
+    """Configuration recommendations for BootstrapFewShot"""
+
+    base_configs = {
+        'classification': {
+            'max_bootstrapped_demos': 4,
+            'max_labeled_demos': 12,
+            'metric_threshold': 0.8,
+            'max_rounds': 1
+        },
+        'reasoning': {
+            'max_bootstrapped_demos': 6,
+            'max_labeled_demos': 8,
+            'metric_threshold': 0.7,
+            'max_rounds': 2
+        },
+        'generation': {
+            'max_bootstrapped_demos': 8,
+            'max_labeled_demos': 6,
+            'metric_threshold': 0.6,
+            'max_rounds': 2
+        }
+    }
+
+    config = base_configs.get(task_type, base_configs['classification'])
+
+    # Adjust for dataset size
+    if dataset_size < 200:
+        config['max_labeled_demos'] = min(config['max_labeled_demos'], dataset_size // 4)
+    elif dataset_size > 2000:
+        config['max_labeled_demos'] = min(config['max_labeled_demos'] * 2, 20)
+
+    # Adjust for model strength
+    if model_strength == 'weak':
+        config['max_bootstrapped_demos'] += 2
+        config['metric_threshold'] -= 0.1
+    elif model_strength == 'strong':
+        config['metric_threshold'] += 0.1
+        config['max_rounds'] = max(1, config['max_rounds'] - 1)
+
+    return config
+```
+
+## Speed Tips
+
+- Start with `max_rounds=1` and increase only if needed
+- Use `metric_threshold=0.7` as baseline for most tasks
+- Balance `max_bootstrapped_demos` vs `max_labeled_demos` (1:2 ratio)
+- Strong teacher models improve bootstrap quality significantly
+- Monitor error count and adjust `max_errors` accordingly
+- Cache teacher executions when using same teacher repeatedly
+
+## Common Pitfalls
+
+- **No Metric Threshold**: Without threshold, low-quality demos pollute training
+- **Too Many Rounds**: Diminishing returns after 2-3 rounds
+- **Weak Teacher**: Poor teacher quality leads to bad bootstrap examples
+- **Imbalanced Demos**: Too many bootstrap vs labeled (or vice versa)
+- **Ignoring Errors**: High error rates indicate metric or setup issues
+
+## Best Practices Summary
+
+- Use stronger model as teacher for better bootstrap quality
+- Set appropriate metric thresholds (0.7-0.9 range)
+- Balance bootstrapped and labeled demonstrations
+- Monitor demo quality through analysis functions
+- Use progressive multi-round strategies for complex tasks
+- Handle errors gracefully with proper error limits
+- Validate bootstrap effectiveness on held-out data
+
+## References
+
+- DSPy BootstrapFewShot Source: `/docs/dspy/dspy/teleprompt/bootstrap.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/BootstrapFewShot.md`
+- Related: LabeledFewShot, BootstrapRS, BootstrapFewShotWithRandomSearch
+- Tutorial Examples: `/docs/dspy/docs/tutorials/optimize_ai_program/`

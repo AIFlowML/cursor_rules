@@ -1,0 +1,817 @@
+---
+description: DSPY 3 Entity Extraction Tutorial - Production NER system from official DSPy 3.0.1 tutorial with structured outputs
+alwaysApply: false
+---
+
+> You are an expert in implementing Production-Ready Entity Extraction (NER) Systems using DSPy 3.0.1 based on official tutorials.
+
+## Entity Extraction Tutorial Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Tokenized     │────│   Entity         │────│   Structured    │
+│   Input Text    │    │   Recognition    │    │   Extraction    │
+└─────────────────┘    │   (Chain-of-     │    │   (People)      │
+                       │   Thought)       │    └─────────────────┘
+                       └──────────────────┘             │
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Final Entity   │────│   Validation &   │────│   Raw Entity    │
+│  Lists + Meta   │    │   Confidence     │    │   Outputs       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                    ┌──────────────────┐
+                    │   MLflow         │
+                    │   Experiment     │
+                    │   Tracking       │
+                    └──────────────────┘
+```
+
+## Tutorial Implementation
+
+### Tutorial Entity Extraction (From Official Notebook)
+
+```python
+import os
+import tempfile
+from datasets import load_dataset
+from typing import Dict, Any, List
+import dspy
+
+# Load CoNLL-2003 dataset (exact from tutorial)
+def load_conll_dataset() -> dict:
+    """Loads the CoNLL-2003 dataset into train, validation, and test splits."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        os.environ["HF_DATASETS_CACHE"] = temp_dir
+        return load_dataset("conll2003", trust_remote_code=True)
+
+def extract_people_entities(data_row: dict[str, Any]) -> list[str]:
+    """Extracts entities referring to people from a row of the CoNLL-2003 dataset."""
+    return [
+        token
+        for token, ner_tag in zip(data_row["tokens"], data_row["ner_tags"])
+        if ner_tag in (1, 2)  # CoNLL entity codes 1 and 2 refer to people
+    ]
+
+def prepare_dataset(data_split, start: int, end: int) -> list[dspy.Example]:
+    """Prepares a sliced dataset split for use with DSPy."""
+    return [
+        dspy.Example(
+            tokens=row["tokens"],
+            expected_extracted_people=extract_people_entities(row)
+        ).with_inputs("tokens")
+        for row in data_split.select(range(start, end))
+    ]
+
+# Tutorial signature (exact from notebook)
+class PeopleExtraction(dspy.Signature):
+    """
+    Extract contiguous tokens referring to specific people, if any, from a list of string tokens.
+    Output a list of tokens. In other words, do not combine multiple tokens into a single value.
+    """
+    tokens: list[str] = dspy.InputField(desc="tokenized text")
+    extracted_people: list[str] = dspy.OutputField(desc="all tokens referring to specific people extracted from the tokenized text")
+
+# Tutorial module (exact implementation)
+people_extractor = dspy.ChainOfThought(PeopleExtraction)
+
+# Configure DSPy (from tutorial)
+lm = dspy.LM(model="openai/gpt-4o-mini")
+dspy.settings.configure(lm=lm)
+
+# Tutorial evaluation metric (exact)
+def extraction_correctness_metric(example: dspy.Example, prediction: dspy.Prediction, trace=None) -> bool:
+    """Computes correctness of entity extraction predictions."""
+    return prediction.extracted_people == example.expected_extracted_people
+
+# Tutorial evaluation setup (exact)
+evaluate_correctness = dspy.Evaluate(
+    devset=test_set,
+    metric=extraction_correctness_metric,
+    num_threads=24,
+    display_progress=True,
+    display_table=True
+)
+
+# Tutorial optimization (exact from notebook)
+mipro_optimizer = dspy.MIPROv2(
+    metric=extraction_correctness_metric,
+    auto="medium",
+)
+optimized_people_extractor = mipro_optimizer.compile(
+    people_extractor,
+    trainset=train_set,
+    max_bootstrapped_demos=4,
+    minibatch=False
+)
+```
+
+### Production Entity Extraction System
+
+```python
+import logging
+import mlflow
+import re
+import time
+from typing import Dict, List, Optional, Any, Union, Set, Tuple
+from pydantic import BaseModel, Field, validator
+from enum import Enum
+from collections import defaultdict, Counter
+import spacy
+from datetime import datetime
+import asyncio
+
+# Production configuration
+class EntityExtractionConfig(BaseModel):
+    model_name: str = "openai/gpt-4o-mini"
+    entity_types: List[str] = Field(default=["PERSON", "ORG", "LOC", "MISC"])
+    confidence_threshold: float = Field(0.8, ge=0.0, le=1.0)
+    max_tokens: int = 1000
+    enable_spacy_validation: bool = True
+    spacy_model: str = "en_core_web_sm"
+    optimization_auto: str = "medium"
+    optimization_threads: int = 24
+    max_demos: int = 4
+    batch_size: int = 16
+    cache_dir: str = "./cache"
+    mlflow_uri: str = "http://localhost:5000"
+    environment: str = "production"
+
+class EntityType(str, Enum):
+    PERSON = "PERSON"
+    ORGANIZATION = "ORG"
+    LOCATION = "LOC"
+    MISCELLANEOUS = "MISC"
+    DATE = "DATE"
+    MONEY = "MONEY"
+    EMAIL = "EMAIL"
+    PHONE = "PHONE"
+
+# Production entity result
+class ExtractedEntity(BaseModel):
+    text: str
+    entity_type: EntityType
+    start_idx: int
+    end_idx: int
+    confidence: float = 1.0
+    context: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+class EntityExtractionResult(BaseModel):
+    input_tokens: List[str]
+    entities: List[ExtractedEntity]
+    entity_counts: Dict[str, int]
+    processing_time_ms: float
+    model_version: str
+    confidence_scores: List[float]
+    reasoning: str
+
+# Advanced production entity extractor
+class ProductionEntityExtractor(dspy.Module):
+    def __init__(self, config: EntityExtractionConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+
+        # Initialize spaCy for validation if enabled
+        self.nlp = None
+        if config.enable_spacy_validation:
+            try:
+                import spacy
+                self.nlp = spacy.load(config.spacy_model)
+                self.logger.info(f"Loaded spaCy model: {config.spacy_model}")
+            except Exception as e:
+                self.logger.warning(f"Could not load spaCy model: {e}")
+
+        # Enhanced signatures for different entity types
+        self.people_extractor = self._create_people_extractor()
+        self.org_extractor = self._create_org_extractor()
+        self.location_extractor = self._create_location_extractor()
+        self.misc_extractor = self._create_misc_extractor()
+
+        # Pattern-based extractors for structured entities
+        self.pattern_extractors = {
+            EntityType.EMAIL: self._extract_emails,
+            EntityType.PHONE: self._extract_phones,
+            EntityType.DATE: self._extract_dates,
+            EntityType.MONEY: self._extract_money
+        }
+
+        # Performance tracking
+        self.extraction_stats = {
+            'total_extractions': 0,
+            'avg_processing_time': 0.0,
+            'entity_type_counts': defaultdict(int)
+        }
+
+    def _setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(f"EntityExtractor.{self.config.environment}")
+        return logger
+
+    def _create_people_extractor(self):
+        """Create people extraction signature (from tutorial)"""
+        class PeopleExtraction(dspy.Signature):
+            """Extract contiguous tokens referring to specific people, if any, from a list of string tokens.
+            Output a list of tokens. In other words, do not combine multiple tokens into a single value."""
+            tokens: list[str] = dspy.InputField(desc="tokenized text")
+            extracted_people: list[str] = dspy.OutputField(desc="all tokens referring to specific people extracted from the tokenized text")
+
+        return dspy.ChainOfThought(PeopleExtraction)
+
+    def _create_org_extractor(self):
+        """Create organization extraction signature"""
+        class OrganizationExtraction(dspy.Signature):
+            """Extract tokens referring to organizations, companies, or institutions."""
+            tokens: list[str] = dspy.InputField(desc="tokenized text")
+            extracted_organizations: list[str] = dspy.OutputField(desc="tokens referring to organizations")
+
+        return dspy.ChainOfThought(OrganizationExtraction)
+
+    def _create_location_extractor(self):
+        """Create location extraction signature"""
+        class LocationExtraction(dspy.Signature):
+            """Extract tokens referring to locations, places, or geographical entities."""
+            tokens: list[str] = dspy.InputField(desc="tokenized text")
+            extracted_locations: list[str] = dspy.OutputField(desc="tokens referring to locations")
+
+        return dspy.ChainOfThought(LocationExtraction)
+
+    def _create_misc_extractor(self):
+        """Create miscellaneous entity extraction signature"""
+        class MiscExtraction(dspy.Signature):
+            """Extract miscellaneous named entities not covered by person, organization, or location categories."""
+            tokens: list[str] = dspy.InputField(desc="tokenized text")
+            extracted_misc: list[str] = dspy.OutputField(desc="miscellaneous named entities")
+
+        return dspy.ChainOfThought(MiscExtraction)
+
+    def _preprocess_tokens(self, tokens: Union[List[str], str]) -> List[str]:
+        """Preprocess input tokens"""
+        if isinstance(tokens, str):
+            # Simple tokenization if string input
+            tokens = tokens.split()
+
+        # Validate and clean tokens
+        tokens = [token.strip() for token in tokens if token.strip()]
+
+        if len(tokens) > self.config.max_tokens:
+            self.logger.warning(f"Truncating tokens from {len(tokens)} to {self.config.max_tokens}")
+            tokens = tokens[:self.config.max_tokens]
+
+        return tokens
+
+    def _extract_emails(self, tokens: List[str]) -> List[ExtractedEntity]:
+        """Extract email addresses using regex patterns"""
+        text = " ".join(tokens)
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+
+        entities = []
+        for match in re.finditer(email_pattern, text):
+            entities.append(ExtractedEntity(
+                text=match.group(),
+                entity_type=EntityType.EMAIL,
+                start_idx=match.start(),
+                end_idx=match.end(),
+                confidence=0.95,
+                metadata={'pattern': 'email_regex'}
+            ))
+
+        return entities
+
+    def _extract_phones(self, tokens: List[str]) -> List[ExtractedEntity]:
+        """Extract phone numbers using regex patterns"""
+        text = " ".join(tokens)
+        phone_patterns = [
+            r'\b\d{3}-\d{3}-\d{4}\b',  # 555-123-4567
+            r'\b\(\d{3}\)\s*\d{3}-\d{4}\b',  # (555) 123-4567
+            r'\b\d{10}\b',  # 5551234567
+            r'\+\d{1,3}\s*\d{3,4}\s*\d{3,4}\s*\d{4}'  # International
+        ]
+
+        entities = []
+        for pattern in phone_patterns:
+            for match in re.finditer(pattern, text):
+                entities.append(ExtractedEntity(
+                    text=match.group(),
+                    entity_type=EntityType.PHONE,
+                    start_idx=match.start(),
+                    end_idx=match.end(),
+                    confidence=0.9,
+                    metadata={'pattern': 'phone_regex'}
+                ))
+
+        return entities
+
+    def _extract_dates(self, tokens: List[str]) -> List[ExtractedEntity]:
+        """Extract dates using regex patterns"""
+        text = " ".join(tokens)
+        date_patterns = [
+            r'\b\d{1,2}/\d{1,2}/\d{4}\b',  # MM/DD/YYYY
+            r'\b\d{1,2}-\d{1,2}-\d{4}\b',  # MM-DD-YYYY
+            r'\b\d{4}-\d{1,2}-\d{1,2}\b',  # YYYY-MM-DD
+            r'\b\w+\s+\d{1,2},\s*\d{4}\b'  # Month DD, YYYY
+        ]
+
+        entities = []
+        for pattern in date_patterns:
+            for match in re.finditer(pattern, text):
+                entities.append(ExtractedEntity(
+                    text=match.group(),
+                    entity_type=EntityType.DATE,
+                    start_idx=match.start(),
+                    end_idx=match.end(),
+                    confidence=0.85,
+                    metadata={'pattern': 'date_regex'}
+                ))
+
+        return entities
+
+    def _extract_money(self, tokens: List[str]) -> List[ExtractedEntity]:
+        """Extract monetary amounts using regex patterns"""
+        text = " ".join(tokens)
+        money_patterns = [
+            r'\$\d+(?:,\d{3})*(?:\.\d{2})?',  # $1,000.00
+            r'\b\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:USD|EUR|GBP|dollars?|euros?)\b'  # 1000 USD
+        ]
+
+        entities = []
+        for pattern in money_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                entities.append(ExtractedEntity(
+                    text=match.group(),
+                    entity_type=EntityType.MONEY,
+                    start_idx=match.start(),
+                    end_idx=match.end(),
+                    confidence=0.9,
+                    metadata={'pattern': 'money_regex'}
+                ))
+
+        return entities
+
+    def _validate_with_spacy(self, tokens: List[str], entities: List[ExtractedEntity]) -> List[ExtractedEntity]:
+        """Validate entities using spaCy NER"""
+        if not self.nlp:
+            return entities
+
+        try:
+            text = " ".join(tokens)
+            doc = self.nlp(text)
+
+            spacy_entities = []
+            for ent in doc.ents:
+                # Map spaCy labels to our entity types
+                entity_type_map = {
+                    'PERSON': EntityType.PERSON,
+                    'ORG': EntityType.ORGANIZATION,
+                    'GPE': EntityType.LOCATION,  # Geopolitical entities
+                    'LOC': EntityType.LOCATION,
+                    'DATE': EntityType.DATE,
+                    'MONEY': EntityType.MONEY,
+                    'EMAIL': EntityType.EMAIL,
+                }
+
+                mapped_type = entity_type_map.get(ent.label_, EntityType.MISCELLANEOUS)
+                spacy_entities.append(ExtractedEntity(
+                    text=ent.text,
+                    entity_type=mapped_type,
+                    start_idx=ent.start_char,
+                    end_idx=ent.end_char,
+                    confidence=0.8,  # spaCy confidence
+                    metadata={'source': 'spacy', 'label': ent.label_}
+                ))
+
+            # Combine and deduplicate entities
+            all_entities = entities + spacy_entities
+            return self._deduplicate_entities(all_entities)
+
+        except Exception as e:
+            self.logger.warning(f"spaCy validation failed: {e}")
+            return entities
+
+    def _deduplicate_entities(self, entities: List[ExtractedEntity]) -> List[ExtractedEntity]:
+        """Remove duplicate entities based on text and position"""
+        seen = set()
+        deduplicated = []
+
+        for entity in entities:
+            key = (entity.text.lower(), entity.start_idx, entity.entity_type)
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(entity)
+
+        return deduplicated
+
+    def forward(self, tokens: Union[List[str], str], **kwargs) -> EntityExtractionResult:
+        start_time = time.time()
+
+        try:
+            # Preprocess tokens
+            processed_tokens = self._preprocess_tokens(tokens)
+
+            with mlflow.start_run(nested=True):
+                # Log input parameters
+                mlflow.log_param("num_tokens", len(processed_tokens))
+                mlflow.log_param("entity_types", len(self.config.entity_types))
+
+                # Extract different entity types
+                all_entities = []
+                reasoning_parts = []
+
+                # LLM-based extraction
+                if EntityType.PERSON in self.config.entity_types:
+                    people_result = self.people_extractor(tokens=processed_tokens)
+                    for person in people_result.extracted_people:
+                        if person.strip():
+                            all_entities.append(ExtractedEntity(
+                                text=person,
+                                entity_type=EntityType.PERSON,
+                                start_idx=0,  # TODO: compute actual positions
+                                end_idx=len(person),
+                                confidence=0.9,
+                                metadata={'source': 'llm_people'}
+                            ))
+                    reasoning_parts.append(f"People: {people_result.reasoning}")
+
+                if EntityType.ORGANIZATION in self.config.entity_types:
+                    org_result = self.org_extractor(tokens=processed_tokens)
+                    for org in org_result.extracted_organizations:
+                        if org.strip():
+                            all_entities.append(ExtractedEntity(
+                                text=org,
+                                entity_type=EntityType.ORGANIZATION,
+                                start_idx=0,
+                                end_idx=len(org),
+                                confidence=0.9,
+                                metadata={'source': 'llm_org'}
+                            ))
+                    reasoning_parts.append(f"Organizations: {org_result.reasoning}")
+
+                # Pattern-based extraction
+                for entity_type, extractor in self.pattern_extractors.items():
+                    if entity_type.value in [et.value if hasattr(et, 'value') else et for et in self.config.entity_types]:
+                        pattern_entities = extractor(processed_tokens)
+                        all_entities.extend(pattern_entities)
+
+                # spaCy validation if enabled
+                if self.config.enable_spacy_validation:
+                    all_entities = self._validate_with_spacy(processed_tokens, all_entities)
+
+                # Filter by confidence threshold
+                filtered_entities = [
+                    e for e in all_entities
+                    if e.confidence >= self.config.confidence_threshold
+                ]
+
+                # Calculate entity counts
+                entity_counts = Counter(e.entity_type.value for e in filtered_entities)
+                confidence_scores = [e.confidence for e in filtered_entities]
+
+                # Calculate processing time
+                processing_time = (time.time() - start_time) * 1000
+
+                # Update stats
+                self._update_stats(processing_time, entity_counts)
+
+                # Log metrics
+                mlflow.log_metric("num_entities_extracted", len(filtered_entities))
+                mlflow.log_metric("processing_time_ms", processing_time)
+                mlflow.log_metric("avg_confidence", np.mean(confidence_scores) if confidence_scores else 0)
+
+                result = EntityExtractionResult(
+                    input_tokens=processed_tokens,
+                    entities=filtered_entities,
+                    entity_counts=dict(entity_counts),
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    confidence_scores=confidence_scores,
+                    reasoning=" | ".join(reasoning_parts)
+                )
+
+                self.logger.info(
+                    f"Extracted {len(filtered_entities)} entities from {len(processed_tokens)} tokens "
+                    f"in {processing_time:.2f}ms"
+                )
+
+                return dspy.Prediction(
+                    extracted_people=[e.text for e in filtered_entities if e.entity_type == EntityType.PERSON],
+                    entities=filtered_entities,
+                    extraction_result=result
+                )
+
+        except Exception as e:
+            self.logger.error(f"Entity extraction error: {e}")
+            processing_time = (time.time() - start_time) * 1000
+
+            return dspy.Prediction(
+                extracted_people=[],
+                entities=[],
+                extraction_result=EntityExtractionResult(
+                    input_tokens=processed_tokens if 'processed_tokens' in locals() else [],
+                    entities=[],
+                    entity_counts={},
+                    processing_time_ms=processing_time,
+                    model_version="v1.0.0",
+                    confidence_scores=[],
+                    reasoning=f"Error: {str(e)}"
+                )
+            )
+
+    def _update_stats(self, processing_time: float, entity_counts: Counter):
+        """Update performance statistics"""
+        self.extraction_stats['total_extractions'] += 1
+
+        # Update average processing time
+        total = self.extraction_stats['total_extractions']
+        current_avg = self.extraction_stats['avg_processing_time']
+        self.extraction_stats['avg_processing_time'] = (
+            (current_avg * (total - 1) + processing_time) / total
+        )
+
+        # Update entity type counts
+        for entity_type, count in entity_counts.items():
+            self.extraction_stats['entity_type_counts'][entity_type] += count
+
+    async def batch_extract(self, token_lists: List[List[str]]) -> List[EntityExtractionResult]:
+        """Batch entity extraction for efficiency"""
+        results = []
+
+        for i in range(0, len(token_lists), self.config.batch_size):
+            batch = token_lists[i:i+self.config.batch_size]
+            batch_results = await asyncio.gather(*[
+                asyncio.create_task(asyncio.to_thread(self.forward, tokens))
+                for tokens in batch
+            ])
+            results.extend([r.extraction_result for r in batch_results])
+
+        return results
+
+    def get_performance_stats(self) -> Dict:
+        """Get current performance statistics"""
+        return dict(self.extraction_stats)
+
+# Production training and optimization
+class EntityExtractionTrainer:
+    def __init__(self, config: EntityExtractionConfig):
+        self.config = config
+        self.logger = logging.getLogger("EntityExtractionTrainer")
+
+    def train_and_optimize(
+        self,
+        trainset: List[dspy.Example],
+        testset: List[dspy.Example]
+    ):
+        """Complete training workflow based on tutorial"""
+        try:
+            # Initialize extractor
+            extractor = ProductionEntityExtractor(self.config)
+
+            # Tutorial evaluation metric (exact)
+            def extraction_correctness_metric(example: dspy.Example, prediction: dspy.Prediction, trace=None) -> bool:
+                """Computes correctness of entity extraction predictions."""
+                return prediction.extracted_people == example.expected_extracted_people
+
+            evaluate_correctness = dspy.Evaluate(
+                devset=testset,
+                metric=extraction_correctness_metric,
+                num_threads=self.config.optimization_threads,
+                display_progress=True,
+                display_table=True
+            )
+
+            # Baseline evaluation
+            baseline_score = evaluate_correctness(extractor)
+            self.logger.info(f"Baseline accuracy: {baseline_score:.3f}")
+
+            # Optimization (exact from tutorial)
+            mipro_optimizer = dspy.MIPROv2(
+                metric=extraction_correctness_metric,
+                auto=self.config.optimization_auto,
+            )
+
+            optimized_extractor = mipro_optimizer.compile(
+                extractor,
+                trainset=trainset,
+                max_bootstrapped_demos=self.config.max_demos,
+                minibatch=False
+            )
+
+            # Final evaluation
+            optimized_score = evaluate_correctness(optimized_extractor)
+            improvement = optimized_score - baseline_score
+
+            self.logger.info(
+                f"Optimized accuracy: {optimized_score:.3f} "
+                f"(improvement: +{improvement:.3f})"
+            )
+
+            return {
+                'baseline_score': baseline_score,
+                'optimized_score': optimized_score,
+                'improvement': improvement,
+                'model': optimized_extractor
+            }
+
+        except Exception as e:
+            self.logger.error(f"Training failed: {e}")
+            raise
+```
+
+## Performance Results (From Tutorial)
+
+- **Baseline Extractor**: 86.0% Exact Match Accuracy
+- **Optimized Extractor (MIPROv2)**: 93.0% Exact Match Accuracy (+7% improvement)
+
+## Production Enhancements
+
+### FastAPI Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+import mlflow.dspy
+
+app = FastAPI(title="Production Entity Extraction API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ExtractionRequest(BaseModel):
+    tokens: Union[List[str], str] = Field(..., description="Tokens to extract entities from")
+    entity_types: Optional[List[EntityType]] = Field(None, description="Specific entity types to extract")
+    confidence_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+# Global extractor
+extractor = None
+config = None
+
+@app.on_event("startup")
+async def startup_event():
+    global extractor, config
+
+    # Load configuration
+    config = EntityExtractionConfig(
+        entity_types=["PERSON", "ORG", "LOC", "EMAIL", "PHONE", "DATE", "MONEY"]
+    )
+
+    # Try to load optimized model from MLflow
+    try:
+        model_uri = "models:/entity-extractor/production"
+        extractor = mlflow.dspy.load_model(model_uri)
+        logger.info("Loaded optimized extractor from MLflow")
+    except:
+        extractor = ProductionEntityExtractor(config)
+        logger.warning("Using base extractor")
+
+@app.post("/extract", response_model=EntityExtractionResult)
+async def extract_entities(
+    request: ExtractionRequest,
+    background_tasks: BackgroundTasks
+):
+    try:
+        # Override configuration if provided
+        if request.entity_types:
+            extractor.config.entity_types = [et.value for et in request.entity_types]
+        if request.confidence_threshold:
+            extractor.config.confidence_threshold = request.confidence_threshold
+
+        result = extractor(tokens=request.tokens)
+
+        # Log usage metrics in background
+        background_tasks.add_task(
+            log_extraction_metrics,
+            request.tokens,
+            result.extraction_result
+        )
+
+        return result.extraction_result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/extract/batch")
+async def extract_batch(token_lists: List[Union[List[str], str]]) -> List[EntityExtractionResult]:
+    if len(token_lists) > 50:
+        raise HTTPException(status_code=400, detail="Batch size cannot exceed 50")
+
+    try:
+        results = await extractor.batch_extract(token_lists)
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stats")
+async def get_stats():
+    return extractor.get_performance_stats()
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "model_loaded": extractor is not None,
+        "entity_types": config.entity_types if config else []
+    }
+```
+
+## Speed Tips
+
+### Performance Optimizations
+
+```python
+# Multi-threaded batch processing
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+
+class OptimizedEntityExtractor(ProductionEntityExtractor):
+    def __init__(self, config: EntityExtractionConfig):
+        super().__init__(config)
+        self.executor = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
+
+    async def parallel_extract(self, token_lists: List[List[str]]) -> List[EntityExtractionResult]:
+        """Parallel processing for multiple extractions"""
+        loop = asyncio.get_event_loop()
+
+        tasks = [
+            loop.run_in_executor(self.executor, self.forward, tokens)
+            for tokens in token_lists
+        ]
+
+        results = await asyncio.gather(*tasks)
+        return [r.extraction_result for r in results]
+
+# Caching for repeated extractions
+from functools import lru_cache
+import hashlib
+
+def cache_key(tokens: List[str]) -> str:
+    return hashlib.md5(str(tokens).encode()).hexdigest()
+
+@lru_cache(maxsize=1000)
+def cached_extract(tokens_str: str, extractor_hash: str):
+    tokens = eval(tokens_str)  # In production, use safer deserialization
+    return extractor.forward(tokens)
+```
+
+## Common Issues
+
+### Tutorial-Specific Solutions
+
+1. **Token Position Mapping**: Calculate actual start/end positions for entities
+2. **Entity Overlap**: Handle overlapping entity spans appropriately
+3. **Confidence Calibration**: Use realistic confidence scores for different extraction methods
+4. **Memory Management**: Process large texts in chunks to avoid memory issues
+
+### Production Solutions
+
+```python
+# Robust error handling for malformed input
+def safe_tokenize(text_input):
+    try:
+        if isinstance(text_input, str):
+            return text_input.split()
+        elif isinstance(text_input, list):
+            return [str(token) for token in text_input]
+        else:
+            raise ValueError(f"Unsupported input type: {type(text_input)}")
+    except Exception as e:
+        logger.warning(f"Tokenization failed: {e}")
+        return [""]
+
+# Resource monitoring
+def check_extraction_resources():
+    import psutil
+    memory_usage = psutil.virtual_memory().percent
+
+    if memory_usage > 85:
+        logger.warning(f"High memory usage during extraction: {memory_usage}%")
+        return False
+    return True
+```
+
+## Best Practices Summary
+
+### Entity Extraction Guidelines
+
+- Use exact match metrics for evaluation consistency
+- Combine LLM extraction with pattern-based methods for structured entities
+- Validate entities with spaCy or similar NLP libraries
+- Handle entity deduplication and overlap resolution
+
+### Production Guidelines
+
+- Implement confidence thresholds for filtering low-quality extractions
+- Use batch processing for high-throughput scenarios
+- Monitor extraction performance and entity type distributions
+- Implement proper error handling for malformed inputs
+- Cache results for repeated text processing
+
+## References
+
+- [Official Entity Extraction Tutorial](https://dspy.ai/tutorials/entity_extraction/)
+- [CoNLL-2003 Dataset](https://huggingface.co/datasets/conll2003)
+- [DSPy Chain-of-Thought](https://dspy.ai/api/modules/ChainOfThought/)
+- [MLflow Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)
+- [spaCy NER Documentation](https://spacy.io/usage/linguistic-features#named-entities)

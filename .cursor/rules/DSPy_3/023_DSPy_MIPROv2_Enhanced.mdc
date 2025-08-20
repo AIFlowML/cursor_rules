@@ -1,0 +1,395 @@
+---
+description: DSPy MIPROv2 - Enhanced instruction optimization for rapid development
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 MIPROv2 (Multiprompt Instruction Proposal Optimizer v2) for maximum development speed.
+
+## MIPROv2 Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Bootstrap       │───▶│ Instruction      │───▶│ Bayesian        │
+│ Few-Shot        │    │ Generation       │    │ Optimization    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Example         │    │ Dataset+Code     │    │ Optimal         │
+│ Candidates      │    │ Context Analysis │    │ Combination     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant MIPROv2 Patterns
+
+### Quick Start
+
+```python
+import dspy
+from dspy.teleprompt import MIPROv2
+
+# Initialize MIPROv2 for rapid optimization
+def task_metric(gold, pred):
+    """Task-specific metric for MIPROv2"""
+    return float(gold.answer.strip() == pred.answer.strip())
+
+mipro = MIPROv2(
+    metric=task_metric,
+    auto="medium",  # light/medium/heavy
+    num_candidates=10,
+    init_temperature=1.0
+)
+
+# Optimize program with joint instruction+demo optimization
+optimized = mipro.compile(
+    dspy.ChainOfThought("question -> answer"),
+    trainset=trainset
+)
+
+# Save for reuse
+optimized.save("mipro_optimized.json")
+```
+
+### Production Configuration
+
+```python
+# Enterprise MIPROv2 setup with full control
+mipro = MIPROv2(
+    metric=comprehensive_metric,
+
+    # Bootstrap configuration
+    num_candidates=20,              # More instruction candidates
+    max_bootstrapped_demos=8,       # Bootstrap examples per candidate
+    max_labeled_demos=4,           # Direct examples per candidate
+
+    # Bayesian optimization
+    num_trials=50,                 # BO trial budget
+    minibatch_size=20,             # Eval batch size
+    minibatch=True,                # Enable minibatch optimization
+    minibatch_full_eval_steps=5,   # Full eval frequency
+
+    # Instruction generation
+    init_temperature=1.2,          # High creativity for instructions
+    verbose=True,                  # Detailed logging
+
+    # Performance optimization
+    num_threads=8                  # Parallel evaluation
+)
+
+# Compile with validation set
+optimized = mipro.compile(
+    program,
+    trainset=trainset,
+    valset=valset,      # Separate validation for better generalization
+    num_trials=100      # Override for production runs
+)
+```
+
+## Core MIPROv2 Patterns
+
+### Advanced Instruction Optimization
+
+```python
+def zero_shot_mipro_optimization(program, trainset):
+    """MIPROv2 for instruction-only optimization (no demos)"""
+
+    mipro = MIPROv2(
+        metric=accuracy_metric,
+        num_candidates=15,
+        max_bootstrapped_demos=0,   # No bootstrap demos
+        max_labeled_demos=0,        # No labeled demos
+        init_temperature=1.5,       # Higher temp for creative instructions
+        num_trials=30
+    )
+
+    return mipro.compile(program, trainset=trainset)
+
+def few_shot_mipro_optimization(program, trainset):
+    """MIPROv2 for joint instruction+demo optimization"""
+
+    mipro = MIPROv2(
+        metric=accuracy_metric,
+        num_candidates=12,
+        max_bootstrapped_demos=6,   # Bootstrap successful examples
+        max_labeled_demos=3,        # Add direct examples
+        init_temperature=1.0,       # Balanced creativity
+        num_trials=40
+    )
+
+    return mipro.compile(program, trainset=trainset)
+```
+
+### Multi-Predictor Optimization
+
+```python
+def complex_program_mipro(program_class, trainset, predictor_configs=None):
+    """MIPROv2 optimization for multi-predictor programs"""
+
+    if predictor_configs is None:
+        predictor_configs = {
+            'default': {
+                'num_candidates': 10,
+                'max_bootstrapped_demos': 4,
+                'max_labeled_demos': 2
+            }
+        }
+
+    # Create program instance
+    program = program_class()
+
+    # Configure MIPROv2 for complex programs
+    mipro = MIPROv2(
+        metric=multi_step_metric,
+        **predictor_configs.get('default', {}),
+
+        # Extended optimization for complex programs
+        num_trials=60,
+        minibatch_size=15,
+        minibatch_full_eval_steps=3,
+
+        # Higher temperature for complex reasoning
+        init_temperature=1.3,
+        verbose=True
+    )
+
+    return mipro.compile(program, trainset=trainset)
+
+def predictor_specific_optimization(program, trainset, predictor_priorities):
+    """Optimize specific predictors with different intensities"""
+
+    # Get predictor names and their priorities
+    predictor_names = [name for name, _ in program.named_predictors()]
+
+    configs = {}
+    for name in predictor_names:
+        priority = predictor_priorities.get(name, 'medium')
+
+        if priority == 'high':
+            configs[name] = {
+                'num_candidates': 15,
+                'max_bootstrapped_demos': 8,
+                'num_trials': 40
+            }
+        elif priority == 'low':
+            configs[name] = {
+                'num_candidates': 5,
+                'max_bootstrapped_demos': 2,
+                'num_trials': 15
+            }
+        else:  # medium
+            configs[name] = {
+                'num_candidates': 10,
+                'max_bootstrapped_demos': 4,
+                'num_trials': 25
+            }
+
+    # Apply configurations (simplified - actual implementation would vary)
+    mipro = MIPROv2(
+        metric=accuracy_metric,
+        **configs.get('default', {}),
+        verbose=True
+    )
+
+    return mipro.compile(program, trainset=trainset)
+```
+
+### Bayesian Optimization Analysis
+
+```python
+def analyze_mipro_optimization(optimized_program):
+    """Analyze MIPROv2 Bayesian optimization results"""
+
+    # Extract optimization history if available
+    if hasattr(optimized_program, 'optimization_history'):
+        history = optimized_program.optimization_history
+
+        # Analyze convergence
+        trial_scores = [trial['score'] for trial in history]
+        best_scores = []
+        current_best = float('-inf')
+
+        for score in trial_scores:
+            current_best = max(current_best, score)
+            best_scores.append(current_best)
+
+        # Convergence analysis
+        convergence_point = None
+        improvement_threshold = 0.01
+
+        for i in range(10, len(best_scores)):
+            recent_improvement = best_scores[i] - best_scores[i-10]
+            if recent_improvement < improvement_threshold:
+                convergence_point = i
+                break
+
+        return {
+            'total_trials': len(trial_scores),
+            'final_score': best_scores[-1],
+            'convergence_point': convergence_point,
+            'improvement_curve': best_scores,
+            'early_stopping_recommended': convergence_point and convergence_point < len(best_scores) * 0.7
+        }
+
+    return {'analysis': 'No optimization history available'}
+
+def adaptive_mipro_budget(program, trainset, target_improvement=0.1):
+    """Adaptive budget allocation for MIPROv2"""
+
+    # Start with light optimization
+    light_mipro = MIPROv2(
+        metric=accuracy_metric,
+        auto="light",
+        num_candidates=8,
+        num_trials=20
+    )
+
+    light_result = light_mipro.compile(program, trainset=trainset)
+    light_score = evaluate_program(light_result, trainset)
+    baseline_score = evaluate_program(program, trainset)
+
+    improvement = light_score - baseline_score
+
+    if improvement >= target_improvement:
+        print(f"Target improvement {target_improvement} achieved with light optimization")
+        return light_result
+
+    # Escalate to medium optimization
+    medium_mipro = MIPROv2(
+        metric=accuracy_metric,
+        auto="medium",
+        num_candidates=12,
+        num_trials=40
+    )
+
+    medium_result = medium_mipro.compile(light_result, trainset=trainset)
+    medium_score = evaluate_program(medium_result, trainset)
+
+    final_improvement = medium_score - baseline_score
+
+    if final_improvement >= target_improvement:
+        print(f"Target improvement {target_improvement} achieved with medium optimization")
+        return medium_result
+
+    # Final escalation to heavy optimization
+    heavy_mipro = MIPROv2(
+        metric=accuracy_metric,
+        auto="heavy",
+        num_candidates=20,
+        num_trials=80
+    )
+
+    return heavy_mipro.compile(medium_result, trainset=trainset)
+```
+
+### Custom Instruction Generation
+
+```python
+def domain_specific_mipro(program, trainset, domain_context):
+    """MIPROv2 with domain-specific instruction generation"""
+
+    class DomainMIPROv2(MIPROv2):
+        def __init__(self, domain_context, **kwargs):
+            super().__init__(**kwargs)
+            self.domain_context = domain_context
+
+        def generate_instruction_candidates(self, predictor_name, dataset_summary, code_summary):
+            """Custom instruction generation with domain context"""
+
+            domain_prompt = f"""
+            Domain Context: {self.domain_context}
+
+            Generate {self.num_candidates} instruction candidates for predictor '{predictor_name}'.
+
+            Dataset Summary: {dataset_summary}
+            Code Summary: {code_summary}
+
+            Focus on domain-specific terminology and reasoning patterns.
+            Each instruction should be optimized for this specific domain.
+            """
+
+            # Use the instruction generation LM
+            candidates = []
+            for _ in range(self.num_candidates):
+                response = self.prompt_model(domain_prompt)
+                candidates.append(response.completions[0].text.strip())
+
+            return candidates
+
+    domain_mipro = DomainMIPROv2(
+        domain_context=domain_context,
+        metric=accuracy_metric,
+        num_candidates=12,
+        init_temperature=1.2,
+        num_trials=35
+    )
+
+    return domain_mipro.compile(program, trainset=trainset)
+```
+
+## Performance Insights
+
+### MIPROv2 vs Other Optimizers
+
+- **Instruction Quality**: 20-30% better instructions than manual writing
+- **Sample Efficiency**: 5-10x better than random search
+- **Joint Optimization**: 15% improvement over instruction-only optimization
+- **Convergence**: 80% of gains achieved in first 50% of trials
+
+### Budget Allocation Guide
+
+```python
+def mipro_budget_recommendations(task_complexity, dataset_size, predictor_count):
+    """Budget recommendations for MIPROv2 optimization"""
+
+    base_trials = predictor_count * 20
+
+    complexity_multipliers = {
+        'simple': 1.0,      # Classification, simple QA
+        'medium': 1.5,      # Multi-step reasoning
+        'complex': 2.0,     # Long-form generation
+        'research': 3.0     # Novel domains
+    }
+
+    size_factor = min(2.0, dataset_size / 500)
+    total_trials = int(base_trials * complexity_multipliers[task_complexity] * size_factor)
+
+    return {
+        'num_trials': total_trials,
+        'num_candidates': min(20, total_trials // 3),
+        'minibatch_size': min(32, dataset_size // 10),
+        'auto_setting': 'light' if total_trials < 40 else 'medium' if total_trials < 80 else 'heavy'
+    }
+```
+
+## Speed Tips
+
+- Use `auto="light"` for rapid prototyping (< 40 trials)
+- `minibatch=True` with `minibatch_size=20` for faster iteration
+- Start with fewer candidates (8-10) and increase if needed
+- `init_temperature=1.0` for balanced creativity vs control
+- Separate validation set improves generalization
+- Early stopping when improvement plateaus
+
+## Common Pitfalls
+
+- **Too Many Candidates**: Diminishing returns beyond 15-20 candidates
+- **Insufficient Trials**: BO needs budget for exploration and exploitation
+- **Wrong Temperature**: Too low = generic instructions, too high = incoherent
+- **Overfitting Demos**: Too many demos can hurt generalization
+- **Ignoring Minibatch**: Full evaluation on large datasets wastes budget
+
+## Best Practices Summary
+
+- Balance instruction creativity with demo grounding
+- Use separate validation set for better generalization estimates
+- Start with auto settings and customize based on initial results
+- Monitor Bayesian optimization convergence for early stopping
+- Prefer joint optimization over instruction-only for complex tasks
+- Allocate budget proportional to predictor importance
+
+## References
+
+- DSPy MIPROv2 Source: `/docs/dspy/dspy/teleprompt/mipro_optimizer_v2.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/MIPROv2.md`
+- MIPROv2 Paper: [arxiv:2406.11695](https://arxiv.org/abs/2406.11695)
+- Tutorial Examples: `/docs/dspy/docs/tutorials/optimize_ai_program/`

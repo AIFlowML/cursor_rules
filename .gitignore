@@ -90,7 +90,7 @@ pnpm-lock.yaml
 *.sqlite3
 *.db
 # End Generation Here
-docs/
+# docs/
 extra/
 eliza_plugins/
 eliza/

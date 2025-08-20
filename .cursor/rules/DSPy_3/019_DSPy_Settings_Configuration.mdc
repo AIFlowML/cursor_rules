@@ -1,0 +1,623 @@
+---
+description: DSPy 3.0.1 Settings and Configuration - Master global configuration and context management
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's settings and configuration system. Master global state management, context handling, and system-wide configuration for production deployments.
+
+## Configuration Architecture
+
+```
+Global Settings → Context Management → Module Configuration → Optimization Settings
+      ↓                  ↓                    ↓                     ↓
+  dspy.configure()   dspy.context()      Module Parameters     Optimizer Config
+      ↓                  ↓                    ↓                     ↓
+  LM, Adapters       Temporary Override    Per-module Setup    Training Settings
+      ↓                  ↓                    ↓                     ↓
+  System Ready      Scoped Changes       Fine-tuned Control   Production Ready
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Configuration
+
+```python
+import dspy
+
+# Basic LM configuration
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Ready to use any DSPy module
+predictor = dspy.Predict("question -> answer")
+result = predictor(question="What is DSPy?")
+```
+
+### Production Ready - Complete Configuration
+
+```python
+import dspy
+import logging
+from dspy.utils.callback import BaseCallback
+
+# Custom callback for monitoring
+class ProductionCallback(BaseCallback):
+    def __init__(self):
+        self.call_count = 0
+        self.total_tokens = 0
+
+    def on_lm_start(self, **kwargs):
+        self.call_count += 1
+        logging.info(f"LM call #{self.call_count} starting")
+
+    def on_lm_end(self, result, **kwargs):
+        if hasattr(result, 'usage'):
+            self.total_tokens += result.usage.total_tokens
+        logging.info(f"LM call completed. Total tokens: {self.total_tokens}")
+
+# Production configuration
+production_lm = dspy.LM(
+    "openai/gpt-4o",
+    temperature=0.1,
+    max_tokens=2000,
+    cache=True,
+    callbacks=[ProductionCallback()]
+)
+
+# Configure comprehensive settings
+dspy.configure(
+    lm=production_lm,
+    adapter=dspy.ChatAdapter(),
+    max_trace_size=1000,
+    trace=True,
+    usage_tracker=True,
+    stream_listeners=[]
+)
+
+# System is now fully configured for production use
+qa_system = dspy.ChainOfThought("question, context -> reasoning, answer")
+```
+
+## Core Configuration Patterns
+
+### LM Configuration
+
+```python
+# Single LM setup
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Multiple LM configuration for different tasks
+fast_lm = dspy.LM("openai/gpt-4o-mini", temperature=0.1)
+quality_lm = dspy.LM("openai/gpt-4o", temperature=0.3)
+
+# Set default
+dspy.configure(lm=fast_lm)
+
+# Use specific LM for quality-critical tasks
+quality_predictor = dspy.Predict("complex_task -> detailed_result", lm=quality_lm)
+
+# Provider-specific configurations
+anthropic_lm = dspy.LM(
+    "anthropic/claude-3-5-sonnet-20241022",
+    temperature=0.2,
+    max_tokens=4000,
+    api_key="your-key"
+)
+
+local_lm = dspy.LM(
+    "ollama/llama3.1",
+    api_base="http://localhost:11434",
+    temperature=0.7
+)
+```
+
+### Adapter Configuration
+
+```python
+# Default chat adapter
+chat_adapter = dspy.ChatAdapter()
+dspy.configure(lm=lm, adapter=chat_adapter)
+
+# JSON adapter for structured outputs
+json_adapter = dspy.JSONAdapter()
+dspy.configure(lm=lm, adapter=json_adapter)
+
+# Two-step adapter for complex reasoning
+two_step_adapter = dspy.TwoStepAdapter()
+dspy.configure(lm=lm, adapter=two_step_adapter)
+
+# Custom adapter configuration
+custom_adapter = dspy.ChatAdapter(
+    max_tokens=1000,
+    temperature_override=0.5
+)
+dspy.configure(lm=lm, adapter=custom_adapter)
+```
+
+### Tracing and Debugging Configuration
+
+```python
+# Enable comprehensive tracing
+dspy.configure(
+    lm=lm,
+    trace=True,
+    max_trace_size=500,  # Keep last 500 interactions
+    usage_tracker=True
+)
+
+# Inspect execution history
+qa = dspy.Predict("question -> answer")
+result = qa(question="Example question")
+
+# View trace information
+dspy.inspect_history(n=1)  # Show last interaction
+
+# Custom trace handling
+class CustomTraceHandler:
+    def __init__(self):
+        self.interactions = []
+
+    def log_interaction(self, module, inputs, prediction):
+        self.interactions.append({
+            'module': str(module),
+            'inputs': inputs,
+            'prediction': prediction,
+            'timestamp': datetime.now()
+        })
+
+trace_handler = CustomTraceHandler()
+
+# Configure with custom handling
+dspy.configure(
+    lm=lm,
+    trace=True,
+    custom_trace_handler=trace_handler
+)
+```
+
+## Context Management
+
+### Temporary Configuration Changes
+
+```python
+# Temporary LM override
+fast_lm = dspy.LM("openai/gpt-4o-mini")
+quality_lm = dspy.LM("openai/gpt-4o")
+
+dspy.configure(lm=fast_lm)  # Default setup
+
+# Temporary context for quality processing
+with dspy.context(lm=quality_lm):
+    # All modules in this block use quality_lm
+    quality_result = dspy.ChainOfThought("complex_task -> solution")
+    prediction = quality_result(complex_task="Analyze quantum mechanics")
+
+# Back to fast_lm outside the context
+regular_result = dspy.Predict("simple_task -> answer")
+
+# Context with multiple overrides
+with dspy.context(
+    lm=quality_lm,
+    temperature=0.0,  # Override temperature
+    max_tokens=3000   # Override token limit
+):
+    deterministic_result = dspy.Predict("question -> answer")
+    prediction = deterministic_result(question="What is 2+2?")
+```
+
+### Nested Contexts
+
+```python
+# Nested configuration contexts
+base_lm = dspy.LM("openai/gpt-4o-mini", temperature=0.5)
+creative_lm = dspy.LM("openai/gpt-4o", temperature=0.8)
+analytical_lm = dspy.LM("openai/gpt-4o", temperature=0.1)
+
+dspy.configure(lm=base_lm)
+
+with dspy.context(lm=creative_lm):
+    # Creative context
+    creative_predictor = dspy.Predict("topic -> creative_story")
+
+    with dspy.context(lm=analytical_lm):
+        # Analytical context (nested)
+        analytical_predictor = dspy.Predict("story -> analysis")
+
+        story = creative_predictor(topic="space exploration")
+        analysis = analytical_predictor(story=story.creative_story)
+
+    # Back to creative context
+    refined_story = dspy.Predict("story, analysis -> improved_story")
+
+# Back to base context
+final_predictor = dspy.Predict("input -> output")
+```
+
+### Context Managers for Different Scenarios
+
+```python
+class ProductionContext:
+    """Context manager for production settings."""
+
+    def __init__(self):
+        self.production_lm = dspy.LM(
+            "openai/gpt-4o",
+            temperature=0.1,
+            cache=True,
+            num_retries=3
+        )
+
+    def __enter__(self):
+        self.old_context = dspy.settings
+        dspy.configure(
+            lm=self.production_lm,
+            trace=False,  # Disable tracing in production
+            usage_tracker=True
+        )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore previous settings
+        dspy.configure(**self.old_context.__dict__)
+
+class DevelopmentContext:
+    """Context manager for development settings."""
+
+    def __init__(self):
+        self.dev_lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            temperature=0.3,
+            cache=True
+        )
+
+    def __enter__(self):
+        dspy.configure(
+            lm=self.dev_lm,
+            trace=True,
+            max_trace_size=100,
+            usage_tracker=True
+        )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+# Usage
+with ProductionContext():
+    # Production-optimized processing
+    prod_system = dspy.ChainOfThought("task -> result")
+    result = prod_system(task="Critical business analysis")
+
+with DevelopmentContext():
+    # Development with full debugging
+    dev_system = dspy.Predict("experiment -> outcome")
+    result = dev_system(experiment="Testing new approach")
+```
+
+## Advanced Configuration
+
+### Environment-Based Configuration
+
+```python
+import os
+from typing import Dict, Any
+
+class ConfigurationManager:
+    """Manage DSPy configuration across environments."""
+
+    def __init__(self):
+        self.configs = {
+            'development': {
+                'lm': dspy.LM("openai/gpt-4o-mini", temperature=0.3, cache=True),
+                'trace': True,
+                'max_trace_size': 100,
+                'usage_tracker': True
+            },
+            'testing': {
+                'lm': dspy.LM("openai/gpt-4o-mini", temperature=0.0, cache=False),
+                'trace': True,
+                'max_trace_size': 50,
+                'usage_tracker': True
+            },
+            'staging': {
+                'lm': dspy.LM("openai/gpt-4o", temperature=0.1, cache=True, num_retries=3),
+                'trace': False,
+                'usage_tracker': True
+            },
+            'production': {
+                'lm': dspy.LM("openai/gpt-4o", temperature=0.1, cache=True, num_retries=5),
+                'trace': False,
+                'usage_tracker': True,
+                'max_errors': 0  # Fail fast in production
+            }
+        }
+
+    def configure_for_environment(self, env: str = None):
+        """Configure DSPy for specific environment."""
+        env = env or os.getenv('DSPY_ENV', 'development')
+
+        if env not in self.configs:
+            raise ValueError(f"Unknown environment: {env}")
+
+        config = self.configs[env]
+        dspy.configure(**config)
+
+        print(f"DSPy configured for {env} environment")
+        return config
+
+# Usage
+config_manager = ConfigurationManager()
+
+# Auto-configure based on environment variable
+config_manager.configure_for_environment()
+
+# Or specify environment explicitly
+config_manager.configure_for_environment('production')
+```
+
+### Configuration Validation
+
+```python
+class ConfigurationValidator:
+    """Validate DSPy configuration before use."""
+
+    @staticmethod
+    def validate_lm_config(lm):
+        """Validate LM configuration."""
+        if not hasattr(lm, 'model'):
+            raise ValueError("LM must have a model specified")
+
+        if hasattr(lm, 'temperature') and not 0 <= lm.kwargs.get('temperature', 0.5) <= 1:
+            raise ValueError("Temperature must be between 0 and 1")
+
+        if hasattr(lm, 'max_tokens') and lm.kwargs.get('max_tokens', 1000) <= 0:
+            raise ValueError("max_tokens must be positive")
+
+    @staticmethod
+    def validate_settings():
+        """Validate current DSPy settings."""
+        if not hasattr(dspy.settings, 'lm') or dspy.settings.lm is None:
+            raise ValueError("No LM configured. Call dspy.configure(lm=...) first")
+
+        ConfigurationValidator.validate_lm_config(dspy.settings.lm)
+
+        print("Configuration validation passed")
+
+    @staticmethod
+    def get_configuration_summary():
+        """Get summary of current configuration."""
+        settings = dspy.settings
+
+        summary = {
+            'lm_model': getattr(settings.lm, 'model', 'Unknown'),
+            'lm_temperature': getattr(settings.lm, 'kwargs', {}).get('temperature', 'Unknown'),
+            'max_tokens': getattr(settings.lm, 'kwargs', {}).get('max_tokens', 'Unknown'),
+            'trace_enabled': getattr(settings, 'trace', False),
+            'usage_tracking': getattr(settings, 'usage_tracker', False),
+            'max_trace_size': getattr(settings, 'max_trace_size', 'Unknown')
+        }
+
+        return summary
+
+# Usage
+ConfigurationValidator.validate_settings()
+config_summary = ConfigurationValidator.get_configuration_summary()
+print(f"Current config: {config_summary}")
+```
+
+### Dynamic Configuration Updates
+
+```python
+class DynamicConfigurator:
+    """Handle dynamic configuration changes during runtime."""
+
+    def __init__(self):
+        self.config_history = []
+        self.current_config = None
+
+    def save_current_config(self):
+        """Save current configuration state."""
+        config = {
+            'lm': dspy.settings.lm,
+            'adapter': getattr(dspy.settings, 'adapter', None),
+            'trace': getattr(dspy.settings, 'trace', None),
+            'usage_tracker': getattr(dspy.settings, 'usage_tracker', None)
+        }
+        self.config_history.append(config)
+        self.current_config = config
+
+    def update_config(self, **kwargs):
+        """Update configuration with new values."""
+        self.save_current_config()
+
+        # Apply new configuration
+        dspy.configure(**kwargs)
+
+        print(f"Configuration updated: {list(kwargs.keys())}")
+
+    def rollback_config(self):
+        """Rollback to previous configuration."""
+        if len(self.config_history) < 2:
+            print("No previous configuration to rollback to")
+            return
+
+        # Remove current config and get previous
+        self.config_history.pop()
+        previous_config = self.config_history[-1]
+
+        # Restore previous configuration
+        dspy.configure(**previous_config)
+
+        print("Configuration rolled back to previous state")
+
+    def get_config_history(self):
+        """Get configuration change history."""
+        return self.config_history
+
+# Usage
+configurator = DynamicConfigurator()
+
+# Initial setup
+configurator.update_config(
+    lm=dspy.LM("openai/gpt-4o-mini"),
+    trace=True
+)
+
+# Change configuration
+configurator.update_config(
+    lm=dspy.LM("openai/gpt-4o"),
+    trace=False
+)
+
+# Rollback if needed
+configurator.rollback_config()
+```
+
+## Performance and Monitoring
+
+### Usage Tracking Configuration
+
+```python
+# Enable usage tracking
+dspy.configure(
+    lm=lm,
+    usage_tracker=True,
+    track_usage=True
+)
+
+# Custom usage tracking
+class CustomUsageTracker:
+    def __init__(self):
+        self.total_calls = 0
+        self.total_tokens = 0
+        self.model_usage = {}
+
+    def track_call(self, model, usage_info):
+        self.total_calls += 1
+        self.total_tokens += usage_info.get('total_tokens', 0)
+
+        if model not in self.model_usage:
+            self.model_usage[model] = {'calls': 0, 'tokens': 0}
+
+        self.model_usage[model]['calls'] += 1
+        self.model_usage[model]['tokens'] += usage_info.get('total_tokens', 0)
+
+    def get_summary(self):
+        return {
+            'total_calls': self.total_calls,
+            'total_tokens': self.total_tokens,
+            'by_model': self.model_usage
+        }
+
+tracker = CustomUsageTracker()
+
+# Configure with custom tracker
+dspy.configure(
+    lm=lm,
+    custom_usage_tracker=tracker
+)
+```
+
+### Caching Configuration
+
+```python
+# Global cache configuration
+dspy.configure(
+    lm=dspy.LM("openai/gpt-4o-mini", cache=True),
+    cache_config={
+        'type': 'memory',
+        'max_size': 10000,
+        'ttl': 3600  # 1 hour
+    }
+)
+
+# Disable caching for specific contexts
+with dspy.context(cache=False):
+    # No caching in this block
+    fresh_result = dspy.Predict("dynamic_query -> fresh_response")
+    prediction = fresh_result(dynamic_query="Current time-sensitive data")
+
+# Custom cache configuration
+class CacheManager:
+    def __init__(self):
+        self.cache_stats = {'hits': 0, 'misses': 0}
+
+    def configure_cache(self, cache_type='memory', **kwargs):
+        cache_config = {
+            'cache': True,
+            'cache_type': cache_type,
+            **kwargs
+        }
+
+        dspy.configure(**cache_config)
+        print(f"Cache configured: {cache_type}")
+
+cache_manager = CacheManager()
+cache_manager.configure_cache('disk', max_size=50000)
+```
+
+## Common Pitfalls
+
+### Configuration Order Issues
+
+```python
+# ❌ DON'T: Use modules before configuration
+predictor = dspy.Predict("question -> answer")  # No LM configured!
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+
+# ✅ DO: Configure first, then create modules
+dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+predictor = dspy.Predict("question -> answer")  # Now it works
+```
+
+### Context Leakage
+
+```python
+# ❌ DON'T: Let contexts leak unintentionally
+with dspy.context(lm=expensive_lm):
+    predictor = dspy.Predict("task -> result")
+
+# predictor still uses expensive_lm outside context!
+result = predictor(task="simple task")  # Expensive call!
+
+# ✅ DO: Create modules in appropriate scope
+with dspy.context(lm=expensive_lm):
+    result = dspy.Predict("task -> result")(task="complex task")
+
+# Create new predictor for regular use
+regular_predictor = dspy.Predict("task -> result")
+```
+
+### Configuration Conflicts
+
+```python
+# ❌ DON'T: Create conflicting configurations
+dspy.configure(lm=lm1, temperature=0.1)
+dspy.configure(lm=lm2)  # Overwrites everything!
+
+# ✅ DO: Use contexts for temporary changes
+dspy.configure(lm=lm1, temperature=0.1)
+with dspy.context(lm=lm2):
+    # Use lm2 temporarily
+    pass
+# Back to lm1 with temperature=0.1
+```
+
+## Best Practices Summary
+
+- **Configure early**: Set up DSPy configuration before creating modules
+- **Use contexts wisely**: Temporary overrides with context managers
+- **Validate configuration**: Check settings before production use
+- **Environment-specific configs**: Different settings for dev/staging/prod
+- **Monitor usage**: Track tokens and costs in production
+- **Handle errors gracefully**: Proper error handling for configuration issues
+- **Document configuration**: Clear documentation of settings and their purposes
+- **Test configuration changes**: Validate changes before deploying
+
+## References
+
+- [DSPy Settings API](/docs/api/settings/)
+- [Context Management Guide](/docs/tutorials/context/)
+- [Production Configuration Tutorial](/docs/tutorials/deployment/)
+- [Configuration Best Practices](/docs/learn/programming/configuration/)

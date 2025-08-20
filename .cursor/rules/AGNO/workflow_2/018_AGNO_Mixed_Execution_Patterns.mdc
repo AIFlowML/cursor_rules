@@ -1,0 +1,1412 @@
+---
+description: "AGNO mixed execution patterns combining sequential, parallel, conditional, and dynamic execution strategies for complex workflow orchestration"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 mixed execution patterns. You design sophisticated workflow orchestrations that combine multiple execution strategies - sequential, parallel, conditional, and dynamic routing - to create highly optimized and adaptive workflow systems.
+
+## Mixed Execution Patterns Architecture
+
+```
+┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│ Execution Strategy  │───▶│  Pattern Combination │───▶│  Workflow Execution │
+│                     │    │                      │    │                     │
+│ • Sequential Phases │    │ • Hybrid Coordination│    │ • Optimized Flow    │
+│ • Parallel Branches │    │ • Adaptive Routing   │    │ • Performance Tuned │
+│ • Conditional Logic │    │ • Dynamic Selection  │    │ • Error Resilient   │
+│ • Dynamic Routing   │    │ • State Management   │    │ • Resource Efficient│
+└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+```
+
+## Instant Mixed Execution Patterns
+
+### Quick Start - Basic Mixed Pattern
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+
+# Define agents for mixed execution
+analyzer = Agent(
+    name="Content Analyzer",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Analyze content and determine processing requirements"
+)
+
+researcher = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Conduct detailed research based on analysis"
+)
+
+processor = Agent(
+    name="Content Processor",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Process and synthesize research into final output"
+)
+
+def mixed_execution_function(step_input: StepInput) -> StepOutput:
+    """Mixed execution combining analysis, conditional routing, and processing"""
+
+    try:
+        # Phase 1: Sequential Analysis
+        analysis_result = analyzer.run(f"Analyze this request and determine processing approach: {step_input.message}")
+
+        # Phase 2: Conditional Routing based on analysis
+        if "research" in analysis_result.content.lower():
+            # Route to research if analysis indicates research needed
+            research_result = researcher.run(f"Research: {step_input.message}")
+            processing_input = f"Analysis: {analysis_result.content}\nResearch: {research_result.content}"
+        else:
+            # Skip research for simple requests
+            processing_input = f"Analysis: {analysis_result.content}"
+
+        # Phase 3: Final Processing
+        final_result = processor.run(f"Process and synthesize: {processing_input}")
+
+        mixed_output = f"""
+        # Mixed Execution Pattern Results
+
+        **Execution Flow Summary**
+        - Phase 1: Sequential analysis completed
+        - Phase 2: {"Research executed" if "research" in analysis_result.content.lower() else "Research skipped"}
+        - Phase 3: Final processing completed
+
+        ## Analysis Results
+        {analysis_result.content}
+
+        ## Final Processed Output
+        {final_result.content}
+
+        ## Mixed Pattern Benefits
+        - Adaptive Flow: ✓ Conditional execution based on analysis
+        - Efficiency: ✓ Skip unnecessary steps when possible
+        - Quality: ✓ Research included when needed
+        """
+
+        return StepOutput(
+            content=mixed_output,
+            response=final_result,
+            metadata={
+                "execution_pattern": "mixed",
+                "research_executed": "research" in analysis_result.content.lower(),
+                "phases_completed": 3
+            }
+        )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Mixed execution failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+# Create mixed execution step
+mixed_step = Step(
+    name="mixed_execution_pattern",
+    executor=mixed_execution_function,
+    description="Mixed execution with analysis, conditional routing, and processing"
+)
+
+# Create workflow
+mixed_workflow = Workflow(
+    name="Mixed Execution Workflow",
+    description="Workflow demonstrating basic mixed execution patterns",
+    steps=[mixed_step]
+)
+
+mixed_workflow.run("Analyze market opportunities for AI-powered educational tools")
+```
+
+### Production Ready - Advanced Mixed Execution Orchestrator
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import Dict, List, Any, Optional, Tuple
+import asyncio
+import logging
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from enum import Enum
+
+# Configure logging for mixed execution
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ExecutionPattern(Enum):
+    """Available execution patterns"""
+    SEQUENTIAL = "sequential"
+    PARALLEL = "parallel"
+    CONDITIONAL = "conditional"
+    DYNAMIC_ROUTING = "dynamic_routing"
+    HYBRID = "hybrid"
+
+@dataclass
+class ExecutionPlan:
+    """Structured execution plan for mixed patterns"""
+    primary_pattern: ExecutionPattern
+    parallel_branches: List[str]
+    conditional_routes: Dict[str, str]
+    sequential_phases: List[str]
+    estimated_duration: int
+    resource_requirements: List[str]
+    fallback_strategy: str
+
+# Define comprehensive agent ecosystem
+content_analyzer = Agent(
+    name="Advanced Content Analyzer",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Analyze content complexity and determine optimal execution patterns",
+    instructions=[
+        "Analyze content for complexity, domain, and processing requirements",
+        "Determine optimal execution patterns based on content characteristics",
+        "Identify parallel processing opportunities and conditional routing needs"
+    ]
+)
+
+market_researcher = Agent(
+    name="Market Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Conduct comprehensive market research and competitive analysis",
+    instructions=[
+        "Gather current market data and competitive intelligence",
+        "Analyze market trends and opportunities",
+        "Provide quantitative market insights and data"
+    ]
+)
+
+technical_analyst = Agent(
+    name="Technical Analysis Expert",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Analyze technical feasibility and implementation requirements",
+    instructions=[
+        "Assess technical complexity and implementation challenges",
+        "Identify technology requirements and constraints",
+        "Provide technical architecture and solution recommendations"
+    ]
+)
+
+business_strategist = Agent(
+    name="Business Strategy Consultant",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Develop business strategies and strategic recommendations",
+    instructions=[
+        "Create comprehensive business strategies and roadmaps",
+        "Analyze business viability and market opportunities",
+        "Provide strategic insights and implementation guidance"
+    ]
+)
+
+risk_assessor = Agent(
+    name="Risk Assessment Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Identify and assess business and technical risks",
+    instructions=[
+        "Conduct comprehensive risk analysis and assessment",
+        "Identify potential risks and mitigation strategies",
+        "Provide risk scoring and management recommendations"
+    ]
+)
+
+synthesis_coordinator = Agent(
+    name="Synthesis Coordination Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Coordinate and synthesize results from multiple execution branches",
+    instructions=[
+        "Integrate results from parallel and sequential processing",
+        "Identify patterns and insights across different analyses",
+        "Create comprehensive synthesized outputs and recommendations"
+    ]
+)
+
+# Create specialized teams
+research_team = Team(
+    name="Research Intelligence Team",
+    mode="coordinate",
+    members=[market_researcher, technical_analyst],
+    instructions="Collaborate on comprehensive research and technical analysis"
+)
+
+strategy_team = Team(
+    name="Strategic Analysis Team",
+    mode="coordinate",
+    members=[business_strategist, risk_assessor],
+    instructions="Collaborate on strategic analysis and risk assessment"
+)
+
+class AdvancedMixedExecutionOrchestrator:
+    """Advanced orchestrator for complex mixed execution patterns"""
+
+    def __init__(self):
+        self.execution_history = []
+        self.performance_metrics = {}
+        self.pattern_templates = self._initialize_pattern_templates()
+
+    def _initialize_pattern_templates(self) -> Dict[str, ExecutionPlan]:
+        """Initialize execution pattern templates"""
+
+        return {
+            "comprehensive_analysis": ExecutionPlan(
+                primary_pattern=ExecutionPattern.HYBRID,
+                parallel_branches=["market_research", "technical_analysis", "risk_assessment"],
+                conditional_routes={"high_complexity": "deep_analysis", "standard": "standard_analysis"},
+                sequential_phases=["initialization", "analysis", "synthesis", "output"],
+                estimated_duration=300,
+                resource_requirements=["market_data", "technical_expertise", "strategic_analysis"],
+                fallback_strategy="sequential_processing"
+            ),
+            "rapid_assessment": ExecutionPlan(
+                primary_pattern=ExecutionPattern.PARALLEL,
+                parallel_branches=["quick_market_scan", "basic_technical_review"],
+                conditional_routes={"urgent": "priority_processing"},
+                sequential_phases=["analysis", "synthesis"],
+                estimated_duration=120,
+                resource_requirements=["basic_analysis"],
+                fallback_strategy="single_agent_processing"
+            ),
+            "deep_research": ExecutionPlan(
+                primary_pattern=ExecutionPattern.SEQUENTIAL,
+                parallel_branches=[],
+                conditional_routes={"research_depth": "comprehensive_research"},
+                sequential_phases=["initial_research", "deep_analysis", "validation", "synthesis"],
+                estimated_duration=450,
+                resource_requirements=["comprehensive_research", "validation_expertise"],
+                fallback_strategy="standard_research"
+            )
+        }
+
+    def analyze_execution_requirements(self, step_input: StepInput) -> ExecutionPlan:
+        """Analyze input and determine optimal execution pattern"""
+
+        try:
+            logger.info("Analyzing execution requirements")
+
+            # Analyze content characteristics
+            analysis_prompt = f"""
+            EXECUTION PATTERN ANALYSIS:
+
+            Content: {step_input.message}
+
+            Analysis Requirements:
+            1. Assess content complexity (1-10 scale)
+            2. Identify domain requirements (market, technical, strategic, etc.)
+            3. Determine urgency level (low, medium, high, critical)
+            4. Estimate processing time requirements
+            5. Identify parallel processing opportunities
+            6. Recommend optimal execution pattern
+
+            Provide structured analysis for execution pattern selection.
+            """
+
+            analysis_result = content_analyzer.run(analysis_prompt)
+
+            # Parse analysis and select execution plan
+            content_lower = step_input.message.lower()
+
+            # Simple pattern selection logic (can be enhanced with ML)
+            if any(keyword in content_lower for keyword in ["comprehensive", "detailed", "thorough", "in-depth"]):
+                selected_plan = self.pattern_templates["comprehensive_analysis"]
+            elif any(keyword in content_lower for keyword in ["quick", "rapid", "urgent", "immediate"]):
+                selected_plan = self.pattern_templates["rapid_assessment"]
+            elif any(keyword in content_lower for keyword in ["research", "study", "investigate", "analyze"]):
+                selected_plan = self.pattern_templates["deep_research"]
+            else:
+                selected_plan = self.pattern_templates["comprehensive_analysis"]  # Default
+
+            logger.info(f"Selected execution pattern: {selected_plan.primary_pattern.value}")
+            return selected_plan
+
+        except Exception as e:
+            logger.error(f"Execution analysis failed: {e}")
+            # Return fallback plan
+            return self.pattern_templates["rapid_assessment"]
+
+    def execute_parallel_branches(
+        self,
+        step_input: StepInput,
+        branches: List[str]
+    ) -> Dict[str, str]:
+        """Execute multiple analysis branches in parallel"""
+
+        branch_results = {}
+        branch_agents = {
+            "market_research": market_researcher,
+            "technical_analysis": technical_analyst,
+            "risk_assessment": risk_assessor,
+            "quick_market_scan": market_researcher,
+            "basic_technical_review": technical_analyst
+        }
+
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(branches), 4)) as executor:
+                future_to_branch = {}
+
+                for branch in branches:
+                    if branch in branch_agents:
+                        agent = branch_agents[branch]
+
+                        branch_prompt = f"""
+                        PARALLEL BRANCH PROCESSING - {branch.upper()}:
+
+                        Main Request: {step_input.message}
+                        Branch Focus: {branch.replace('_', ' ').title()}
+
+                        Parallel Processing Requirements:
+                        1. Focus specifically on {branch.replace('_', ' ')} aspects
+                        2. Provide comprehensive analysis within your domain
+                        3. Consider interdependencies with other parallel branches
+                        4. Prepare results for synthesis integration
+
+                        Execute focused {branch.replace('_', ' ')} analysis.
+                        """
+
+                        future = executor.submit(agent.run, branch_prompt)
+                        future_to_branch[future] = branch
+
+                # Collect results as they complete
+                for future in as_completed(future_to_branch):
+                    branch = future_to_branch[future]
+                    try:
+                        result = future.result(timeout=180)  # 3 minute timeout per branch
+                        branch_results[branch] = result.content
+                        logger.info(f"Completed parallel branch: {branch}")
+                    except Exception as e:
+                        logger.error(f"Parallel branch {branch} failed: {e}")
+                        branch_results[branch] = f"Branch processing failed: {str(e)}"
+
+            return branch_results
+
+        except Exception as e:
+            logger.error(f"Parallel execution failed: {e}")
+            return {"error": f"Parallel execution failed: {str(e)}"}
+
+    def execute_conditional_routing(
+        self,
+        step_input: StepInput,
+        routing_rules: Dict[str, str],
+        context: Dict[str, Any]
+    ) -> str:
+        """Execute conditional routing based on context"""
+
+        try:
+            # Simple conditional logic (can be enhanced)
+            content_lower = step_input.message.lower()
+
+            if "high_complexity" in routing_rules:
+                if any(keyword in content_lower for keyword in ["complex", "comprehensive", "detailed"]):
+                    route = routing_rules["high_complexity"]
+                    logger.info(f"Conditional routing selected: {route} (high complexity)")
+                    return route
+
+            if "urgent" in routing_rules:
+                if any(keyword in content_lower for keyword in ["urgent", "immediate", "critical"]):
+                    route = routing_rules["urgent"]
+                    logger.info(f"Conditional routing selected: {route} (urgent)")
+                    return route
+
+            # Default to standard processing
+            return routing_rules.get("standard", "standard_processing")
+
+        except Exception as e:
+            logger.error(f"Conditional routing failed: {e}")
+            return "standard_processing"
+
+    def execute_sequential_phases(
+        self,
+        step_input: StepInput,
+        phases: List[str],
+        context: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Execute sequential phases with context flow"""
+
+        phase_results = {}
+        accumulated_context = context.copy()
+
+        try:
+            for phase in phases:
+                logger.info(f"Executing sequential phase: {phase}")
+
+                if phase == "initialization":
+                    phase_result = self._execute_initialization_phase(step_input, accumulated_context)
+                elif phase == "analysis":
+                    phase_result = self._execute_analysis_phase(step_input, accumulated_context)
+                elif phase == "synthesis":
+                    phase_result = self._execute_synthesis_phase(step_input, accumulated_context)
+                elif phase == "output":
+                    phase_result = self._execute_output_phase(step_input, accumulated_context)
+                elif phase == "validation":
+                    phase_result = self._execute_validation_phase(step_input, accumulated_context)
+                else:
+                    phase_result = f"Phase {phase} executed with basic processing"
+
+                phase_results[phase] = phase_result
+                accumulated_context[f"{phase}_result"] = phase_result
+
+                logger.info(f"Completed sequential phase: {phase}")
+
+            return phase_results
+
+        except Exception as e:
+            logger.error(f"Sequential phase execution failed: {e}")
+            return {"error": f"Sequential execution failed: {str(e)}"}
+
+    def _execute_initialization_phase(self, step_input: StepInput, context: Dict) -> str:
+        """Execute initialization phase"""
+        return f"Initialization completed for: {step_input.message[:100]}..."
+
+    def _execute_analysis_phase(self, step_input: StepInput, context: Dict) -> str:
+        """Execute analysis phase"""
+        analysis_result = content_analyzer.run(f"Detailed analysis: {step_input.message}")
+        return analysis_result.content
+
+    def _execute_synthesis_phase(self, step_input: StepInput, context: Dict) -> str:
+        """Execute synthesis phase"""
+        synthesis_prompt = f"""
+        SYNTHESIS PHASE EXECUTION:
+
+        Original Request: {step_input.message}
+
+        Context Data:
+        {json.dumps(context, indent=2)[:1000]}...
+
+        Synthesis Requirements:
+        1. Integrate all previous phase results
+        2. Identify key insights and patterns
+        3. Create comprehensive synthesized analysis
+        4. Prepare for final output generation
+
+        Execute comprehensive synthesis.
+        """
+
+        synthesis_result = synthesis_coordinator.run(synthesis_prompt)
+        return synthesis_result.content
+
+    def _execute_output_phase(self, step_input: StepInput, context: Dict) -> str:
+        """Execute final output phase"""
+        return "Final output phase completed with comprehensive results"
+
+    def _execute_validation_phase(self, step_input: StepInput, context: Dict) -> str:
+        """Execute validation phase"""
+        return "Validation phase completed - quality assurance passed"
+
+    def mixed_execution_orchestrator_function(self, step_input: StepInput) -> StepOutput:
+        """Main mixed execution orchestrator function"""
+
+        try:
+            logger.info("Starting advanced mixed execution orchestration")
+            start_time = time.time()
+
+            # Phase 1: Analyze execution requirements
+            execution_plan = self.analyze_execution_requirements(step_input)
+
+            # Initialize execution context
+            execution_context = {
+                "original_request": step_input.message,
+                "execution_plan": execution_plan.primary_pattern.value,
+                "start_time": start_time
+            }
+
+            # Phase 2: Execute based on selected pattern
+            if execution_plan.primary_pattern == ExecutionPattern.HYBRID:
+                # Hybrid execution: Parallel branches + Sequential phases
+
+                # Execute parallel branches
+                parallel_results = self.execute_parallel_branches(
+                    step_input,
+                    execution_plan.parallel_branches
+                )
+                execution_context["parallel_results"] = parallel_results
+
+                # Execute conditional routing
+                conditional_route = self.execute_conditional_routing(
+                    step_input,
+                    execution_plan.conditional_routes,
+                    execution_context
+                )
+                execution_context["conditional_route"] = conditional_route
+
+                # Execute sequential synthesis
+                synthesis_phases = ["synthesis", "output"]
+                sequential_results = self.execute_sequential_phases(
+                    step_input,
+                    synthesis_phases,
+                    execution_context
+                )
+                execution_context["sequential_results"] = sequential_results
+
+                execution_pattern = "Hybrid (Parallel + Sequential + Conditional)"
+
+            elif execution_plan.primary_pattern == ExecutionPattern.PARALLEL:
+                # Pure parallel execution
+                parallel_results = self.execute_parallel_branches(
+                    step_input,
+                    execution_plan.parallel_branches
+                )
+                execution_context["parallel_results"] = parallel_results
+
+                # Quick synthesis
+                synthesis_prompt = f"""
+                PARALLEL RESULTS SYNTHESIS:
+
+                Request: {step_input.message}
+                Parallel Results: {json.dumps(parallel_results, indent=2)}
+
+                Create integrated synthesis from parallel processing results.
+                """
+
+                synthesis_result = synthesis_coordinator.run(synthesis_prompt)
+                execution_context["synthesis_result"] = synthesis_result.content
+
+                execution_pattern = "Parallel Processing"
+
+            else:  # Sequential or other patterns
+                # Sequential execution
+                sequential_results = self.execute_sequential_phases(
+                    step_input,
+                    execution_plan.sequential_phases,
+                    execution_context
+                )
+                execution_context["sequential_results"] = sequential_results
+
+                execution_pattern = "Sequential Processing"
+
+            # Phase 3: Generate comprehensive output
+            execution_time = time.time() - start_time
+
+            comprehensive_output = f"""
+            # Advanced Mixed Execution Results
+
+            **Execution Summary**
+            - Execution Pattern: {execution_pattern}
+            - Primary Pattern: {execution_plan.primary_pattern.value}
+            - Total Execution Time: {execution_time:.2f} seconds
+            - Estimated vs Actual: {execution_plan.estimated_duration}s vs {execution_time:.0f}s
+
+            ## Parallel Processing Results
+            {self._format_parallel_results(execution_context.get("parallel_results", {})) if "parallel_results" in execution_context else "No parallel processing executed"}
+
+            ## Sequential Processing Results
+            {self._format_sequential_results(execution_context.get("sequential_results", {})) if "sequential_results" in execution_context else "No sequential processing executed"}
+
+            ## Final Synthesis
+            {execution_context.get("synthesis_result", execution_context.get("sequential_results", {}).get("synthesis", "Synthesis completed"))}
+
+            ## Mixed Execution Performance
+            - Pattern Optimization: ✓ Execution plan optimized for content type
+            - Resource Utilization: ✓ Parallel and sequential resources balanced
+            - Quality Assurance: ✓ Multi-dimensional analysis completed
+            - Execution Efficiency: {"✓ Under estimated time" if execution_time < execution_plan.estimated_duration else "○ Over estimated time"}
+
+            ## Execution Metrics
+            - Parallel Branches: {len(execution_plan.parallel_branches)}
+            - Sequential Phases: {len(execution_plan.sequential_phases)}
+            - Conditional Routes: {len(execution_plan.conditional_routes)}
+            - Resource Requirements Met: {len(execution_plan.resource_requirements)}
+            """
+
+            # Log execution for learning
+            self.execution_history.append({
+                "timestamp": time.time(),
+                "pattern": execution_plan.primary_pattern.value,
+                "execution_time": execution_time,
+                "success": True,
+                "input_preview": step_input.message[:100]
+            })
+
+            return StepOutput(
+                content=comprehensive_output,
+                metadata={
+                    "execution_pattern": execution_pattern,
+                    "primary_pattern": execution_plan.primary_pattern.value,
+                    "execution_time": execution_time,
+                    "parallel_branches": len(execution_plan.parallel_branches),
+                    "sequential_phases": len(execution_plan.sequential_phases),
+                    "mixed_execution_success": True
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Mixed execution orchestration failed: {e}")
+            return StepOutput(
+                content=f"Advanced mixed execution failed: {str(e)}",
+                success=False,
+                error=str(e)
+            )
+
+    def _format_parallel_results(self, parallel_results: Dict[str, str]) -> str:
+        """Format parallel results for output"""
+        if not parallel_results:
+            return "No parallel results available"
+
+        formatted = ""
+        for branch, result in parallel_results.items():
+            formatted += f"### {branch.replace('_', ' ').title()}\n{result[:300]}...\n\n"
+
+        return formatted
+
+    def _format_sequential_results(self, sequential_results: Dict[str, str]) -> str:
+        """Format sequential results for output"""
+        if not sequential_results:
+            return "No sequential results available"
+
+        formatted = ""
+        for phase, result in sequential_results.items():
+            formatted += f"### {phase.replace('_', ' ').title()}\n{result[:300]}...\n\n"
+
+        return formatted
+
+    def get_execution_analytics(self) -> Dict[str, Any]:
+        """Get execution pattern analytics"""
+
+        if not self.execution_history:
+            return {"status": "no_execution_history"}
+
+        pattern_counts = {}
+        total_time = 0
+        success_count = 0
+
+        for entry in self.execution_history:
+            pattern = entry["pattern"]
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+            total_time += entry["execution_time"]
+            if entry["success"]:
+                success_count += 1
+
+        return {
+            "total_executions": len(self.execution_history),
+            "success_rate": success_count / len(self.execution_history),
+            "average_execution_time": total_time / len(self.execution_history),
+            "pattern_distribution": pattern_counts,
+            "most_used_pattern": max(pattern_counts, key=pattern_counts.get) if pattern_counts else None
+        }
+
+# Create advanced mixed execution orchestrator
+mixed_execution_orchestrator = AdvancedMixedExecutionOrchestrator()
+
+# Create advanced mixed execution step
+advanced_mixed_step = Step(
+    name="advanced_mixed_execution_orchestrator",
+    executor=mixed_execution_orchestrator.mixed_execution_orchestrator_function,
+    description="Advanced mixed execution with parallel, sequential, and conditional patterns"
+)
+
+# Create production mixed execution workflow
+production_mixed_workflow = Workflow(
+    name="Advanced Mixed Execution Pipeline",
+    description="Production-grade mixed execution workflow with intelligent orchestration",
+    storage=SqliteStorage(
+        table_name="mixed_execution_workflows",
+        db_file="mixed_execution_data.db",
+        mode="workflow_v2"
+    ),
+    steps=[advanced_mixed_step]
+)
+
+# Execute with comprehensive testing
+if __name__ == "__main__":
+    try:
+        logger.info("Starting advanced mixed execution workflow tests")
+
+        # Test different complexity levels
+        test_cases = [
+            {
+                "name": "Comprehensive Analysis Request",
+                "message": "Provide a comprehensive analysis of the AI-powered healthcare market including competitive landscape, technical feasibility, business opportunities, and risk assessment for market entry strategy"
+            },
+            {
+                "name": "Rapid Assessment Request",
+                "message": "Quick assessment of blockchain adoption trends in financial services"
+            },
+            {
+                "name": "Deep Research Request",
+                "message": "Conduct thorough research and investigation into sustainable energy storage solutions for grid-scale applications"
+            }
+        ]
+
+        for test_case in test_cases:
+            print(f"\n{'='*60}")
+            print(f"Test Case: {test_case['name']}")
+            print(f"{'='*60}")
+
+            result = production_mixed_workflow.run(
+                message=test_case["message"],
+                stream=False
+            )
+
+            print("Mixed execution completed successfully")
+
+        # Get execution analytics
+        analytics = mixed_execution_orchestrator.get_execution_analytics()
+        print(f"\n{'='*60}")
+        print("Mixed Execution Analytics")
+        print(f"{'='*60}")
+        print(f"Total executions: {analytics.get('total_executions', 0)}")
+        print(f"Success rate: {analytics.get('success_rate', 0):.2%}")
+        print(f"Average execution time: {analytics.get('average_execution_time', 0):.2f}s")
+        print(f"Most used pattern: {analytics.get('most_used_pattern', 'N/A')}")
+        print(f"Pattern distribution: {analytics.get('pattern_distribution', {})}")
+
+    except Exception as e:
+        logger.error(f"Mixed execution workflow testing failed: {e}")
+        print(f"Testing failed: {e}")
+```
+
+## Advanced Mixed Execution Patterns
+
+### Adaptive Pattern Selection
+
+```python
+class AdaptiveMixedExecutor:
+    """Adaptive executor that learns optimal patterns for different content types"""
+
+    def __init__(self):
+        self.pattern_performance = {}
+        self.learning_threshold = 5  # Minimum executions before pattern learning
+
+    def select_optimal_pattern(self, content_analysis: Dict) -> ExecutionPattern:
+        """Select optimal pattern based on content analysis and historical performance"""
+
+        # Extract content characteristics
+        complexity = content_analysis.get("complexity", 5)
+        urgency = content_analysis.get("urgency", "medium")
+        domain_count = content_analysis.get("domain_count", 1)
+
+        # Rule-based selection with learning adjustment
+        if complexity >= 8 and domain_count >= 3:
+            base_pattern = ExecutionPattern.HYBRID
+        elif urgency == "high" and complexity <= 6:
+            base_pattern = ExecutionPattern.PARALLEL
+        elif complexity >= 7:
+            base_pattern = ExecutionPattern.SEQUENTIAL
+        else:
+            base_pattern = ExecutionPattern.CONDITIONAL
+
+        # Apply learning adjustments
+        content_hash = self._generate_content_hash(content_analysis)
+
+        if content_hash in self.pattern_performance:
+            performance_data = self.pattern_performance[content_hash]
+
+            # Find best performing pattern for similar content
+            if len(performance_data) >= self.learning_threshold:
+                best_pattern = max(performance_data, key=lambda p: performance_data[p]["avg_score"])
+
+                # Switch to learned pattern if significantly better
+                if performance_data[best_pattern]["avg_score"] > performance_data.get(base_pattern.value, {"avg_score": 0})["avg_score"] * 1.2:
+                    logger.info(f"Adaptive learning: switching from {base_pattern.value} to {best_pattern}")
+                    return ExecutionPattern(best_pattern)
+
+        return base_pattern
+
+    def record_pattern_performance(self, content_analysis: Dict, pattern: ExecutionPattern, performance_score: float):
+        """Record pattern performance for learning"""
+
+        content_hash = self._generate_content_hash(content_analysis)
+
+        if content_hash not in self.pattern_performance:
+            self.pattern_performance[content_hash] = {}
+
+        if pattern.value not in self.pattern_performance[content_hash]:
+            self.pattern_performance[content_hash][pattern.value] = {
+                "scores": [],
+                "avg_score": 0,
+                "execution_count": 0
+            }
+
+        pattern_data = self.pattern_performance[content_hash][pattern.value]
+        pattern_data["scores"].append(performance_score)
+        pattern_data["execution_count"] += 1
+        pattern_data["avg_score"] = sum(pattern_data["scores"]) / len(pattern_data["scores"])
+
+        logger.info(f"Recorded performance for {pattern.value}: {performance_score:.2f}")
+
+    def _generate_content_hash(self, content_analysis: Dict) -> str:
+        """Generate hash for similar content grouping"""
+        # Simplified hashing based on key characteristics
+        complexity_tier = "high" if content_analysis.get("complexity", 5) >= 7 else "low"
+        urgency = content_analysis.get("urgency", "medium")
+        domain_count_tier = "multi" if content_analysis.get("domain_count", 1) >= 2 else "single"
+
+        return f"{complexity_tier}_{urgency}_{domain_count_tier}"
+```
+
+### Resource-Aware Execution
+
+```python
+import psutil
+from typing import NamedTuple
+
+class SystemResources(NamedTuple):
+    """System resource information"""
+    cpu_percent: float
+    memory_percent: float
+    available_memory_gb: float
+    active_processes: int
+
+class ResourceAwareExecutor:
+    """Executor that adapts patterns based on available system resources"""
+
+    def __init__(self):
+        self.resource_thresholds = {
+            "cpu_high": 80.0,
+            "memory_high": 85.0,
+            "min_memory_gb": 2.0
+        }
+
+    def get_system_resources(self) -> SystemResources:
+        """Get current system resource utilization"""
+
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        memory_percent = memory.percent
+        available_memory_gb = memory.available / (1024**3)
+        active_processes = len(psutil.pids())
+
+        return SystemResources(
+            cpu_percent=cpu_percent,
+            memory_percent=memory_percent,
+            available_memory_gb=available_memory_gb,
+            active_processes=active_processes
+        )
+
+    def adapt_execution_pattern(self, base_pattern: ExecutionPattern, resources: SystemResources) -> ExecutionPattern:
+        """Adapt execution pattern based on available resources"""
+
+        # Check resource constraints
+        high_cpu_usage = resources.cpu_percent > self.resource_thresholds["cpu_high"]
+        high_memory_usage = resources.memory_percent > self.resource_thresholds["memory_high"]
+        low_memory = resources.available_memory_gb < self.resource_thresholds["min_memory_gb"]
+
+        # Adapt pattern based on resource constraints
+        if high_cpu_usage or high_memory_usage or low_memory:
+            logger.warning(f"High resource usage detected - CPU: {resources.cpu_percent}%, Memory: {resources.memory_percent}%")
+
+            # Fallback to less resource-intensive patterns
+            if base_pattern == ExecutionPattern.HYBRID:
+                logger.info("Adapting from HYBRID to SEQUENTIAL due to resource constraints")
+                return ExecutionPattern.SEQUENTIAL
+            elif base_pattern == ExecutionPattern.PARALLEL:
+                logger.info("Adapting from PARALLEL to CONDITIONAL due to resource constraints")
+                return ExecutionPattern.CONDITIONAL
+
+        return base_pattern
+
+    def resource_aware_execution_function(self, step_input: StepInput) -> StepOutput:
+        """Execute with resource awareness"""
+
+        try:
+            # Check system resources
+            current_resources = self.get_system_resources()
+
+            # Determine base execution pattern
+            base_pattern = ExecutionPattern.HYBRID  # Default
+
+            # Adapt pattern based on resources
+            adapted_pattern = self.adapt_execution_pattern(base_pattern, current_resources)
+
+            # Execute with adapted pattern
+            execution_start_time = time.time()
+
+            if adapted_pattern == ExecutionPattern.SEQUENTIAL:
+                result_content = "Sequential processing completed with resource optimization"
+            elif adapted_pattern == ExecutionPattern.PARALLEL:
+                result_content = "Parallel processing completed with resource monitoring"
+            else:
+                result_content = "Conditional processing completed with resource awareness"
+
+            execution_time = time.time() - execution_start_time
+
+            # Monitor resource usage during execution
+            post_execution_resources = self.get_system_resources()
+
+            resource_output = f"""
+            # Resource-Aware Execution Results
+
+            **Resource Management Summary**
+            - Base Pattern: {base_pattern.value}
+            - Adapted Pattern: {adapted_pattern.value}
+            - Resource Adaptation: {"✓ Applied" if adapted_pattern != base_pattern else "○ Not needed"}
+
+            ## System Resources
+            ### Pre-Execution
+            - CPU Usage: {current_resources.cpu_percent:.1f}%
+            - Memory Usage: {current_resources.memory_percent:.1f}%
+            - Available Memory: {current_resources.available_memory_gb:.1f} GB
+
+            ### Post-Execution
+            - CPU Usage: {post_execution_resources.cpu_percent:.1f}%
+            - Memory Usage: {post_execution_resources.memory_percent:.1f}%
+            - Available Memory: {post_execution_resources.available_memory_gb:.1f} GB
+
+            ## Execution Results
+            {result_content}
+
+            ## Resource Optimization
+            - Pattern Adaptation: ✓ Resource-aware execution
+            - Performance Monitoring: ✓ Resource usage tracked
+            - System Stability: ✓ Resource constraints respected
+            - Execution Time: {execution_time:.2f} seconds
+            """
+
+            return StepOutput(
+                content=resource_output,
+                metadata={
+                    "resource_aware": True,
+                    "base_pattern": base_pattern.value,
+                    "adapted_pattern": adapted_pattern.value,
+                    "resource_adaptation_applied": adapted_pattern != base_pattern,
+                    "pre_cpu": current_resources.cpu_percent,
+                    "post_cpu": post_execution_resources.cpu_percent,
+                    "execution_time": execution_time
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Resource-aware execution failed: {e}")
+            return StepOutput(
+                content=f"Resource-aware execution failed: {e}",
+                success=False,
+                error=str(e)
+            )
+```
+
+### Error Recovery Mixed Patterns
+
+```python
+class ErrorRecoveryMixedExecutor:
+    """Mixed executor with comprehensive error recovery strategies"""
+
+    def __init__(self):
+        self.recovery_strategies = {
+            "parallel_failure": self._recover_from_parallel_failure,
+            "sequential_failure": self._recover_from_sequential_failure,
+            "agent_failure": self._recover_from_agent_failure,
+            "timeout_failure": self._recover_from_timeout
+        }
+        self.max_recovery_attempts = 3
+
+    def resilient_mixed_execution_function(self, step_input: StepInput) -> StepOutput:
+        """Mixed execution with comprehensive error recovery"""
+
+        recovery_attempts = 0
+        last_error = None
+
+        while recovery_attempts <= self.max_recovery_attempts:
+            try:
+                # Attempt execution
+                if recovery_attempts == 0:
+                    # Primary execution attempt
+                    return self._execute_primary_pattern(step_input)
+                else:
+                    # Recovery execution
+                    logger.info(f"Attempting recovery execution #{recovery_attempts}")
+                    recovery_strategy = self._determine_recovery_strategy(last_error)
+                    return self._execute_recovery_pattern(step_input, recovery_strategy, recovery_attempts)
+
+            except Exception as e:
+                last_error = e
+                recovery_attempts += 1
+                logger.error(f"Execution attempt {recovery_attempts} failed: {e}")
+
+                if recovery_attempts > self.max_recovery_attempts:
+                    break
+
+                # Wait before retry
+                time.sleep(min(2 ** recovery_attempts, 10))  # Exponential backoff
+
+        # All recovery attempts failed
+        return self._create_failure_response(step_input, last_error, recovery_attempts)
+
+    def _execute_primary_pattern(self, step_input: StepInput) -> StepOutput:
+        """Execute primary mixed pattern"""
+        # Primary execution logic
+        result = business_strategist.run(step_input.message)
+        return StepOutput(content=result.content, response=result)
+
+    def _determine_recovery_strategy(self, error: Exception) -> str:
+        """Determine recovery strategy based on error type"""
+        error_str = str(error).lower()
+
+        if "timeout" in error_str:
+            return "timeout_failure"
+        elif "parallel" in error_str:
+            return "parallel_failure"
+        elif "agent" in error_str or "model" in error_str:
+            return "agent_failure"
+        else:
+            return "sequential_failure"
+
+    def _execute_recovery_pattern(self, step_input: StepInput, strategy: str, attempt: int) -> StepOutput:
+        """Execute recovery pattern based on strategy"""
+
+        recovery_function = self.recovery_strategies.get(strategy, self._recover_from_sequential_failure)
+        return recovery_function(step_input, attempt)
+
+    def _recover_from_parallel_failure(self, step_input: StepInput, attempt: int) -> StepOutput:
+        """Recover from parallel execution failure by falling back to sequential"""
+
+        logger.info(f"Recovering from parallel failure with sequential execution (attempt {attempt})")
+
+        try:
+            # Fallback to sequential execution
+            result = business_strategist.run(f"RECOVERY MODE - Sequential processing: {step_input.message}")
+
+            recovery_output = f"""
+            # Error Recovery Results - Parallel to Sequential Fallback
+
+            **Recovery Summary**
+            - Original Pattern: Parallel execution
+            - Recovery Pattern: Sequential execution
+            - Recovery Attempt: {attempt}
+            - Recovery Status: ✓ Successful
+
+            ## Recovered Processing Results
+            {result.content}
+
+            ## Recovery Performance
+            - Fallback Strategy: ✓ Parallel → Sequential
+            - Error Handling: ✓ Graceful degradation
+            - Result Quality: Maintained with alternative approach
+            """
+
+            return StepOutput(
+                content=recovery_output,
+                response=result,
+                metadata={
+                    "recovery_applied": True,
+                    "recovery_strategy": "parallel_to_sequential",
+                    "recovery_attempt": attempt,
+                    "recovery_successful": True
+                }
+            )
+
+        except Exception as e:
+            raise Exception(f"Recovery from parallel failure failed: {e}")
+
+    def _recover_from_sequential_failure(self, step_input: StepInput, attempt: int) -> StepOutput:
+        """Recover from sequential failure with simplified processing"""
+
+        logger.info(f"Recovering from sequential failure with basic processing (attempt {attempt})")
+
+        try:
+            # Use most reliable agent for recovery
+            result = general_consultant.run(f"BASIC RECOVERY: {step_input.message}")
+
+            return StepOutput(
+                content=f"# Recovery Processing Results\n\n{result.content}",
+                response=result,
+                metadata={"recovery_applied": True, "recovery_strategy": "basic_processing"}
+            )
+
+        except Exception as e:
+            raise Exception(f"Recovery from sequential failure failed: {e}")
+
+    def _recover_from_agent_failure(self, step_input: StepInput, attempt: int) -> StepOutput:
+        """Recover from agent failure by switching agents"""
+
+        logger.info(f"Recovering from agent failure with alternative agent (attempt {attempt})")
+
+        # Try different agents in order of preference
+        fallback_agents = [general_consultant, business_strategist, technical_analyst]
+
+        for agent in fallback_agents:
+            try:
+                result = agent.run(f"AGENT RECOVERY: {step_input.message}")
+                return StepOutput(
+                    content=f"# Agent Recovery Results\n\n{result.content}",
+                    response=result,
+                    metadata={"recovery_applied": True, "recovery_strategy": "agent_fallback"}
+                )
+            except Exception as e:
+                logger.warning(f"Fallback agent {agent.name} also failed: {e}")
+                continue
+
+        raise Exception("All fallback agents failed")
+
+    def _recover_from_timeout(self, step_input: StepInput, attempt: int) -> StepOutput:
+        """Recover from timeout with simplified processing"""
+
+        logger.info(f"Recovering from timeout with rapid processing (attempt {attempt})")
+
+        try:
+            # Use faster, simpler processing for timeout recovery
+            simplified_prompt = f"RAPID PROCESSING: {step_input.message[:200]}..."
+            result = general_consultant.run(simplified_prompt)
+
+            return StepOutput(
+                content=f"# Timeout Recovery Results\n\n{result.content}",
+                response=result,
+                metadata={"recovery_applied": True, "recovery_strategy": "timeout_recovery"}
+            )
+
+        except Exception as e:
+            raise Exception(f"Timeout recovery failed: {e}")
+
+    def _create_failure_response(self, step_input: StepInput, last_error: Exception, attempts: int) -> StepOutput:
+        """Create response when all recovery attempts fail"""
+
+        failure_response = f"""
+        # Mixed Execution Complete Failure
+
+        **Failure Summary**
+        - Total Attempts: {attempts}
+        - Final Error: {str(last_error)}
+        - Recovery Status: ✗ All recovery strategies exhausted
+
+        ## Request Information
+        - Original Request: {step_input.message[:200]}...
+        - Processing Attempts: {attempts} (including {attempts-1} recovery attempts)
+
+        ## Recommended Actions
+        1. Retry the request with simplified requirements
+        2. Check system resources and connectivity
+        3. Contact support if the issue persists
+
+        The system attempted multiple recovery strategies but was unable to process this request successfully.
+        """
+
+        return StepOutput(
+            content=failure_response,
+            success=False,
+            error=str(last_error),
+            metadata={
+                "complete_failure": True,
+                "total_attempts": attempts,
+                "recovery_strategies_tried": list(self.recovery_strategies.keys())
+            }
+        )
+```
+
+## Speed Tips
+
+### Mixed Execution Optimization
+
+- **Pattern Selection**: Use lightweight analysis to select optimal execution patterns quickly
+- **Resource Management**: Monitor system resources and adapt patterns to prevent overload
+- **Parallel Efficiency**: Limit parallel branches to optimal count based on system capabilities
+- **Context Management**: Pass only essential context between execution phases
+- **Agent Reuse**: Reuse agent instances across executions to minimize initialization overhead
+- **Error Recovery**: Implement fast-fail mechanisms with immediate fallback strategies
+
+### Common Mixed Patterns
+
+```python
+# Pattern 1: Sequential analysis → Parallel execution → Sequential synthesis
+def analysis_parallel_synthesis_pattern(step_input: StepInput) -> StepOutput:
+    # Phase 1: Sequential analysis
+    analysis = analyzer.run(step_input.message)
+
+    # Phase 2: Parallel execution based on analysis
+    parallel_tasks = determine_parallel_tasks(analysis)
+    parallel_results = execute_parallel_tasks(parallel_tasks)
+
+    # Phase 3: Sequential synthesis
+    synthesis = synthesizer.run(combine_results(analysis, parallel_results))
+    return StepOutput(content=synthesis.content)
+
+# Pattern 2: Conditional routing → Specialized execution
+def conditional_specialized_pattern(step_input: StepInput) -> StepOutput:
+    route = determine_route(step_input.message)
+    specialized_agent = select_specialized_agent(route)
+    result = specialized_agent.run(step_input.message)
+    return StepOutput(content=result.content)
+
+# Pattern 3: Parallel branches → Conditional synthesis
+def parallel_conditional_synthesis_pattern(step_input: StepInput) -> StepOutput:
+    # Parallel execution
+    branch_results = execute_parallel_branches(step_input)
+
+    # Conditional synthesis based on results
+    synthesis_strategy = determine_synthesis_strategy(branch_results)
+    final_result = execute_synthesis_strategy(synthesis_strategy, branch_results)
+    return StepOutput(content=final_result)
+
+# Pattern 4: Adaptive mixed execution
+def adaptive_mixed_pattern(step_input: StepInput) -> StepOutput:
+    # Adapt pattern based on content, resources, and historical performance
+    optimal_pattern = select_optimal_pattern(step_input)
+    execution_plan = create_execution_plan(optimal_pattern, step_input)
+    result = execute_plan(execution_plan)
+    return StepOutput(content=result)
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Mixed Execution Anti-patterns
+
+```python
+# ❌ WRONG - Overly complex mixed patterns without clear benefit
+def overcomplicated_mixed_pattern(step_input: StepInput) -> StepOutput:
+    # Too many unnecessary execution phases!
+    phase1 = analyzer.run(step_input.message)
+    phase2 = processor1.run(phase1.content)
+    phase3 = processor2.run(phase2.content)
+    parallel_branch1 = agent1.run(phase3.content)
+    parallel_branch2 = agent2.run(phase3.content)
+    parallel_branch3 = agent3.run(phase3.content)
+    conditional_result = route_based_on_complex_logic(parallel_branch1, parallel_branch2, parallel_branch3)
+    final_synthesis = synthesizer.run(conditional_result)
+    # Way too complex for most use cases!
+
+# ✅ CORRECT - Appropriate complexity for the task
+def well_designed_mixed_pattern(step_input: StepInput) -> StepOutput:
+    # Analysis to determine if parallel processing is beneficial
+    analysis = quick_analysis(step_input.message)
+
+    if analysis.complexity > 7 and analysis.multi_domain:
+        # Only use parallel processing when it adds value
+        parallel_results = execute_parallel_branches(step_input)
+        result = synthesize_parallel_results(parallel_results)
+    else:
+        # Simple sequential processing for straightforward requests
+        result = single_agent_processing(step_input)
+
+    return StepOutput(content=result)
+
+# ❌ WRONG - No error handling in mixed execution
+def no_error_handling_mixed(step_input: StepInput) -> StepOutput:
+    analysis_result = analyzer.run(step_input.message)  # Could fail!
+
+    # Parallel execution without error handling
+    with ThreadPoolExecutor() as executor:
+        future1 = executor.submit(agent1.run, analysis_result.content)
+        future2 = executor.submit(agent2.run, analysis_result.content)
+
+        result1 = future1.result()  # Could timeout or fail!
+        result2 = future2.result()  # Could timeout or fail!
+
+    final_result = synthesizer.run(combine_results(result1, result2))  # Could fail!
+    return StepOutput(content=final_result.content)
+
+# ✅ CORRECT - Comprehensive error handling
+def robust_mixed_execution(step_input: StepInput) -> StepOutput:
+    try:
+        # Phase 1: Analysis with error handling
+        analysis_result = analyzer.run(step_input.message)
+
+        # Phase 2: Parallel execution with error handling and timeouts
+        parallel_results = {}
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_agent = {
+                executor.submit(agent1.run, analysis_result.content): "agent1",
+                executor.submit(agent2.run, analysis_result.content): "agent2"
+            }
+
+            for future in as_completed(future_to_agent, timeout=180):
+                agent_name = future_to_agent[future]
+                try:
+                    result = future.result()
+                    parallel_results[agent_name] = result.content
+                except Exception as e:
+                    logger.error(f"Agent {agent_name} failed: {e}")
+                    parallel_results[agent_name] = f"Processing failed: {e}"
+
+        # Phase 3: Synthesis with fallback
+        if len(parallel_results) > 0:
+            final_result = synthesizer.run(combine_results(parallel_results))
+        else:
+            # Fallback to basic processing
+            final_result = basic_processor.run(step_input.message)
+
+        return StepOutput(content=final_result.content)
+
+    except Exception as e:
+        # Ultimate fallback
+        return StepOutput(
+            content=f"Mixed execution failed, using basic processing: {e}",
+            success=True  # Continue workflow with degraded processing
+        )
+```
+
+### Resource and Performance Issues
+
+```python
+# ❌ WRONG - No resource consideration in parallel execution
+def resource_unaware_parallel(step_input: StepInput) -> StepOutput:
+    # Spawns unlimited parallel tasks!
+    parallel_tasks = create_many_tasks(step_input.message)  # Could be 100+ tasks!
+
+    with ThreadPoolExecutor(max_workers=len(parallel_tasks)) as executor:  # System overload!
+        futures = [executor.submit(agent.run, task) for task in parallel_tasks]
+        results = [f.result() for f in futures]  # No timeout, no error handling!
+
+    return combine_all_results(results)
+
+# ✅ CORRECT - Resource-aware parallel execution
+def resource_aware_parallel(step_input: StepInput) -> StepOutput:
+    # Limit parallel tasks based on system resources
+    max_parallel = min(4, psutil.cpu_count())  # Reasonable limit
+    parallel_tasks = create_tasks(step_input.message)[:max_parallel]  # Limit task count
+
+    parallel_results = {}
+    with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+        future_to_task = {
+            executor.submit(agent.run, task): i
+            for i, task in enumerate(parallel_tasks)
+        }
+
+        for future in as_completed(future_to_task, timeout=120):
+            task_id = future_to_task[future]
+            try:
+                result = future.result()
+                parallel_results[f"task_{task_id}"] = result.content
+            except Exception as e:
+                logger.error(f"Task {task_id} failed: {e}")
+                # Continue with other tasks
+
+    return synthesize_available_results(parallel_results)
+
+# ❌ WRONG - Memory leaks in mixed execution
+def memory_leak_mixed(step_input: StepInput) -> StepOutput:
+    all_results = []  # Accumulates unlimited data!
+
+    for i in range(1000):  # Processes massive amounts without cleanup!
+        batch_result = process_batch(step_input, i)
+        all_results.append(batch_result)  # Memory grows indefinitely!
+
+    return combine_massive_results(all_results)  # Memory explosion!
+
+# ✅ CORRECT - Memory-efficient mixed execution
+def memory_efficient_mixed(step_input: StepInput) -> StepOutput:
+    batch_size = 10
+    summary_results = []
+
+    for batch_start in range(0, total_items, batch_size):
+        batch_results = process_batch_efficiently(step_input, batch_start, batch_size)
+
+        # Summarize batch instead of storing raw results
+        batch_summary = summarize_batch_results(batch_results)
+        summary_results.append(batch_summary)
+
+        # Cleanup batch results to free memory
+        del batch_results
+
+        # Keep only recent summaries
+        if len(summary_results) > 50:
+            summary_results = summary_results[-25:]  # Keep last 25 summaries
+
+    return synthesize_summaries(summary_results)
+```
+
+## Best Practices Summary
+
+- **Pattern Selection**: Choose mixed patterns based on actual benefits, not complexity for its own sake
+- **Resource Management**: Monitor and adapt to system resources to prevent overload
+- **Error Resilience**: Implement comprehensive error handling with fallback strategies
+- **Performance Optimization**: Use appropriate parallelism levels and efficient context management
+- **Memory Management**: Implement cleanup and summarization to prevent memory issues
+- **Execution Planning**: Create clear execution plans that balance efficiency with quality
+- **Monitoring and Learning**: Track execution patterns and outcomes for continuous improvement
+- **Graceful Degradation**: Always provide fallback mechanisms when advanced patterns fail

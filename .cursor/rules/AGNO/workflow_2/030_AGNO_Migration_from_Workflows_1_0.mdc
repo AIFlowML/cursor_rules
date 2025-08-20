@@ -1,0 +1,976 @@
+---
+description: AGNO Workflows 2.0 - Master migration from Workflows 1.0 for seamless upgrade and feature adoption
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 migration from version 1.0. Master upgrade patterns, compatibility strategies, and feature adoption for seamless transition.
+
+## Migration Strategy Flow
+
+```
+Workflows 1.0 → Analysis → Planning → Implementation → Validation → Production
+      ↓            ↓         ↓            ↓             ↓            ↓
+Legacy Code    Feature    Migration     Code          Testing     Deployed
+Assessment     Mapping    Strategy      Conversion    Validation  2.0 System
+      ↓            ↓         ↓            ↓             ↓            ↓
+Current        1.0→2.0     Step-by-Step  New Syntax    Quality     Enhanced
+Capabilities   Comparison  Approach      Adoption      Assurance   Features
+```
+
+## Instant Patterns
+
+### Quick Start - Basic 1.0 to 2.0 Conversion
+```python
+# Workflows 1.0 Pattern (Legacy)
+"""
+from agno.workflow import Workflow
+
+def old_workflow_function(workflow: Workflow, message: str):
+    # 1.0 style: Single function handles everything
+    research_result = researcher.run(message)
+    analysis_result = analyst.run(research_result.content)
+    return f"Final: {analysis_result.content}"
+
+# 1.0 Workflow
+old_workflow = Workflow(
+    name="Legacy Workflow",
+    steps=old_workflow_function  # Single function
+)
+"""
+
+# Workflows 2.0 Pattern (New)
+from agno.workflow.v2 import Workflow, Step
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Convert to 2.0 style: Step-based approach
+researcher = Agent(name="Researcher", model=OpenAIChat(id="gpt-4o-mini"))
+analyst = Agent(name="Analyst", model=OpenAIChat(id="gpt-4o-mini"))
+
+# 2.0 Workflow - Direct conversion
+new_workflow = Workflow(
+    name="Migrated Workflow", 
+    steps=[researcher, analyst]  # Step-based execution
+)
+
+# Execute with same interface
+new_workflow.print_response("Analyze AI trends", markdown=True)
+```
+
+### Production Ready - Comprehensive Migration
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput, Parallel, Condition, Loop
+from agno.workflow.v2.types import StepInput, WorkflowExecutionInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Any
+
+# Legacy 1.0 Style Workflow Function (Example)
+"""
+def legacy_content_workflow(workflow: Workflow, execution_input: WorkflowExecutionInput):
+    '''
+    Legacy 1.0 style workflow - single function orchestration
+    '''
+    
+    # 1.0 Pattern: Manual orchestration in single function
+    message = execution_input.message
+    
+    # Step 1: Research
+    research_prompt = f"Research the following topic: {message}"
+    research_result = research_agent.run(research_prompt)
+    
+    # Step 2: Analysis
+    analysis_prompt = f"Analyze this research: {research_result.content}"
+    analysis_result = analysis_agent.run(analysis_prompt)
+    
+    # Step 3: Content Creation
+    content_prompt = f"Create content based on: {analysis_result.content}"
+    content_result = content_agent.run(content_prompt)
+    
+    return f'''
+    Research: {research_result.content[:200]}...
+    Analysis: {analysis_result.content[:200]}...
+    Content: {content_result.content}
+    '''
+"""
+
+# Migration Strategy 1: Direct Step Conversion
+class WorkflowMigrator:
+    """Comprehensive migration utility from Workflows 1.0 to 2.0"""
+    
+    def __init__(self):
+        self.conversion_log = []
+        self.feature_mapping = {}
+    
+    def migrate_function_workflow(self, legacy_function, agents_list: List[Agent]):
+        """Convert 1.0 function-based workflow to 2.0 step-based"""
+        
+        # Extract workflow logic and convert to steps
+        steps = [Step(name=f"step_{i}", agent=agent) for i, agent in enumerate(agents_list)]
+        
+        migrated_workflow = Workflow(
+            name="Migrated from 1.0",
+            description="Auto-migrated from function-based workflow",
+            steps=steps
+        )
+        
+        self.conversion_log.append("Function workflow converted to step-based")
+        return migrated_workflow
+    
+    def migrate_with_enhancements(self, legacy_agents: List[Agent], storage_config: Dict = None):
+        """Migrate and add 2.0 enhancements"""
+        
+        # Enhanced migration with 2.0 features
+        enhanced_steps = []
+        
+        for i, agent in enumerate(legacy_agents):
+            step = Step(
+                name=f"enhanced_step_{i}",
+                description=f"Enhanced step from legacy agent {agent.name}",
+                agent=agent
+            )
+            enhanced_steps.append(step)
+        
+        # Add 2.0 enhancements
+        storage = None
+        if storage_config:
+            storage = SqliteStorage(**storage_config)
+        
+        enhanced_workflow = Workflow(
+            name="Enhanced Migrated Workflow",
+            description="Migrated workflow with 2.0 enhancements",
+            steps=enhanced_steps,
+            storage=storage,  # 2.0 feature
+            store_events=True,  # 2.0 feature
+            workflow_session_state={}  # 2.0 feature
+        )
+        
+        self.conversion_log.append("Workflow enhanced with 2.0 features")
+        return enhanced_workflow
+    
+    def get_migration_report(self):
+        """Generate migration report"""
+        return {
+            "conversions_performed": len(self.conversion_log),
+            "migration_log": self.conversion_log,
+            "features_added": list(self.feature_mapping.keys()),
+            "migration_status": "completed"
+        }
+
+# Migration Example: Legacy Research Workflow
+# Original 1.0 agents (compatible with both versions)
+research_specialist = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Comprehensive research specialist"
+)
+
+analysis_specialist = Agent(
+    name="Analysis Specialist", 
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Data analysis and insight extraction"
+)
+
+content_creator = Agent(
+    name="Content Creator",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Transform analysis into compelling content"
+)
+
+# Migration Strategy 2: Feature-by-Feature Upgrade
+def create_hybrid_migration_workflow(legacy_agents: List[Agent]):
+    """Create workflow that supports both 1.0 and 2.0 patterns"""
+    
+    # Support 1.0 function style within 2.0 framework
+    def legacy_compatible_function(step_input: StepInput) -> StepOutput:
+        """1.0-style function that works in 2.0 framework"""
+        
+        message = step_input.message
+        
+        # Legacy orchestration logic preserved
+        research_result = research_specialist.run(f"Research: {message}")
+        analysis_result = analysis_specialist.run(f"Analyze: {research_result.content}")
+        
+        # 1.0 style output adapted for 2.0
+        legacy_output = f"""
+        ## Legacy Processing Results (1.0 Style)
+        
+        **Research Phase**: {research_result.content[:200]}...
+        **Analysis Phase**: {analysis_result.content[:200]}...
+        
+        **Migration Note**: This preserves 1.0 orchestration logic within 2.0 framework
+        """
+        
+        return StepOutput(content=legacy_output, success=True)
+    
+    # Hybrid workflow: 1.0 logic + 2.0 features
+    hybrid_workflow = Workflow(
+        name="Hybrid Migration Workflow",
+        description="Preserves 1.0 logic while adding 2.0 capabilities",
+        steps=[
+            Step(
+                name="legacy_function_step",
+                description="1.0-style function preserved in 2.0",
+                executor=legacy_compatible_function
+            ),
+            Step(
+                name="enhanced_processing",
+                description="2.0 native processing",
+                agent=content_creator
+            )
+        ],
+        # 2.0 enhancements
+        storage=SqliteStorage(
+            table_name="migrated_workflows",
+            db_file="tmp/migration.db",
+            mode="workflow_v2"
+        ),
+        store_events=True,
+        workflow_session_state={"migration_mode": "hybrid"}
+    )
+    
+    return hybrid_workflow
+
+# Migration Strategy 3: Progressive Enhancement
+def progressive_migration_workflow():
+    """Gradually add 2.0 features to existing workflow"""
+    
+    # Stage 1: Basic step conversion
+    basic_migrated = Workflow(
+        name="Stage 1: Basic Migration",
+        steps=[research_specialist, analysis_specialist, content_creator]
+    )
+    
+    # Stage 2: Add storage and events
+    enhanced_migrated = Workflow(
+        name="Stage 2: Enhanced Migration", 
+        steps=[
+            Step(name="research", agent=research_specialist),
+            Step(name="analysis", agent=analysis_specialist),
+            Step(name="content", agent=content_creator)
+        ],
+        storage=SqliteStorage(
+            table_name="progressive_migration",
+            db_file="tmp/progressive.db",
+            mode="workflow_v2"
+        ),
+        store_events=True
+    )
+    
+    # Stage 3: Add advanced 2.0 features
+    advanced_migrated = Workflow(
+        name="Stage 3: Advanced Migration",
+        steps=[
+            Parallel(
+                Step(name="primary_research", agent=research_specialist),
+                Step(name="secondary_research", agent=research_specialist),
+                name="parallel_research"
+            ),
+            Step(name="analysis", agent=analysis_specialist),
+            Condition(
+                name="quality_check",
+                evaluator=lambda step_input: len(step_input.previous_step_content or "") > 500,
+                steps=[Step(name="quality_enhancement", agent=content_creator)]
+            ),
+            Step(name="final_content", agent=content_creator)
+        ],
+        storage=SqliteStorage(
+            table_name="advanced_migration",
+            db_file="tmp/advanced.db",
+            mode="workflow_v2"
+        ),
+        store_events=True,
+        workflow_session_state={"advanced_features": True}
+    )
+    
+    return {
+        "stage_1": basic_migrated,
+        "stage_2": enhanced_migrated, 
+        "stage_3": advanced_migrated
+    }
+
+# Advanced Migration with Custom Logic Preservation
+def preserve_custom_logic_migration():
+    """Migrate while preserving complex custom orchestration logic"""
+    
+    def preserved_orchestration_logic(step_input: StepInput) -> StepOutput:
+        """Preserve complex 1.0 orchestration patterns in 2.0"""
+        
+        message = step_input.message
+        session_state = getattr(step_input, 'workflow_session_state', {})
+        
+        # Preserved 1.0 conditional logic
+        if "complex" in message.lower():
+            # Complex research path
+            research_result = research_specialist.run(f"Deep research: {message}")
+            analysis_result = analysis_specialist.run(f"Complex analysis: {research_result.content}")
+            
+            # Custom conditional branching (1.0 style)
+            if len(analysis_result.content.split()) > 200:
+                final_result = content_creator.run(f"Comprehensive content: {analysis_result.content}")
+            else:
+                final_result = content_creator.run(f"Enhanced content: {analysis_result.content}")
+        else:
+            # Simple path
+            research_result = research_specialist.run(f"Basic research: {message}")
+            final_result = content_creator.run(f"Simple content: {research_result.content}")
+        
+        # Update session state (2.0 feature)
+        session_state["orchestration_path"] = "complex" if "complex" in message.lower() else "simple"
+        
+        preserved_output = f"""
+        ## Custom Logic Preserved Migration
+        
+        **Orchestration Path**: {session_state.get('orchestration_path', 'unknown')}
+        **Processing Type**: {"Advanced conditional logic preserved" if "complex" in message.lower() else "Standard processing"}
+        
+        **Final Result**:
+        {final_result.content}
+        
+        **Migration Status**: 1.0 custom logic successfully preserved in 2.0 framework
+        """
+        
+        return StepOutput(content=preserved_output, success=True)
+    
+    return Workflow(
+        name="Custom Logic Preservation Migration",
+        steps=[
+            Step(
+                name="preserved_orchestration",
+                description="Preserved 1.0 orchestration logic",
+                executor=preserved_orchestration_logic
+            )
+        ],
+        workflow_session_state={"preservation_mode": True}
+    )
+
+# Execute migration examples
+migrator = WorkflowMigrator()
+
+# Example 1: Direct migration
+legacy_agents = [research_specialist, analysis_specialist, content_creator]
+direct_migrated = migrator.migrate_function_workflow(None, legacy_agents)
+
+# Example 2: Enhanced migration with 2.0 features
+enhanced_migrated = migrator.migrate_with_enhancements(
+    legacy_agents,
+    storage_config={
+        "table_name": "enhanced_migration",
+        "db_file": "tmp/enhanced.db",
+        "mode": "workflow_v2"
+    }
+)
+
+# Example 3: Hybrid migration
+hybrid_migrated = create_hybrid_migration_workflow(legacy_agents)
+
+# Example 4: Progressive migration
+progressive_stages = progressive_migration_workflow()
+
+# Example 5: Custom logic preservation
+custom_logic_migrated = preserve_custom_logic_migration()
+
+# Test migrations
+print("Testing direct migration:")
+direct_response = direct_migrated.run("Analyze sustainable technology trends")
+print(f"Direct migration result: {direct_response.content[:200]}...")
+
+print("\nTesting enhanced migration:")
+enhanced_response = enhanced_migrated.run("Research renewable energy adoption")
+print(f"Enhanced migration result: {enhanced_response.content[:200]}...")
+
+print("\nMigration report:")
+migration_report = migrator.get_migration_report()
+print(f"Migration status: {migration_report}")
+```
+
+## Migration Patterns and Strategies
+
+### Pattern 1: Function to Steps Migration
+```python
+# 1.0 Pattern: Single function orchestration
+"""
+def legacy_function(workflow, execution_input):
+    message = execution_input.message
+    
+    # Manual step orchestration
+    result1 = agent1.run(message)
+    result2 = agent2.run(result1.content)
+    result3 = agent3.run(result2.content)
+    
+    return f"Combined: {result1.content} {result2.content} {result3.content}"
+
+legacy_workflow = Workflow(steps=legacy_function)
+"""
+
+# 2.0 Migration: Step-based orchestration
+def migrate_function_to_steps(agents: List[Agent]):
+    """Convert function-based workflow to step-based"""
+    
+    return Workflow(
+        name="Function to Steps Migration",
+        steps=[
+            Step(name=f"step_{i}", agent=agent) 
+            for i, agent in enumerate(agents)
+        ]
+    )
+
+# Alternative: Preserve function logic in 2.0 framework
+def preserve_function_logic(original_function_logic):
+    """Preserve 1.0 function logic within 2.0 step"""
+    
+    def wrapped_function(step_input: StepInput) -> StepOutput:
+        # Execute original logic
+        result = original_function_logic(step_input.message)
+        
+        return StepOutput(
+            content=result,
+            success=True
+        )
+    
+    return Workflow(
+        name="Preserved Function Logic",
+        steps=[
+            Step(
+                name="preserved_logic",
+                executor=wrapped_function
+            )
+        ]
+    )
+```
+
+### Pattern 2: Enhanced Storage Migration
+```python
+# 1.0: Basic execution without persistence
+"""
+basic_workflow = Workflow(
+    name="Basic 1.0 Workflow",
+    steps=function
+)
+"""
+
+# 2.0: Add storage and event tracking
+def add_storage_capabilities(workflow_steps, storage_config):
+    """Add 2.0 storage capabilities to migrated workflow"""
+    
+    return Workflow(
+        name="Storage-Enhanced Migration",
+        steps=workflow_steps,
+        
+        # 2.0 Storage features
+        storage=SqliteStorage(
+            table_name=storage_config.get("table_name", "migrations"),
+            db_file=storage_config.get("db_file", "tmp/migrations.db"),
+            mode="workflow_v2"
+        ),
+        
+        # 2.0 Event tracking
+        store_events=True,
+        events_to_skip=[],  # Store all events during migration
+        
+        # 2.0 Session state
+        workflow_session_state={
+            "migration_timestamp": datetime.now().isoformat(),
+            "migration_source": "workflows_1_0"
+        }
+    )
+```
+
+### Pattern 3: Advanced Feature Integration
+```python
+def integrate_advanced_features(basic_workflow_steps):
+    """Add advanced 2.0 features during migration"""
+    
+    # Condition evaluation for enhanced workflow
+    def needs_quality_check(step_input: StepInput) -> bool:
+        content = step_input.previous_step_content or ""
+        return len(content.split()) < 100  # Quality threshold
+    
+    return Workflow(
+        name="Advanced Features Migration",
+        steps=[
+            # Original steps
+            *basic_workflow_steps,
+            
+            # Add conditional quality enhancement
+            Condition(
+                name="quality_enhancement",
+                evaluator=needs_quality_check,
+                steps=[
+                    Step(
+                        name="quality_booster",
+                        agent=quality_enhancer_agent
+                    )
+                ]
+            ),
+            
+            # Add parallel processing for final optimization
+            Parallel(
+                Step(name="optimization_1", agent=optimizer_1),
+                Step(name="optimization_2", agent=optimizer_2),
+                name="parallel_optimization"
+            )
+        ],
+        
+        # Enhanced configuration
+        storage=SqliteStorage(
+            table_name="advanced_migrations",
+            db_file="tmp/advanced_migrations.db",
+            mode="workflow_v2"
+        ),
+        store_events=True,
+        workflow_session_state={"advanced_migration": True}
+    )
+```
+
+## Migration Validation and Testing
+
+### Migration Validation Framework
+```python
+class MigrationValidator:
+    """Validate successful migration from 1.0 to 2.0"""
+    
+    def __init__(self):
+        self.validation_results = {}
+    
+    def validate_output_compatibility(self, legacy_output, migrated_output):
+        """Validate that migrated workflow produces compatible outputs"""
+        
+        # Content similarity check
+        legacy_words = set(str(legacy_output).lower().split())
+        migrated_words = set(str(migrated_output).lower().split())
+        
+        if legacy_words and migrated_words:
+            similarity = len(legacy_words & migrated_words) / len(legacy_words | migrated_words)
+            compatible = similarity >= 0.5  # 50% similarity threshold
+        else:
+            compatible = False
+        
+        self.validation_results["output_compatibility"] = {
+            "similarity_score": similarity if 'similarity' in locals() else 0.0,
+            "compatible": compatible,
+            "legacy_length": len(str(legacy_output)),
+            "migrated_length": len(str(migrated_output))
+        }
+        
+        return compatible
+    
+    def validate_feature_enhancement(self, migrated_workflow):
+        """Validate that 2.0 features are properly integrated"""
+        
+        enhancements = {
+            "has_storage": hasattr(migrated_workflow, 'storage') and migrated_workflow.storage is not None,
+            "has_event_tracking": hasattr(migrated_workflow, 'store_events') and migrated_workflow.store_events,
+            "has_session_state": hasattr(migrated_workflow, 'workflow_session_state'),
+            "has_named_steps": any(hasattr(step, 'name') for step in migrated_workflow.steps if hasattr(step, 'name'))
+        }
+        
+        enhancement_score = sum(enhancements.values()) / len(enhancements)
+        
+        self.validation_results["feature_enhancement"] = {
+            "enhancements": enhancements,
+            "enhancement_score": enhancement_score,
+            "ready_for_production": enhancement_score >= 0.75
+        }
+        
+        return enhancement_score >= 0.5
+    
+    def validate_performance_impact(self, legacy_time, migrated_time):
+        """Validate performance impact of migration"""
+        
+        if legacy_time > 0:
+            performance_ratio = migrated_time / legacy_time
+            performance_acceptable = performance_ratio <= 1.5  # No more than 50% slowdown
+        else:
+            performance_ratio = 1.0
+            performance_acceptable = True
+        
+        self.validation_results["performance_impact"] = {
+            "legacy_time": legacy_time,
+            "migrated_time": migrated_time,
+            "performance_ratio": performance_ratio,
+            "performance_acceptable": performance_acceptable
+        }
+        
+        return performance_acceptable
+    
+    def get_validation_report(self):
+        """Generate comprehensive validation report"""
+        
+        overall_score = 0
+        total_categories = len(self.validation_results)
+        
+        for category, results in self.validation_results.items():
+            if category == "output_compatibility":
+                overall_score += 1 if results["compatible"] else 0
+            elif category == "feature_enhancement":
+                overall_score += 1 if results["ready_for_production"] else 0.5
+            elif category == "performance_impact":
+                overall_score += 1 if results["performance_acceptable"] else 0
+        
+        overall_score = overall_score / max(total_categories, 1)
+        
+        return {
+            "validation_results": self.validation_results,
+            "overall_score": overall_score,
+            "migration_quality": (
+                "excellent" if overall_score >= 0.9 else
+                "good" if overall_score >= 0.7 else
+                "acceptable" if overall_score >= 0.5 else
+                "needs_improvement"
+            ),
+            "recommendations": self._generate_recommendations()
+        }
+    
+    def _generate_recommendations(self):
+        """Generate migration recommendations based on validation"""
+        recommendations = []
+        
+        for category, results in self.validation_results.items():
+            if category == "output_compatibility" and not results.get("compatible", True):
+                recommendations.append("Review output compatibility - consider output format adjustments")
+            
+            if category == "feature_enhancement" and results.get("enhancement_score", 1.0) < 0.75:
+                recommendations.append("Add more 2.0 features for full migration benefits")
+            
+            if category == "performance_impact" and not results.get("performance_acceptable", True):
+                recommendations.append("Optimize performance - migration shows significant slowdown")
+        
+        if not recommendations:
+            recommendations.append("Migration validation successful - ready for production")
+        
+        return recommendations
+
+# Usage example
+def test_migration_validation():
+    """Test migration validation process"""
+    
+    validator = MigrationValidator()
+    
+    # Simulate legacy vs migrated output comparison
+    legacy_output = "Research complete: AI trends analysis shows significant growth."
+    migrated_output = "Research complete: AI trends analysis demonstrates substantial growth with multiple indicators."
+    
+    # Validate output compatibility
+    compatibility_valid = validator.validate_output_compatibility(legacy_output, migrated_output)
+    print(f"Output compatibility: {compatibility_valid}")
+    
+    # Create test workflow for feature validation
+    test_workflow = Workflow(
+        name="Test Migration",
+        steps=[research_specialist],
+        storage=SqliteStorage(table_name="test", db_file="test.db", mode="workflow_v2"),
+        store_events=True,
+        workflow_session_state={}
+    )
+    
+    # Validate feature enhancement
+    features_valid = validator.validate_feature_enhancement(test_workflow)
+    print(f"Feature enhancement: {features_valid}")
+    
+    # Validate performance (simulated)
+    performance_valid = validator.validate_performance_impact(1.5, 1.8)
+    print(f"Performance impact: {performance_valid}")
+    
+    # Generate report
+    report = validator.get_validation_report()
+    print(f"Migration quality: {report['migration_quality']}")
+    print(f"Recommendations: {report['recommendations']}")
+    
+    return report
+```
+
+## Migration Best Practices and Guidelines
+
+### Incremental Migration Strategy
+```python
+class IncrementalMigrator:
+    """Manage incremental migration from 1.0 to 2.0"""
+    
+    def __init__(self):
+        self.migration_phases = []
+        self.current_phase = 0
+    
+    def plan_migration(self, legacy_workflow_components):
+        """Plan incremental migration phases"""
+        
+        self.migration_phases = [
+            {
+                "phase": 1,
+                "name": "Basic Conversion",
+                "description": "Convert function to steps",
+                "components": ["basic_steps"],
+                "risks": ["minimal"],
+                "benefits": ["step_visibility"]
+            },
+            {
+                "phase": 2, 
+                "name": "Add Storage",
+                "description": "Integrate persistence layer",
+                "components": ["storage", "event_tracking"],
+                "risks": ["storage_overhead"],
+                "benefits": ["persistence", "debugging"]
+            },
+            {
+                "phase": 3,
+                "name": "Advanced Features",
+                "description": "Integrate parallel, conditional, loop features",
+                "components": ["parallel", "conditional", "loops"],
+                "risks": ["complexity_increase"],
+                "benefits": ["performance", "flexibility", "robustness"]
+            }
+        ]
+        
+        return self.migration_phases
+    
+    def execute_phase(self, phase_number, legacy_components):
+        """Execute specific migration phase"""
+        
+        if phase_number > len(self.migration_phases):
+            raise ValueError(f"Phase {phase_number} not defined")
+        
+        phase = self.migration_phases[phase_number - 1]
+        
+        if phase_number == 1:
+            return self._phase_1_basic_conversion(legacy_components)
+        elif phase_number == 2:
+            return self._phase_2_add_storage(legacy_components)
+        elif phase_number == 3:
+            return self._phase_3_advanced_features(legacy_components)
+    
+    def _phase_1_basic_conversion(self, components):
+        """Phase 1: Basic function to steps conversion"""
+        
+        basic_workflow = Workflow(
+            name="Phase 1: Basic Migration",
+            steps=[
+                Step(name=f"migrated_step_{i}", agent=agent)
+                for i, agent in enumerate(components.get("agents", []))
+            ]
+        )
+        
+        return {
+            "workflow": basic_workflow,
+            "phase_completed": 1,
+            "next_steps": "Add storage and event tracking",
+            "validation_needed": ["output_compatibility", "basic_functionality"]
+        }
+    
+    def _phase_2_add_storage(self, components):
+        """Phase 2: Add storage and event capabilities"""
+        
+        enhanced_workflow = Workflow(
+            name="Phase 2: Enhanced Migration",
+            steps=[
+                Step(name=f"enhanced_step_{i}", agent=agent)
+                for i, agent in enumerate(components.get("agents", []))
+            ],
+            storage=SqliteStorage(
+                table_name="phase_2_migration",
+                db_file="tmp/phase2.db",
+                mode="workflow_v2"
+            ),
+            store_events=True,
+            workflow_session_state={"migration_phase": 2}
+        )
+        
+        return {
+            "workflow": enhanced_workflow,
+            "phase_completed": 2,
+            "next_steps": "Add advanced 2.0 features",
+            "validation_needed": ["storage_functionality", "event_tracking", "performance"]
+        }
+    
+    def _phase_3_advanced_features(self, components):
+        """Phase 3: Add advanced 2.0 features"""
+        
+        agents = components.get("agents", [])
+        
+        advanced_workflow = Workflow(
+            name="Phase 3: Advanced Migration",
+            steps=[
+                # Add parallel processing
+                Parallel(
+                    Step(name="parallel_1", agent=agents[0] if agents else None),
+                    Step(name="parallel_2", agent=agents[1] if len(agents) > 1 else agents[0]),
+                    name="parallel_phase"
+                ) if agents else Step(name="placeholder", agent=None),
+                
+                # Add conditional processing
+                Condition(
+                    name="quality_condition",
+                    evaluator=lambda step_input: len(step_input.previous_step_content or "") > 200,
+                    steps=[
+                        Step(name="quality_enhancement", agent=agents[-1] if agents else None)
+                    ]
+                ) if agents else Step(name="placeholder_2", agent=None),
+            ],
+            storage=SqliteStorage(
+                table_name="phase_3_migration", 
+                db_file="tmp/phase3.db",
+                mode="workflow_v2"
+            ),
+            store_events=True,
+            workflow_session_state={"migration_phase": 3, "advanced_features": True}
+        )
+        
+        return {
+            "workflow": advanced_workflow,
+            "phase_completed": 3,
+            "next_steps": "Production deployment and monitoring",
+            "validation_needed": ["full_feature_testing", "performance_optimization", "production_readiness"]
+        }
+```
+
+## Speed Tips
+
+### Quick Migration Utilities
+```python
+def quick_migrate(legacy_function, agents: List[Agent]):
+    """Quick migration utility for simple cases"""
+    
+    return Workflow(
+        name="Quick Migration",
+        steps=[Step(name=f"step_{i}", agent=agent) for i, agent in enumerate(agents)]
+    )
+
+def hybrid_migrate(legacy_function, agents: List[Agent]):
+    """Hybrid migration preserving some 1.0 patterns"""
+    
+    def wrapped_legacy(step_input: StepInput) -> StepOutput:
+        # Preserve legacy logic
+        result = "Legacy logic result"  # Would call actual legacy function
+        return StepOutput(content=result)
+    
+    return Workflow(
+        name="Hybrid Migration",
+        steps=[
+            Step(name="legacy_preserved", executor=wrapped_legacy),
+            *[Step(name=f"new_step_{i}", agent=agent) for i, agent in enumerate(agents)]
+        ]
+    )
+```
+
+### Migration Template Library
+```python
+class MigrationTemplates:
+    """Pre-built migration templates"""
+    
+    @staticmethod
+    def simple_migration(agents: List[Agent]):
+        """Simple step-by-step migration"""
+        return Workflow(
+            name="Simple Migration",
+            steps=agents
+        )
+    
+    @staticmethod
+    def enhanced_migration(agents: List[Agent], storage_config=None):
+        """Migration with 2.0 enhancements"""
+        
+        config = storage_config or {
+            "table_name": "migrations",
+            "db_file": "tmp/migrations.db",
+            "mode": "workflow_v2"
+        }
+        
+        return Workflow(
+            name="Enhanced Migration",
+            steps=[Step(name=f"step_{i}", agent=agent) for i, agent in enumerate(agents)],
+            storage=SqliteStorage(**config),
+            store_events=True
+        )
+    
+    @staticmethod
+    def advanced_migration(agents: List[Agent]):
+        """Migration with advanced 2.0 features"""
+        
+        return Workflow(
+            name="Advanced Migration",
+            steps=[
+                Parallel(*agents[:2], name="parallel_start") if len(agents) > 1 else agents[0],
+                *agents[2:] if len(agents) > 2 else []
+            ],
+            storage=SqliteStorage(
+                table_name="advanced_migrations",
+                db_file="tmp/advanced.db", 
+                mode="workflow_v2"
+            ),
+            store_events=True,
+            workflow_session_state={"migration_type": "advanced"}
+        )
+
+# Usage
+templates = MigrationTemplates()
+simple_wf = templates.simple_migration([agent1, agent2])
+enhanced_wf = templates.enhanced_migration([agent1, agent2, agent3])
+advanced_wf = templates.advanced_migration([agent1, agent2, agent3, agent4])
+```
+
+## Common Pitfalls
+
+### Migration Compatibility Issues
+```python
+# ❌ DON'T: Assume 1.0 patterns work directly in 2.0
+# old_workflow = Workflow(steps=legacy_function)  # May not work
+
+# ✅ DO: Properly wrap legacy functions for 2.0 compatibility
+def wrap_legacy_function(legacy_func):
+    def wrapped(step_input: StepInput) -> StepOutput:
+        # Properly interface legacy function with 2.0
+        result = legacy_func(step_input.message)
+        return StepOutput(content=result)
+    
+    return wrapped
+
+# ❌ DON'T: Ignore new 2.0 interfaces
+# Legacy code that directly returns strings
+
+# ✅ DO: Use proper 2.0 interfaces
+# Return StepOutput objects from custom functions
+```
+
+### Performance Degradation
+```python
+# ❌ DON'T: Add all 2.0 features without testing performance
+heavy_migration = Workflow(
+    steps=many_steps,
+    storage=storage,
+    store_events=True,  # May impact performance
+    events_to_skip=[]   # Storing all events
+)
+
+# ✅ DO: Optimize for performance during migration
+optimized_migration = Workflow(
+    steps=necessary_steps_only,
+    storage=storage,
+    store_events=True,
+    events_to_skip=[  # Skip verbose events
+        "step_started", "step_completed"
+    ]
+)
+```
+
+## Best Practices Summary
+
+- **Incremental Migration**: Migrate in phases to reduce risk
+- **Validation Testing**: Thoroughly test compatibility after migration
+- **Performance Monitoring**: Monitor performance impact during migration
+- **Feature Adoption**: Gradually adopt 2.0 features for maximum benefit
+- **Preserve Logic**: Maintain critical business logic during migration
+- **Documentation**: Document migration decisions and changes
+- **Rollback Planning**: Plan rollback strategies for migration issues
+- **Team Training**: Ensure team understands 2.0 patterns and features
+- **Production Testing**: Test migrated workflows in staging before production
+
+## References
+
+- [Migration Guide](/docs/workflows_2/migration.md)
+- [Compatibility Matrix](/docs/workflows_2/compatibility.md)
+- [Feature Comparison](/docs/workflows_2/feature_comparison.md)
+- [Performance Guidelines](/docs/workflows_2/performance.md)

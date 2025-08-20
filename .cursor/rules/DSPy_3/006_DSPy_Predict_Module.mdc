@@ -1,0 +1,516 @@
+---
+description: DSPy 3.0.1 Predict Module - Master the foundation module for direct LM interactions
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's Predict module, the foundational building block for all LM interactions. Master direct prediction patterns for maximum speed and efficiency.
+
+## Predict Module Development Flow
+
+```
+Define Signature → Create Predict → Configure → Execute → Handle Results
+       ↓              ↓           ↓         ↓            ↓
+   Input/Output    dspy.Predict   LM Setup   Forward     Extract Fields
+   Declaration     Instantiate    Context    Method      Type Safety
+       ↓              ↓           ↓         ↓            ↓
+   Semantic        Module Ready   Settings   Prediction  Structured Data
+   Structure       for Use        Applied    Generated   Ready for Use
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Predict Usage
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Create predictor
+qa = dspy.Predict("question -> answer")
+
+# Use immediately
+result = qa(question="What is machine learning?")
+print(result.answer)
+
+# Access all fields
+print(f"Question: {result.question}")
+print(f"Answer: {result.answer}")
+```
+
+### Production Ready - Advanced Predict Patterns
+
+```python
+import dspy
+from typing import List, Dict
+
+# Complex signature with multiple inputs/outputs
+class AnalysisSignature(dspy.Signature):
+    """Analyze content for multiple dimensions."""
+
+    content: str = dspy.InputField(desc="Text to analyze")
+    domain: str = dspy.InputField(desc="Content domain context")
+
+    summary: str = dspy.OutputField(desc="Concise content summary")
+    key_points: List[str] = dspy.OutputField(desc="Main points extracted")
+    sentiment: str = dspy.OutputField(desc="Overall sentiment")
+    confidence: float = dspy.OutputField(desc="Analysis confidence 0-1")
+
+# Create predictor with configuration
+analyzer = dspy.Predict(
+    AnalysisSignature,
+    temperature=0.2,  # Lower for more consistent analysis
+    max_tokens=1000
+)
+
+# Use with full type safety
+result = analyzer(
+    content="This new AI system shows remarkable capabilities...",
+    domain="technology"
+)
+
+# All outputs are properly typed
+assert isinstance(result.key_points, list)
+assert isinstance(result.confidence, float)
+assert 0 <= result.confidence <= 1
+```
+
+## Core Predict Patterns
+
+### String Signature Patterns
+
+```python
+# Single input/output - most common
+simple_qa = dspy.Predict("question -> answer")
+
+# Multiple inputs
+contextual_qa = dspy.Predict("question, context -> answer")
+multi_input = dspy.Predict("title, content, author -> summary")
+
+# Multiple outputs
+classifier = dspy.Predict("text -> category, confidence")
+extractor = dspy.Predict("document -> entities, relationships, summary")
+
+# Typed outputs
+counter = dspy.Predict("items: list[str] -> count: int")
+scorer = dspy.Predict("text -> scores: dict[str, float]")
+```
+
+### Class Signature Patterns
+
+```python
+class DetailedQASignature(dspy.Signature):
+    """Answer questions with detailed context analysis."""
+
+    # Input fields
+    question: str = dspy.InputField(
+        desc="User question requiring detailed answer"
+    )
+    context: List[str] = dspy.InputField(
+        desc="Relevant context passages",
+        min_length=1
+    )
+
+    # Output fields
+    answer: str = dspy.OutputField(
+        desc="Comprehensive answer based on context"
+    )
+    confidence: float = dspy.OutputField(
+        desc="Answer confidence score",
+        ge=0.0, le=1.0
+    )
+    sources: List[int] = dspy.OutputField(
+        desc="Indices of context passages used"
+    )
+
+qa_predictor = dspy.Predict(DetailedQASignature)
+```
+
+## Configuration and Control
+
+### Predictor Configuration
+
+```python
+# Temperature control for creativity vs consistency
+creative_writer = dspy.Predict(
+    "topic -> story",
+    temperature=0.8,  # Higher for creativity
+    max_tokens=2000
+)
+
+analytical_processor = dspy.Predict(
+    "data -> analysis",
+    temperature=0.1,  # Lower for consistency
+    max_tokens=500
+)
+
+# Model-specific parameters
+structured_extractor = dspy.Predict(
+    "text -> entities: list[dict]",
+    temperature=0.2,
+    max_tokens=1500,
+    top_p=0.9,
+    frequency_penalty=0.1
+)
+```
+
+### Dynamic Configuration
+
+```python
+class ConfigurablePredictor:
+    def __init__(self, signature):
+        self.signature = signature
+        self._predictors = {}
+
+    def get_predictor(self, task_type):
+        if task_type not in self._predictors:
+            if task_type == "creative":
+                self._predictors[task_type] = dspy.Predict(
+                    self.signature, temperature=0.8
+                )
+            elif task_type == "analytical":
+                self._predictors[task_type] = dspy.Predict(
+                    self.signature, temperature=0.1
+                )
+            else:
+                self._predictors[task_type] = dspy.Predict(self.signature)
+
+        return self._predictors[task_type]
+
+    def predict(self, task_type, **kwargs):
+        predictor = self.get_predictor(task_type)
+        return predictor(**kwargs)
+
+# Usage
+flexible_qa = ConfigurablePredictor("question, context -> answer")
+creative_answer = flexible_qa.predict("creative", question="...", context="...")
+analytical_answer = flexible_qa.predict("analytical", question="...", context="...")
+```
+
+## Advanced Usage Patterns
+
+### Batch Processing
+
+```python
+import asyncio
+
+# Synchronous batch processing
+def batch_predict_sync(predictor, inputs_list):
+    """Process multiple inputs synchronously."""
+    results = []
+    for inputs in inputs_list:
+        result = predictor(**inputs)
+        results.append(result)
+    return results
+
+# Asynchronous batch processing
+async def batch_predict_async(predictor, inputs_list):
+    """Process multiple inputs in parallel."""
+    tasks = [predictor.acall(**inputs) for inputs in inputs_list]
+    results = await asyncio.gather(*tasks)
+    return results
+
+# Usage
+qa = dspy.Predict("question -> answer")
+
+questions = [
+    {"question": "What is AI?"},
+    {"question": "How does ML work?"},
+    {"question": "What is deep learning?"}
+]
+
+# Sync batch
+sync_results = batch_predict_sync(qa, questions)
+
+# Async batch
+async_results = asyncio.run(batch_predict_async(qa, questions))
+```
+
+### Error Handling and Validation
+
+```python
+class RobustPredictor:
+    def __init__(self, signature, max_retries=3):
+        self.predictor = dspy.Predict(signature)
+        self.max_retries = max_retries
+
+    def predict_with_validation(self, validator_func, **kwargs):
+        """Predict with output validation and retry."""
+        for attempt in range(self.max_retries):
+            try:
+                result = self.predictor(**kwargs)
+
+                if validator_func(result):
+                    return result
+                else:
+                    print(f"Validation failed on attempt {attempt + 1}")
+
+            except Exception as e:
+                print(f"Prediction failed on attempt {attempt + 1}: {e}")
+                if attempt == self.max_retries - 1:
+                    raise
+
+        raise ValueError("All prediction attempts failed validation")
+
+# Usage with validation
+def validate_qa_result(result):
+    """Ensure QA result has meaningful answer."""
+    return (hasattr(result, 'answer') and
+            len(result.answer.strip()) > 10 and
+            result.answer.strip() != "I don't know")
+
+robust_qa = RobustPredictor("question -> answer")
+result = robust_qa.predict_with_validation(
+    validate_qa_result,
+    question="What is quantum computing?"
+)
+```
+
+### Caching and Performance
+
+```python
+from functools import lru_cache
+import hashlib
+import json
+
+class CachedPredictor:
+    def __init__(self, signature, cache_size=1000):
+        self.predictor = dspy.Predict(signature)
+        self.cache_size = cache_size
+        self._setup_cache()
+
+    def _setup_cache(self):
+        """Setup LRU cache for predictions."""
+        @lru_cache(maxsize=self.cache_size)
+        def cached_predict(input_hash):
+            # This is called only for cache misses
+            inputs = json.loads(input_hash)
+            return self.predictor(**inputs)
+
+        self._cached_predict = cached_predict
+
+    def predict(self, **kwargs):
+        """Predict with caching based on input hash."""
+        input_str = json.dumps(kwargs, sort_keys=True)
+        input_hash = hashlib.md5(input_str.encode()).hexdigest()
+
+        return self._cached_predict(input_hash)
+
+    def cache_info(self):
+        """Get cache statistics."""
+        return self._cached_predict.cache_info()
+
+# Usage
+cached_qa = CachedPredictor("question -> answer", cache_size=500)
+
+# First call - cache miss
+result1 = cached_qa.predict(question="What is AI?")
+
+# Second call - cache hit
+result2 = cached_qa.predict(question="What is AI?")
+
+print(cached_qa.cache_info())  # Show cache statistics
+```
+
+## Integration Patterns
+
+### With Module Composition
+
+```python
+class PredictBasedPipeline(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Chain of Predict modules
+        self.preprocessor = dspy.Predict("raw_text -> clean_text")
+        self.extractor = dspy.Predict("clean_text -> entities, topics")
+        self.classifier = dspy.Predict("entities, topics -> category")
+        self.summarizer = dspy.Predict("clean_text, category -> summary")
+
+    def forward(self, raw_text):
+        # Sequential processing
+        clean = self.preprocessor(raw_text=raw_text)
+        extracted = self.extractor(clean_text=clean.clean_text)
+        classified = self.classifier(
+            entities=extracted.entities,
+            topics=extracted.topics
+        )
+        summary = self.summarizer(
+            clean_text=clean.clean_text,
+            category=classified.category
+        )
+
+        return dspy.Prediction(
+            original_text=raw_text,
+            clean_text=clean.clean_text,
+            entities=extracted.entities,
+            topics=extracted.topics,
+            category=classified.category,
+            summary=summary.summary
+        )
+```
+
+### With Custom Logic
+
+```python
+class ConditionalPredict(dspy.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Different predictors for different scenarios
+        self.complexity_checker = dspy.Predict("question -> complexity: str")
+        self.simple_qa = dspy.Predict("question -> answer")
+        self.detailed_qa = dspy.Predict(
+            "question -> answer, explanation, confidence"
+        )
+
+    def forward(self, question):
+        # Determine question complexity
+        complexity = self.complexity_checker(question=question)
+
+        # Route to appropriate predictor
+        if "simple" in complexity.complexity.lower():
+            result = self.simple_qa(question=question)
+            return dspy.Prediction(
+                question=question,
+                answer=result.answer,
+                complexity="simple"
+            )
+        else:
+            result = self.detailed_qa(question=question)
+            return dspy.Prediction(
+                question=question,
+                answer=result.answer,
+                explanation=result.explanation,
+                confidence=result.confidence,
+                complexity="detailed"
+            )
+```
+
+## Speed Tips
+
+### Performance Optimization
+
+```python
+# Use specific signatures for better performance
+fast_classifier = dspy.Predict("text -> category")  # Minimal
+
+# Batch similar requests
+batch_requests = [
+    {"text": "Happy news today"},
+    {"text": "Sad story unfolded"},
+    {"text": "Exciting developments"}
+]
+
+# Process efficiently
+sentiment_analyzer = dspy.Predict("text -> sentiment")
+results = [sentiment_analyzer(**req) for req in batch_requests]
+
+# Reuse predictors - don't recreate
+class EfficientProcessor:
+    def __init__(self):
+        self.qa = dspy.Predict("question -> answer")
+        self.summarizer = dspy.Predict("text -> summary")
+
+    def process_qa(self, question):
+        return self.qa(question=question)
+
+    def process_summary(self, text):
+        return self.summarizer(text=text)
+```
+
+### Memory Management
+
+```python
+# For long-running applications
+class ManagedPredictor:
+    def __init__(self, signature):
+        self.signature = signature
+        self._predictor = None
+        self.call_count = 0
+
+    @property
+    def predictor(self):
+        if self._predictor is None:
+            self._predictor = dspy.Predict(self.signature)
+        return self._predictor
+
+    def predict(self, **kwargs):
+        result = self.predictor(**kwargs)
+        self.call_count += 1
+
+        # Periodic cleanup for memory management
+        if self.call_count % 1000 == 0:
+            self._cleanup()
+
+        return result
+
+    def _cleanup(self):
+        """Cleanup resources periodically."""
+        if hasattr(self.predictor, 'lm') and hasattr(self.predictor.lm, 'history'):
+            # Clear LM history to prevent memory buildup
+            self.predictor.lm.history = self.predictor.lm.history[-10:]
+```
+
+## Common Pitfalls
+
+### Signature Mismatches
+
+```python
+# ❌ DON'T: Mismatch between expected and actual fields
+predictor = dspy.Predict("question -> answer")
+result = predictor(query="What is AI?")  # Wrong field name!
+
+# ✅ DO: Match signature field names exactly
+predictor = dspy.Predict("question -> answer")
+result = predictor(question="What is AI?")  # Correct field name
+```
+
+### Configuration Errors
+
+```python
+# ❌ DON'T: Forget to configure LM
+predictor = dspy.Predict("question -> answer")
+result = predictor(question="What is AI?")  # Error: No LM configured
+
+# ✅ DO: Always configure LM first
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+predictor = dspy.Predict("question -> answer")
+result = predictor(question="What is AI?")  # Works correctly
+```
+
+### Resource Leaks
+
+```python
+# ❌ DON'T: Create predictors in loops
+for question in questions:
+    predictor = dspy.Predict("question -> answer")  # Memory leak!
+    result = predictor(question=question)
+
+# ✅ DO: Reuse predictors
+predictor = dspy.Predict("question -> answer")
+for question in questions:
+    result = predictor(question=question)  # Efficient
+```
+
+## Best Practices Summary
+
+- **Configure once**: Set up LM before creating predictors
+- **Reuse predictors**: Don't recreate for each use
+- **Match signatures**: Ensure field names match exactly
+- **Handle errors**: Implement validation and retry logic
+- **Batch processing**: Use async for parallel execution
+- **Cache results**: Implement caching for repeated queries
+- **Monitor performance**: Track usage and optimize bottlenecks
+- **Type safety**: Use rich signatures for better results
+- **Memory management**: Clean up resources in long-running applications
+
+## References
+
+- [Predict Module API](/docs/api/modules/Predict.md)
+- [Signature System Guide](/docs/api/signatures/Signature.md)
+- [LM Configuration](/docs/api/models/LM.md)
+- [Performance Optimization](/docs/tutorials/performance/)

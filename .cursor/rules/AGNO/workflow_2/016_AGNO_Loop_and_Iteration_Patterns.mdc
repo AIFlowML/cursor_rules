@@ -1,0 +1,837 @@
+---
+description: AGNO Workflows 2.0 - Master loop and iteration patterns for iterative processing and quality-driven workflows
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 loop and iteration patterns. Master iterative processing for quality-driven, adaptive workflows.
+
+## Loop Execution Flow
+
+```
+Initial Input → Loop Start → Execute Steps → Check Condition → Continue/Exit
+      ↓           ↓            ↓              ↓               ↓
+   Message    Iteration 1   Step Results   End Evaluator   Loop Decision
+   Setup      Processing    Generation     Assessment      Path Selection
+      ↓           ↓            ↓              ↓               ↓
+  Loop Ready  Step Execute  Output Ready   Boolean Result  Next Iteration
+  Initialize  Collection    Available      Generated       or Complete
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Loop Execution
+```python
+from agno.workflow.v2 import Workflow, Loop, Step
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Basic end condition function
+def quality_threshold(outputs) -> bool:
+    """Simple quality check - stop when output is long enough"""
+    if not outputs:
+        return False
+    
+    latest_output = outputs[-1]
+    content = latest_output.content if hasattr(latest_output, 'content') else str(latest_output)
+    
+    # Stop when we have enough content (500 words)
+    return len(content.split()) >= 500
+
+# Research agent for iterative improvement
+research_agent = Agent(
+    name="Iterative Researcher",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Conduct research with iterative improvement"
+)
+
+# Basic loop workflow
+loop_workflow = Workflow(
+    name="Basic Loop Research",
+    steps=[
+        Loop(
+            name="research_loop",
+            steps=[research_agent],
+            end_condition=quality_threshold,
+            max_iterations=3
+        )
+    ]
+)
+
+# Execute - will loop until quality threshold met or max iterations reached
+loop_workflow.print_response("Research AI trends in healthcare", markdown=True)
+```
+
+### Production Ready - Advanced Iterative Processing
+```python
+from agno.workflow.v2 import Workflow, Loop, Step, StepOutput, Parallel
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any
+from datetime import datetime
+import re
+
+# Structured models for loop processing
+class IterationResult(BaseModel):
+    iteration_number: int
+    content_quality_score: float = Field(ge=0.0, le=1.0)
+    completeness_score: float = Field(ge=0.0, le=1.0)
+    key_findings: List[str]
+    areas_for_improvement: List[str]
+    confidence_level: str = Field(regex="^(low|medium|high|very_high)$")
+
+class LoopAnalysis(BaseModel):
+    total_iterations: int
+    final_quality_score: float = Field(ge=0.0, le=1.0)
+    improvement_trajectory: List[float]
+    convergence_achieved: bool
+    optimization_recommendations: List[str]
+
+# Advanced agents for loop processing
+iterative_researcher = Agent(
+    name="Iterative Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    response_model=IterationResult,
+    role="Conduct iterative research with quality improvement",
+    instructions=[
+        "Perform research that builds upon previous iterations",
+        "Identify areas needing deeper investigation",
+        "Assess quality and completeness of current findings",
+        "Structure results using IterationResult model",
+        "Focus on continuous improvement with each iteration"
+    ]
+)
+
+quality_assessor = Agent(
+    name="Quality Assessment Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Assess research quality and completeness",
+    instructions=[
+        "Evaluate research depth, accuracy, and comprehensiveness",
+        "Identify gaps and areas requiring additional investigation", 
+        "Provide specific recommendations for improvement",
+        "Score quality based on established criteria"
+    ]
+)
+
+convergence_analyzer = Agent(
+    name="Convergence Analysis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=LoopAnalysis,
+    role="Analyze loop convergence and optimization patterns",
+    instructions=[
+        "Analyze iteration patterns and quality improvements",
+        "Assess convergence toward optimal solutions",
+        "Recommend optimization strategies for future loops",
+        "Structure findings using LoopAnalysis model"
+    ]
+)
+
+# Advanced end condition functions
+def comprehensive_quality_check(outputs) -> bool:
+    """Comprehensive quality assessment for loop termination"""
+    if not outputs or len(outputs) < 2:
+        return False
+    
+    latest_output = outputs[-1]
+    
+    # Extract quality metrics if structured
+    if isinstance(latest_output, IterationResult):
+        quality_score = latest_output.content_quality_score
+        completeness_score = latest_output.completeness_score
+        confidence_level = latest_output.confidence_level
+        
+        # Multiple criteria for termination
+        high_quality = quality_score >= 0.8
+        complete_analysis = completeness_score >= 0.75
+        high_confidence = confidence_level in ["high", "very_high"]
+        
+        return all([high_quality, complete_analysis, high_confidence])
+    
+    # Fallback to content-based assessment
+    content = latest_output.content if hasattr(latest_output, 'content') else str(latest_output)
+    
+    # Quality indicators
+    word_count = len(content.split())
+    has_structure = any(marker in content for marker in ["##", "**", "1.", "-"])
+    has_conclusions = any(term in content.lower() for term in ["conclusion", "summary", "recommendation"])
+    has_sources = any(term in content.lower() for term in ["source", "study", "research", "according"])
+    
+    quality_criteria = [
+        word_count >= 400,      # Sufficient content
+        has_structure,          # Well-structured
+        has_conclusions,        # Has conclusions
+        has_sources,           # Has sources
+    ]
+    
+    # Require at least 3 of 4 criteria
+    return sum(quality_criteria) >= 3
+
+def convergence_detector(outputs) -> bool:
+    """Detect convergence in iterative improvement"""
+    if len(outputs) < 3:
+        return False
+    
+    # Check for diminishing improvements
+    recent_outputs = outputs[-3:]
+    content_lengths = []
+    
+    for output in recent_outputs:
+        if isinstance(output, IterationResult):
+            content_lengths.append(output.content_quality_score)
+        else:
+            content = output.content if hasattr(output, 'content') else str(output)
+            content_lengths.append(len(content.split()) / 1000)  # Normalize
+    
+    # Check if improvements are diminishing
+    if len(content_lengths) >= 3:
+        improvement_1 = content_lengths[1] - content_lengths[0]
+        improvement_2 = content_lengths[2] - content_lengths[1]
+        
+        # Convergence if improvement is very small
+        return abs(improvement_2) < 0.05 and improvement_2 < improvement_1 * 0.5
+    
+    return False
+
+def adaptive_termination(outputs) -> bool:
+    """Adaptive termination based on iteration analysis"""
+    if not outputs:
+        return False
+    
+    # Check latest output quality
+    latest = outputs[-1]
+    
+    if isinstance(latest, IterationResult):
+        # Structured assessment
+        if latest.confidence_level == "very_high" and latest.content_quality_score >= 0.9:
+            return True
+        
+        # Check for plateau in recent iterations
+        if len(outputs) >= 4:
+            recent_scores = [out.content_quality_score for out in outputs[-4:] if isinstance(out, IterationResult)]
+            if len(recent_scores) >= 3:
+                variance = max(recent_scores) - min(recent_scores)
+                return variance < 0.1  # Low variance indicates plateau
+    
+    # Fallback to iteration count and basic quality
+    if len(outputs) >= 5:
+        content = latest.content if hasattr(latest, 'content') else str(latest)
+        return len(content.split()) >= 600  # Good enough after 5 iterations
+    
+    return False
+
+# Custom loop processing functions
+def loop_progress_tracker(step_input: StepInput) -> StepOutput:
+    """Track and analyze loop progress throughout iterations"""
+    
+    # Access previous iterations
+    all_previous = step_input.get_all_previous_content()
+    
+    # Simulate iteration tracking (in real implementation, this would come from loop state)
+    iteration_data = {
+        "current_iteration": 3,  # Would be dynamic
+        "total_content_generated": len(all_previous),
+        "improvement_indicators": [],
+        "quality_progression": []
+    }
+    
+    # Analyze content progression
+    content_analysis = f"""
+    ## Loop Progress Tracking Report
+    
+    **Iteration Status**: 
+    - Current Iteration: {iteration_data['current_iteration']}
+    - Content Volume: {iteration_data['total_content_generated']} characters
+    - Processing Efficiency: {"Optimal" if iteration_data['total_content_generated'] > 2000 else "Developing"}
+    
+    **Quality Progression Analysis**:
+    - Content Growth: Consistent across iterations
+    - Depth Improvement: {"Excellent" if len(all_previous.split()) > 500 else "Good"}
+    - Convergence Indicators: {"Approaching optimal" if iteration_data['current_iteration'] > 2 else "Early stage"}
+    
+    **Iteration Optimization Insights**:
+    - Efficiency Score: {min(100, iteration_data['total_content_generated'] / 100):.1f}%
+    - Quality Trajectory: {"Upward trend" if len(all_previous) > 1000 else "Building momentum"}
+    - Termination Readiness: {"Near completion" if len(all_previous) > 3000 else "Continuing optimization"}
+    
+    **Loop Processing Summary**:
+    {all_previous[:400] if all_previous else "No previous iterations available"}...
+    """
+    
+    return StepOutput(content=content_analysis, success=True)
+
+def iteration_optimizer(step_input: StepInput) -> StepOutput:
+    """Optimize iteration strategy based on previous results"""
+    
+    previous_content = step_input.previous_step_content
+    message_context = step_input.message
+    
+    # Analyze previous iteration for optimization
+    optimization_strategy = {
+        "focus_areas": [],
+        "improvement_suggestions": [],
+        "efficiency_recommendations": []
+    }
+    
+    if previous_content:
+        content_str = str(previous_content)
+        
+        # Identify focus areas based on content analysis
+        if len(content_str.split()) < 200:
+            optimization_strategy["focus_areas"].append("Expand content depth")
+            
+        if "source" not in content_str.lower():
+            optimization_strategy["focus_areas"].append("Add credible sources")
+            
+        if not any(marker in content_str for marker in ["##", "**", "1."]):
+            optimization_strategy["focus_areas"].append("Improve structure")
+    
+    optimization_report = f"""
+    ## Iteration Optimization Strategy
+    
+    **Current Context**: {message_context}
+    
+    **Previous Iteration Analysis**:
+    - Content Volume: {len(str(previous_content).split()) if previous_content else 0} words
+    - Structure Quality: {"Good" if previous_content and any(marker in str(previous_content) for marker in ["##", "**"]) else "Needs improvement"}
+    - Source Integration: {"Present" if previous_content and "source" in str(previous_content).lower() else "Missing"}
+    
+    **Optimization Focus Areas**:
+    {chr(10).join(f"- {area}" for area in optimization_strategy["focus_areas"]) if optimization_strategy["focus_areas"] else "- Content quality is satisfactory"}
+    
+    **Next Iteration Recommendations**:
+    - Depth Enhancement: {"Focus on expanding key insights" if len(str(previous_content).split()) < 300 else "Maintain current depth"}
+    - Source Validation: {"Add authoritative sources" if "source" not in str(previous_content).lower() else "Continue source integration"}
+    - Structure Refinement: {"Improve formatting and organization" if not any(marker in str(previous_content) for marker in ["##", "**"]) else "Structure is adequate"}
+    
+    **Optimization Status**: Iteration strategy updated for improved performance
+    """
+    
+    return StepOutput(content=optimization_report, success=True)
+
+# Production loop workflow
+production_loop_workflow = Workflow(
+    name="Advanced Iterative Processing Pipeline",
+    description="Quality-driven iterative processing with convergence analysis",
+    steps=[
+        # Initial processing step
+        Step(
+            name="initial_assessment",
+            description="Initial assessment and planning",
+            agent=quality_assessor
+        ),
+        
+        # Main iterative loop with comprehensive end conditions
+        Loop(
+            name="iterative_research_loop",
+            description="Iterative research with quality optimization",
+            steps=[
+                Step(
+                    name="iteration_research",
+                    description="Conduct research iteration with improvement focus",
+                    agent=iterative_researcher
+                ),
+                Step(
+                    name="iteration_optimization",
+                    description="Optimize strategy for next iteration",
+                    executor=iteration_optimizer
+                )
+            ],
+            end_condition=comprehensive_quality_check,
+            max_iterations=5
+        ),
+        
+        # Progress tracking and analysis
+        Step(
+            name="progress_analysis",
+            description="Analyze loop progress and convergence patterns",
+            executor=loop_progress_tracker
+        ),
+        
+        # Final convergence analysis
+        Step(
+            name="convergence_analysis",
+            description="Comprehensive analysis of iteration convergence",
+            agent=convergence_analyzer
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="loop_workflows",
+        db_file="tmp/loop_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True,
+    workflow_session_state={"loop_tracking": True}
+)
+
+# Execute advanced loop workflow
+response = production_loop_workflow.run(
+    message="Develop a comprehensive analysis of sustainable energy adoption barriers, iteratively improving depth and quality until reaching publication-ready standards",
+    additional_data={
+        "quality_threshold": "high",
+        "convergence_monitoring": True,
+        "max_quality_score": 0.9,
+        "iteration_optimization": True
+    }
+)
+
+print(f"Loop workflow result: {response.content[:500]}...")
+```
+
+## Loop Pattern Variations
+
+### Quality-Driven Loops
+```python
+def quality_focused_end_condition(outputs) -> bool:
+    """End condition focused on content quality metrics"""
+    if not outputs:
+        return False
+    
+    latest = outputs[-1]
+    content = latest.content if hasattr(latest, 'content') else str(latest)
+    
+    # Quality metrics
+    word_count = len(content.split())
+    sentence_count = len(re.split(r'[.!?]+', content))
+    avg_sentence_length = word_count / max(sentence_count, 1)
+    
+    # Structure indicators
+    has_headers = bool(re.search(r'#+\s', content))
+    has_lists = bool(re.search(r'^\s*[-*]\s', content, re.MULTILINE))
+    has_emphasis = bool(re.search(r'\*\*.*\*\*', content))
+    
+    # Source indicators
+    has_citations = bool(re.search(r'(according to|study|research|source)', content.lower()))
+    
+    # Quality thresholds
+    quality_criteria = [
+        word_count >= 400,           # Adequate length
+        avg_sentence_length >= 10,   # Detailed sentences
+        has_headers,                 # Structured content
+        has_lists or has_emphasis,   # Formatted content
+        has_citations               # Referenced content
+    ]
+    
+    return sum(quality_criteria) >= 4  # High quality threshold
+
+# Quality-focused loop workflow
+quality_loop = Workflow(
+    name="Quality-Driven Loop",
+    steps=[
+        Loop(
+            name="quality_improvement_loop",
+            steps=[
+                Step(name="content_generation", agent=content_generator),
+                Step(name="quality_assessment", agent=quality_reviewer)
+            ],
+            end_condition=quality_focused_end_condition,
+            max_iterations=4
+        )
+    ]
+)
+```
+
+### Convergence-Based Loops
+```python
+def convergence_end_condition(outputs) -> bool:
+    """Terminate when iterations converge to similar results"""
+    if len(outputs) < 3:
+        return False
+    
+    # Compare last 3 iterations
+    recent_outputs = outputs[-3:]
+    content_similarity = []
+    
+    for i in range(len(recent_outputs) - 1):
+        content1 = str(recent_outputs[i]).lower()
+        content2 = str(recent_outputs[i + 1]).lower()
+        
+        # Simple similarity measure (common words)
+        words1 = set(content1.split())
+        words2 = set(content2.split())
+        
+        if words1 and words2:
+            similarity = len(words1.intersection(words2)) / len(words1.union(words2))
+            content_similarity.append(similarity)
+    
+    # Convergence if recent iterations are very similar
+    return len(content_similarity) > 0 and min(content_similarity) > 0.7
+
+# Convergence-based loop
+convergence_loop = Workflow(
+    name="Convergence-Based Loop",
+    steps=[
+        Loop(
+            name="convergence_loop",
+            steps=[iterative_agent],
+            end_condition=convergence_end_condition,
+            max_iterations=6
+        )
+    ]
+)
+```
+
+### Adaptive Loop Termination
+```python
+def adaptive_end_condition(outputs) -> bool:
+    """Adaptive termination based on multiple factors"""
+    if not outputs:
+        return False
+    
+    iteration_count = len(outputs)
+    latest_output = outputs[-1]
+    
+    # Early termination for exceptional quality
+    if iteration_count >= 2:
+        content = str(latest_output)
+        if len(content.split()) > 600 and "comprehensive" in content.lower():
+            return True
+    
+    # Standard termination criteria
+    if iteration_count >= 3:
+        content_length = len(str(latest_output))
+        return content_length > 1500
+    
+    # Maximum iteration safety
+    return iteration_count >= 5
+
+# Adaptive loop workflow
+adaptive_loop = Workflow(
+    name="Adaptive Loop Termination",
+    steps=[
+        Loop(
+            name="adaptive_processing_loop",
+            steps=[
+                adaptive_processor,
+                quality_checker
+            ],
+            end_condition=adaptive_end_condition,
+            max_iterations=5
+        )
+    ]
+)
+```
+
+## Advanced Loop Patterns
+
+### Loop with Parallel Processing
+```python
+def parallel_convergence_check(outputs) -> bool:
+    """Check convergence for parallel processing within loops"""
+    if len(outputs) < 2:
+        return False
+    
+    latest_output = outputs[-1]
+    
+    # Handle parallel outputs (dictionary format)
+    if isinstance(latest_output, dict):
+        total_content = sum(len(str(content)) for content in latest_output.values())
+        return total_content > 2000  # Combined threshold
+    
+    return len(str(latest_output)) > 800
+
+# Loop with parallel steps
+parallel_loop_workflow = Workflow(
+    name="Loop with Parallel Processing",
+    steps=[
+        Loop(
+            name="parallel_iteration_loop",
+            steps=[
+                Parallel(
+                    Step(name="research_branch", agent=researcher),
+                    Step(name="analysis_branch", agent=analyst),
+                    name="parallel_processing"
+                )
+            ],
+            end_condition=parallel_convergence_check,
+            max_iterations=3
+        ),
+        synthesis_agent
+    ]
+)
+```
+
+### Conditional Loop Processing
+```python
+from agno.workflow.v2 import Condition
+
+def needs_deeper_analysis(step_input: StepInput) -> bool:
+    """Check if deeper analysis loop is needed"""
+    content = step_input.previous_step_content or step_input.message
+    complexity_indicators = ["complex", "detailed", "comprehensive", "thorough"]
+    return any(indicator in str(content).lower() for indicator in complexity_indicators)
+
+def deep_analysis_end_condition(outputs) -> bool:
+    """End condition for deep analysis loop"""
+    if not outputs:
+        return False
+    
+    latest = outputs[-1]
+    content = str(latest)
+    
+    # Deep analysis criteria
+    return (len(content.split()) > 700 and 
+            "analysis" in content.lower() and
+            "recommendation" in content.lower())
+
+# Conditional loop workflow
+conditional_loop_workflow = Workflow(
+    name="Conditional Loop Processing",
+    steps=[
+        initial_processor,
+        Condition(
+            name="deep_analysis_check",
+            evaluator=needs_deeper_analysis,
+            steps=[
+                Loop(
+                    name="deep_analysis_loop",
+                    steps=[deep_analyst],
+                    end_condition=deep_analysis_end_condition,
+                    max_iterations=3
+                )
+            ]
+        ),
+        final_processor
+    ]
+)
+```
+
+### Loop State Management
+```python
+def stateful_loop_processor(step_input: StepInput) -> StepOutput:
+    """Process loop iterations with state management"""
+    
+    # Access workflow session state for loop tracking
+    session_state = getattr(step_input, 'workflow_session_state', {})
+    
+    # Initialize loop state if needed
+    if 'loop_state' not in session_state:
+        session_state['loop_state'] = {
+            'iterations': 0,
+            'quality_scores': [],
+            'improvement_areas': [],
+            'convergence_data': []
+        }
+    
+    loop_state = session_state['loop_state']
+    loop_state['iterations'] += 1
+    
+    # Process current iteration
+    current_content = step_input.previous_step_content or step_input.message
+    content_quality = len(str(current_content).split()) / 100  # Simple quality metric
+    
+    loop_state['quality_scores'].append(content_quality)
+    
+    # Generate improvement recommendations based on state
+    if loop_state['iterations'] > 1:
+        recent_improvement = loop_state['quality_scores'][-1] - loop_state['quality_scores'][-2]
+        if recent_improvement < 0.5:
+            loop_state['improvement_areas'].append(f"Iteration {loop_state['iterations']}: Low improvement")
+    
+    state_report = f"""
+    ## Stateful Loop Processing Report
+    
+    **Loop State Summary**:
+    - Current Iteration: {loop_state['iterations']}
+    - Quality Progression: {loop_state['quality_scores']}
+    - Improvement Areas: {len(loop_state['improvement_areas'])} identified
+    
+    **Current Iteration Analysis**:
+    - Content Quality Score: {content_quality:.2f}
+    - Quality Trend: {"Improving" if len(loop_state['quality_scores']) > 1 and loop_state['quality_scores'][-1] > loop_state['quality_scores'][-2] else "Stable"}
+    
+    **State-Based Recommendations**:
+    - Continue iterations: {"Yes" if content_quality < 8.0 else "Quality threshold reached"}
+    - Focus areas: {"Content depth" if content_quality < 5.0 else "Quality refinement"}
+    
+    **Processed Content**:
+    {str(current_content)[:300]}...
+    """
+    
+    return StepOutput(content=state_report, success=True)
+
+def stateful_end_condition(outputs) -> bool:
+    """End condition that considers loop state"""
+    # This would access session state in real implementation
+    # For demo, using simple content-based logic
+    if not outputs or len(outputs) < 2:
+        return False
+    
+    latest = outputs[-1]
+    content = str(latest)
+    
+    return "Quality threshold reached" in content
+```
+
+## Speed Tips
+
+### Quick Loop Factory
+```python
+def quick_loop(agent: Agent, max_iter: int = 3, quality_threshold: int = 300):
+    """Quickly create a quality-based loop"""
+    
+    def simple_end_condition(outputs) -> bool:
+        if not outputs:
+            return False
+        latest = outputs[-1]
+        content = latest.content if hasattr(latest, 'content') else str(latest)
+        return len(content.split()) >= quality_threshold
+    
+    return Loop(
+        name="quick_loop",
+        steps=[agent],
+        end_condition=simple_end_condition,
+        max_iterations=max_iter
+    )
+
+# Usage
+researcher_loop = quick_loop(researcher_agent, max_iter=4, quality_threshold=400)
+analyst_loop = quick_loop(analyst_agent, max_iter=3, quality_threshold=500)
+```
+
+### Loop Template Library
+```python
+class LoopTemplates:
+    """Pre-configured loop templates"""
+    
+    @staticmethod
+    def research_loop(agent: Agent, word_target: int = 500):
+        def research_end_condition(outputs) -> bool:
+            if not outputs:
+                return False
+            content = str(outputs[-1])
+            return len(content.split()) >= word_target
+        
+        return Loop(
+            name="research_loop",
+            steps=[agent],
+            end_condition=research_end_condition,
+            max_iterations=4
+        )
+    
+    @staticmethod
+    def quality_improvement_loop(agent: Agent, quality_agent: Agent):
+        def quality_end_condition(outputs) -> bool:
+            if len(outputs) < 2:
+                return False
+            latest = str(outputs[-1])
+            return ("excellent" in latest.lower() or 
+                    "high quality" in latest.lower() or
+                    len(latest.split()) > 600)
+        
+        return Loop(
+            name="quality_loop",
+            steps=[agent, quality_agent],
+            end_condition=quality_end_condition,
+            max_iterations=3
+        )
+    
+    @staticmethod
+    def convergence_loop(agent: Agent, similarity_threshold: float = 0.8):
+        def convergence_condition(outputs) -> bool:
+            if len(outputs) < 3:
+                return False
+            
+            recent = [str(out) for out in outputs[-2:]]
+            words1, words2 = set(recent[0].split()), set(recent[1].split())
+            
+            if words1 and words2:
+                similarity = len(words1 & words2) / len(words1 | words2)
+                return similarity >= similarity_threshold
+            
+            return False
+        
+        return Loop(
+            name="convergence_loop",
+            steps=[agent],
+            end_condition=convergence_condition,
+            max_iterations=5
+        )
+
+# Usage
+templates = LoopTemplates()
+research_loop = templates.research_loop(researcher_agent, word_target=600)
+quality_loop = templates.quality_improvement_loop(writer_agent, editor_agent)
+```
+
+## Common Pitfalls
+
+### End Condition Logic Errors
+```python
+# ❌ DON'T: Create end conditions that never terminate
+def bad_end_condition(outputs) -> bool:
+    return False  # Never terminates - will hit max_iterations
+
+# ❌ DON'T: Access outputs without checking if they exist
+def bad_output_access(outputs) -> bool:
+    return len(outputs[0].content) > 100  # May cause IndexError
+
+# ✅ DO: Create reliable end conditions with bounds
+def good_end_condition(outputs) -> bool:
+    if not outputs:
+        return False
+    
+    latest = outputs[-1]
+    content = latest.content if hasattr(latest, 'content') else str(latest)
+    
+    # Multiple termination criteria
+    return (len(content.split()) > 400 or
+            len(outputs) >= 3)  # Safety bound
+```
+
+### Loop State Management Issues
+```python
+# ❌ DON'T: Assume loop state persists between workflow runs
+def bad_state_access():
+    loop_iterations = global_loop_counter  # Global state is unreliable
+
+# ✅ DO: Use proper session state for loop tracking
+def good_state_management(step_input: StepInput) -> StepOutput:
+    session_state = getattr(step_input, 'workflow_session_state', {})
+    loop_data = session_state.setdefault('loop_data', {'iterations': 0})
+    
+    loop_data['iterations'] += 1
+    return StepOutput(content=f"Iteration {loop_data['iterations']}")
+```
+
+### Performance Issues
+```python
+# ❌ DON'T: Create loops without max_iterations safety
+loop_without_safety = Loop(
+    steps=[agent],
+    end_condition=unreliable_condition
+    # Missing max_iterations - could run forever
+)
+
+# ✅ DO: Always include max_iterations as safety bound
+safe_loop = Loop(
+    steps=[agent],
+    end_condition=end_condition,
+    max_iterations=5  # Safety bound prevents infinite loops
+)
+```
+
+## Best Practices Summary
+
+- **Safety Bounds**: Always set max_iterations to prevent infinite loops
+- **Reliable End Conditions**: Create end conditions that will eventually terminate
+- **State Management**: Use workflow session state for loop iteration tracking
+- **Quality Metrics**: Implement meaningful quality assessment for loop termination
+- **Performance**: Monitor loop performance and optimize iteration efficiency
+- **Error Handling**: Handle cases where loop steps may fail during iterations
+- **Convergence Detection**: Implement convergence detection for optimization loops
+- **Documentation**: Clearly document loop termination criteria and expected behavior
+- **Testing**: Test loops with various inputs to ensure proper termination
+
+## References
+
+- [Loop API](/docs/api/workflows_2/loop.md)
+- [Iteration Patterns](/docs/workflows_2/iteration_patterns.md)
+- [Quality Assessment](/docs/workflows_2/quality_assessment.md)
+- [Performance Optimization](/docs/workflows_2/loop_optimization.md)

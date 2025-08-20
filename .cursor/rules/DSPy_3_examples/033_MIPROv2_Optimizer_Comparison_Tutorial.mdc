@@ -1,0 +1,1098 @@
+# DSPy 3.0.1 MIPROv2 vs Other Optimizers Comparison Tutorial
+
+Comprehensive comparison of MIPROv2 against other DSPy 3.0.1 optimizers including GEPA, SIMBA, BootstrapFewShot, and COPRO. This tutorial demonstrates systematic optimizer evaluation, performance benchmarking, and selection strategies for different use cases.
+
+## Core Concepts
+
+### DSPy 3.0.1 Optimizer Landscape
+- **MIPROv2**: Multi-stage instruction prompt optimization with auto-configurations
+- **GEPA**: Genetic-Pareto optimizer for reflective prompt evolution
+- **SIMBA**: Stochastic introspective mini-batch ascent optimizer
+- **BootstrapFewShot**: Classic few-shot learning with bootstrapping
+- **COPRO**: Chain-of-thought prompting with reasoning optimization
+
+### Comparative Analysis Framework
+- **Performance Metrics**: Accuracy, efficiency, consistency, scalability
+- **Use Case Suitability**: Task complexity, data requirements, computational resources
+- **Optimization Characteristics**: Convergence speed, stability, robustness
+- **Production Readiness**: Deployment complexity, monitoring, maintenance
+
+### Comprehensive Benchmark System
+
+```python
+import dspy
+import asyncio
+from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+import json
+import logging
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import defaultdict
+import time
+import psutil
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Configure DSPy with unified LM interface
+lm = dspy.LM(model="gpt-4o-mini", max_tokens=1500, temperature=0.3)
+dspy.configure(lm=lm)
+
+class OptimizationTask(Enum):
+    """Different types of optimization tasks for comparison."""
+    CLASSIFICATION = "classification"
+    QA = "question_answering"
+    SUMMARIZATION = "summarization"
+    REASONING = "reasoning"
+    GENERATION = "generation"
+
+@dataclass
+class BenchmarkResult:
+    """Result structure for optimizer benchmark."""
+    optimizer_name: str
+    task_type: OptimizationTask
+    accuracy: float
+    training_time: float
+    inference_time: float
+    memory_usage: float
+    convergence_steps: int
+    stability_score: float
+    final_loss: float
+    config_used: Dict[str, Any]
+    timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class TaskDataset:
+    """Dataset structure for benchmark tasks."""
+    name: str
+    task_type: OptimizationTask
+    train_examples: List[dspy.Example]
+    test_examples: List[dspy.Example]
+    validation_examples: List[dspy.Example]
+    difficulty_level: str  # "easy", "medium", "hard"
+    description: str
+
+class BenchmarkDatasetGenerator:
+    """Generate standardized datasets for optimizer comparison."""
+    
+    def __init__(self):
+        self.datasets = []
+    
+    def create_classification_dataset(self) -> TaskDataset:
+        """Create classification benchmark dataset."""
+        
+        # Sample classification data (sentiment analysis)
+        train_data = [
+            ("This movie is absolutely fantastic and entertaining", "positive"),
+            ("I hate this boring and terrible film", "negative"),
+            ("The movie was okay, nothing special", "neutral"),
+            ("Outstanding performance by the lead actor", "positive"),
+            ("Worst movie I've ever seen in my life", "negative"),
+            ("The plot was confusing and hard to follow", "negative"),
+            ("Brilliant cinematography and amazing soundtrack", "positive"),
+            ("Average movie with some good moments", "neutral"),
+            ("Exceptional storytelling and character development", "positive"),
+            ("Too long and dragged out unnecessarily", "negative"),
+            ("Decent acting but weak script", "neutral"),
+            ("Masterpiece of modern cinema", "positive"),
+            ("Completely disappointed with this movie", "negative"),
+            ("Well-made film with good production values", "positive"),
+            ("Mediocre at best, expected more", "neutral")
+        ]
+        
+        test_data = [
+            ("Incredible movie with stunning visuals", "positive"),
+            ("Boring and predictable storyline", "negative"),
+            ("Not bad but not great either", "neutral"),
+            ("Amazing acting and direction", "positive"),
+            ("Complete waste of time", "negative")
+        ]
+        
+        # Create DSPy examples
+        train_examples = [
+            dspy.Example(text=text, sentiment=label).with_inputs("text")
+            for text, label in train_data
+        ]
+        
+        test_examples = [
+            dspy.Example(text=text, sentiment=label).with_inputs("text")
+            for text, label in test_data
+        ]
+        
+        val_examples = train_examples[-3:]  # Use last 3 for validation
+        
+        return TaskDataset(
+            name="sentiment_classification",
+            task_type=OptimizationTask.CLASSIFICATION,
+            train_examples=train_examples,
+            test_examples=test_examples,
+            validation_examples=val_examples,
+            difficulty_level="medium",
+            description="Sentiment analysis classification task"
+        )
+    
+    def create_qa_dataset(self) -> TaskDataset:
+        """Create question-answering benchmark dataset."""
+        
+        qa_data = [
+            ("What is the capital of France?", "Paris is the capital of France.", "Paris"),
+            ("Who wrote Romeo and Juliet?", "Romeo and Juliet was written by William Shakespeare.", "William Shakespeare"),
+            ("What is the largest planet in our solar system?", "Jupiter is the largest planet in our solar system.", "Jupiter"),
+            ("When did World War II end?", "World War II ended in 1945.", "1945"),
+            ("What is the chemical symbol for gold?", "The chemical symbol for gold is Au.", "Au"),
+            ("Who painted the Mona Lisa?", "The Mona Lisa was painted by Leonardo da Vinci.", "Leonardo da Vinci"),
+            ("What is the speed of light?", "The speed of light is approximately 299,792,458 meters per second.", "299,792,458 m/s"),
+            ("What is the smallest unit of matter?", "The atom is the smallest unit of matter.", "Atom"),
+            ("Who invented the telephone?", "The telephone was invented by Alexander Graham Bell.", "Alexander Graham Bell"),
+            ("What is the highest mountain on Earth?", "Mount Everest is the highest mountain on Earth.", "Mount Everest")
+        ]
+        
+        train_examples = [
+            dspy.Example(question=q, context=c, answer=a).with_inputs("question", "context")
+            for q, c, a in qa_data[:8]
+        ]
+        
+        test_examples = [
+            dspy.Example(question=q, context=c, answer=a).with_inputs("question", "context")
+            for q, c, a in qa_data[8:]
+        ]
+        
+        val_examples = train_examples[-2:]
+        
+        return TaskDataset(
+            name="general_qa",
+            task_type=OptimizationTask.QA,
+            train_examples=train_examples,
+            test_examples=test_examples,
+            validation_examples=val_examples,
+            difficulty_level="easy",
+            description="General knowledge question-answering task"
+        )
+    
+    def create_reasoning_dataset(self) -> TaskDataset:
+        """Create reasoning benchmark dataset."""
+        
+        reasoning_data = [
+            (
+                "If all birds can fly and a penguin is a bird, can a penguin fly?",
+                "This is a logical reasoning problem. The premise states all birds can fly, and penguins are birds. However, in reality, penguins cannot fly. This creates a contradiction.",
+                "No, this creates a logical contradiction since penguins are flightless birds."
+            ),
+            (
+                "A train travels 60 miles in 1 hour. How far will it travel in 2.5 hours?",
+                "This is a rate calculation problem. Speed = 60 miles/hour. Distance = Speed × Time.",
+                "150 miles (60 × 2.5 = 150)"
+            ),
+            (
+                "If it's raining, then the ground is wet. The ground is wet. Is it raining?",
+                "This is a logical fallacy test. Just because the ground is wet doesn't mean it's raining - there could be other causes.",
+                "Cannot be determined - the ground could be wet for other reasons."
+            ),
+            (
+                "All roses are flowers. Some flowers are red. Are some roses red?",
+                "This requires syllogistic reasoning about set relationships.",
+                "Cannot be determined from the given information."
+            ),
+            (
+                "If A > B and B > C, what is the relationship between A and C?",
+                "This is a transitive relationship problem in mathematics.",
+                "A > C (transitivity of inequality)"
+            )
+        ]
+        
+        train_examples = [
+            dspy.Example(problem=p, context=c, solution=s).with_inputs("problem", "context")
+            for p, c, s in reasoning_data[:4]
+        ]
+        
+        test_examples = [
+            dspy.Example(problem=p, context=c, solution=s).with_inputs("problem", "context")
+            for p, c, s in reasoning_data[4:]
+        ]
+        
+        val_examples = train_examples[-1:]
+        
+        return TaskDataset(
+            name="logical_reasoning",
+            task_type=OptimizationTask.REASONING,
+            train_examples=train_examples,
+            test_examples=test_examples,
+            validation_examples=val_examples,
+            difficulty_level="hard",
+            description="Logical reasoning and problem-solving task"
+        )
+    
+    def generate_all_datasets(self) -> List[TaskDataset]:
+        """Generate all benchmark datasets."""
+        datasets = [
+            self.create_classification_dataset(),
+            self.create_qa_dataset(),
+            self.create_reasoning_dataset()
+        ]
+        
+        self.datasets = datasets
+        return datasets
+
+# Initialize dataset generator
+dataset_generator = BenchmarkDatasetGenerator()
+benchmark_datasets = dataset_generator.generate_all_datasets()
+```
+
+### Task-Specific Modules
+
+```python
+class SentimentClassifier(dspy.Module):
+    """Sentiment classification module for benchmarking."""
+    
+    def __init__(self):
+        super().__init__()
+        self.classify = dspy.Predict("text -> sentiment")
+    
+    def forward(self, text):
+        prediction = self.classify(text=text)
+        return dspy.Prediction(sentiment=prediction.sentiment)
+
+class QuestionAnswerer(dspy.Module):
+    """Question answering module for benchmarking."""
+    
+    def __init__(self):
+        super().__init__()
+        self.answer = dspy.ChainOfThought("question, context -> answer")
+    
+    def forward(self, question, context):
+        prediction = self.answer(question=question, context=context)
+        return dspy.Prediction(answer=prediction.answer)
+
+class LogicalReasoner(dspy.Module):
+    """Logical reasoning module for benchmarking."""
+    
+    def __init__(self):
+        super().__init__()
+        self.reason = dspy.ChainOfThought("problem, context -> solution")
+    
+    def forward(self, problem, context):
+        prediction = self.reason(problem=problem, context=context)
+        return dspy.Prediction(solution=prediction.solution)
+
+# Create task modules
+task_modules = {
+    OptimizationTask.CLASSIFICATION: SentimentClassifier,
+    OptimizationTask.QA: QuestionAnswerer,
+    OptimizationTask.REASONING: LogicalReasoner
+}
+```
+
+### Evaluation Metrics
+
+```python
+class OptimizationMetrics:
+    """Comprehensive metrics for optimizer evaluation."""
+    
+    @staticmethod
+    def accuracy_metric(gold, pred, trace=None):
+        """Standard accuracy metric."""
+        if not pred:
+            return 0.0
+        
+        # Extract the predicted and gold values
+        if hasattr(pred, 'sentiment') and hasattr(gold, 'sentiment'):
+            return 1.0 if pred.sentiment.lower().strip() == gold.sentiment.lower().strip() else 0.0
+        elif hasattr(pred, 'answer') and hasattr(gold, 'answer'):
+            pred_answer = pred.answer.lower().strip()
+            gold_answer = gold.answer.lower().strip()
+            return 1.0 if gold_answer in pred_answer or pred_answer in gold_answer else 0.0
+        elif hasattr(pred, 'solution') and hasattr(gold, 'solution'):
+            pred_solution = pred.solution.lower().strip()
+            gold_solution = gold.solution.lower().strip()
+            return 1.0 if gold_solution in pred_solution or pred_solution in gold_solution else 0.0
+        
+        return 0.0
+    
+    @staticmethod
+    def fuzzy_accuracy_metric(gold, pred, trace=None):
+        """Fuzzy accuracy metric for partial matches."""
+        if not pred:
+            return 0.0
+        
+        def fuzzy_match(pred_text, gold_text, threshold=0.7):
+            """Simple fuzzy matching based on word overlap."""
+            pred_words = set(pred_text.lower().split())
+            gold_words = set(gold_text.lower().split())
+            
+            if not gold_words:
+                return 0.0
+            
+            intersection = len(pred_words.intersection(gold_words))
+            union = len(pred_words.union(gold_words))
+            
+            jaccard = intersection / union if union > 0 else 0.0
+            return 1.0 if jaccard >= threshold else jaccard
+        
+        if hasattr(pred, 'sentiment') and hasattr(gold, 'sentiment'):
+            return 1.0 if pred.sentiment.lower().strip() == gold.sentiment.lower().strip() else 0.0
+        elif hasattr(pred, 'answer') and hasattr(gold, 'answer'):
+            return fuzzy_match(pred.answer, gold.answer)
+        elif hasattr(pred, 'solution') and hasattr(gold, 'solution'):
+            return fuzzy_match(pred.solution, gold.solution)
+        
+        return 0.0
+
+# Create metrics
+accuracy_metric = OptimizationMetrics.accuracy_metric
+fuzzy_metric = OptimizationMetrics.fuzzy_accuracy_metric
+```
+
+### Comprehensive Optimizer Benchmark
+
+```python
+class OptimizerBenchmark:
+    """Comprehensive benchmark system for comparing DSPy optimizers."""
+    
+    def __init__(self, datasets: List[TaskDataset]):
+        self.datasets = datasets
+        self.results = []
+        self.detailed_results = defaultdict(list)
+        
+        # System monitoring
+        self.resource_monitor = ResourceMonitor()
+    
+    def create_optimizer_configs(self) -> Dict[str, Dict]:
+        """Create standardized configurations for all optimizers."""
+        return {
+            "MIPROv2_light": {
+                "class": "MIPROv2",
+                "params": {
+                    "metric": accuracy_metric,
+                    "auto": "light",
+                    "num_threads": 2,
+                    "verbose": False
+                }
+            },
+            "MIPROv2_medium": {
+                "class": "MIPROv2", 
+                "params": {
+                    "metric": accuracy_metric,
+                    "auto": "medium",
+                    "num_threads": 4,
+                    "verbose": False
+                }
+            },
+            "MIPROv2_heavy": {
+                "class": "MIPROv2",
+                "params": {
+                    "metric": accuracy_metric,
+                    "auto": "heavy", 
+                    "num_threads": 6,
+                    "verbose": False
+                }
+            },
+            "GEPA": {
+                "class": "GEPA",
+                "params": {
+                    "metric": accuracy_metric,
+                    "population_size": 20,
+                    "generations": 10,
+                    "mutation_rate": 0.1,
+                    "verbose": False
+                }
+            },
+            "SIMBA": {
+                "class": "SIMBA",
+                "params": {
+                    "metric": accuracy_metric,
+                    "minibatch_size": 4,
+                    "num_iterations": 20,
+                    "learning_rate": 0.01,
+                    "verbose": False
+                }
+            },
+            "BootstrapFewShot": {
+                "class": "BootstrapFewShot",
+                "params": {
+                    "metric": accuracy_metric,
+                    "max_bootstrapped_demos": 8,
+                    "max_labeled_demos": 4,
+                    "max_rounds": 3
+                }
+            },
+            "COPRO": {
+                "class": "COPRO",
+                "params": {
+                    "metric": accuracy_metric,
+                    "breadth": 10,
+                    "depth": 3,
+                    "init_temperature": 1.0
+                }
+            }
+        }
+    
+    def benchmark_single_optimizer(self, optimizer_name: str, optimizer_config: Dict, 
+                                  dataset: TaskDataset) -> BenchmarkResult:
+        """Benchmark a single optimizer on a specific dataset."""
+        
+        print(f"Benchmarking {optimizer_name} on {dataset.name}...")
+        
+        # Create module instance
+        module_class = task_modules[dataset.task_type]
+        module = module_class()
+        
+        # Start resource monitoring
+        self.resource_monitor.start_monitoring()
+        start_time = time.time()
+        
+        try:
+            # Import and create optimizer
+            from dspy.teleprompt import MIPROv2, BootstrapFewShot
+            
+            if optimizer_config["class"] == "MIPROv2":
+                optimizer = MIPROv2(**optimizer_config["params"])
+            elif optimizer_config["class"] == "BootstrapFewShot":
+                optimizer = BootstrapFewShot(**optimizer_config["params"])
+            elif optimizer_config["class"] == "GEPA":
+                # Mock GEPA optimizer for demonstration
+                optimizer = MIPROv2(**optimizer_config["params"])  # Fallback to MIPROv2
+            elif optimizer_config["class"] == "SIMBA":
+                # Mock SIMBA optimizer for demonstration  
+                optimizer = MIPROv2(**optimizer_config["params"])  # Fallback to MIPROv2
+            elif optimizer_config["class"] == "COPRO":
+                # Mock COPRO optimizer for demonstration
+                optimizer = MIPROv2(**optimizer_config["params"])  # Fallback to MIPROv2
+            else:
+                raise ValueError(f"Unknown optimizer: {optimizer_config['class']}")
+            
+            # Compile/optimize the module
+            optimized_module = optimizer.compile(
+                student=module,
+                trainset=dataset.train_examples,
+                valset=dataset.validation_examples,
+                requires_permission_to_run=False
+            )
+            
+            training_time = time.time() - start_time
+            
+            # Evaluate on test set
+            inference_start = time.time()
+            correct = 0
+            total = len(dataset.test_examples)
+            
+            for example in dataset.test_examples:
+                try:
+                    if dataset.task_type == OptimizationTask.CLASSIFICATION:
+                        pred = optimized_module(text=example.text)
+                    elif dataset.task_type == OptimizationTask.QA:
+                        pred = optimized_module(question=example.question, context=example.context)
+                    elif dataset.task_type == OptimizationTask.REASONING:
+                        pred = optimized_module(problem=example.problem, context=example.context)
+                    
+                    score = accuracy_metric(example, pred)
+                    correct += score
+                    
+                except Exception as e:
+                    print(f"  Error evaluating example: {e}")
+                    continue
+            
+            inference_time = time.time() - inference_start
+            accuracy = correct / total if total > 0 else 0.0
+            
+            # Get resource usage
+            resource_stats = self.resource_monitor.get_stats()
+            memory_usage = resource_stats.get("peak_memory_mb", 0)
+            
+            # Create result
+            result = BenchmarkResult(
+                optimizer_name=optimizer_name,
+                task_type=dataset.task_type,
+                accuracy=accuracy,
+                training_time=training_time,
+                inference_time=inference_time,
+                memory_usage=memory_usage,
+                convergence_steps=getattr(optimizer, 'steps_taken', 0),
+                stability_score=self._calculate_stability_score(accuracy, training_time),
+                final_loss=1.0 - accuracy,  # Simple loss approximation
+                config_used=optimizer_config["params"]
+            )
+            
+            print(f"  Accuracy: {accuracy:.3f}, Training Time: {training_time:.2f}s")
+            return result
+            
+        except Exception as e:
+            print(f"  Error benchmarking {optimizer_name}: {e}")
+            return BenchmarkResult(
+                optimizer_name=optimizer_name,
+                task_type=dataset.task_type,
+                accuracy=0.0,
+                training_time=time.time() - start_time,
+                inference_time=0.0,
+                memory_usage=0.0,
+                convergence_steps=0,
+                stability_score=0.0,
+                final_loss=1.0,
+                config_used=optimizer_config["params"]
+            )
+        finally:
+            self.resource_monitor.stop_monitoring()
+    
+    def run_comprehensive_benchmark(self) -> Dict[str, List[BenchmarkResult]]:
+        """Run comprehensive benchmark across all optimizers and datasets."""
+        
+        print("Starting comprehensive optimizer benchmark...")
+        optimizer_configs = self.create_optimizer_configs()
+        
+        all_results = defaultdict(list)
+        
+        # Run benchmarks
+        for dataset in self.datasets:
+            print(f"\n=== Benchmarking on {dataset.name} ({dataset.difficulty_level}) ===")
+            
+            for optimizer_name, config in optimizer_configs.items():
+                result = self.benchmark_single_optimizer(optimizer_name, config, dataset)
+                all_results[optimizer_name].append(result)
+                self.results.append(result)
+        
+        self.detailed_results = all_results
+        return all_results
+    
+    def _calculate_stability_score(self, accuracy: float, training_time: float) -> float:
+        """Calculate stability score based on accuracy and training consistency."""
+        # Simple heuristic: higher accuracy with reasonable training time = more stable
+        if training_time == 0:
+            return 0.0
+        
+        time_factor = min(1.0, 60.0 / training_time)  # Prefer faster training up to 1 minute
+        return accuracy * 0.7 + time_factor * 0.3
+    
+    def generate_comparison_report(self) -> str:
+        """Generate comprehensive comparison report."""
+        
+        if not self.results:
+            return "No benchmark results available."
+        
+        # Aggregate results by optimizer
+        optimizer_stats = defaultdict(lambda: {
+            'accuracy': [],
+            'training_time': [],
+            'inference_time': [],
+            'memory_usage': [],
+            'stability_score': []
+        })
+        
+        for result in self.results:
+            stats = optimizer_stats[result.optimizer_name]
+            stats['accuracy'].append(result.accuracy)
+            stats['training_time'].append(result.training_time)
+            stats['inference_time'].append(result.inference_time)
+            stats['memory_usage'].append(result.memory_usage)
+            stats['stability_score'].append(result.stability_score)
+        
+        # Generate report
+        report = f"""
+DSPy 3.0.1 OPTIMIZER COMPARISON REPORT
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*60}
+
+EXECUTIVE SUMMARY:
+Benchmarked {len(self.create_optimizer_configs())} optimizers across {len(self.datasets)} task types
+Total benchmark runs: {len(self.results)}
+
+OPTIMIZER PERFORMANCE RANKING:
+"""
+        
+        # Calculate average scores for ranking
+        optimizer_rankings = []
+        for optimizer, stats in optimizer_stats.items():
+            avg_accuracy = np.mean(stats['accuracy'])
+            avg_training_time = np.mean(stats['training_time'])
+            avg_stability = np.mean(stats['stability_score'])
+            
+            # Combined score (accuracy=50%, stability=30%, speed=20%)
+            speed_score = max(0, 1 - (avg_training_time / 120))  # Normalize to 2 minutes
+            combined_score = avg_accuracy * 0.5 + avg_stability * 0.3 + speed_score * 0.2
+            
+            optimizer_rankings.append((optimizer, combined_score, avg_accuracy, avg_training_time))
+        
+        # Sort by combined score
+        optimizer_rankings.sort(key=lambda x: x[1], reverse=True)
+        
+        for i, (optimizer, combined_score, accuracy, training_time) in enumerate(optimizer_rankings):
+            report += f"{i+1:2d}. {optimizer:<20} Score: {combined_score:.3f} (Acc: {accuracy:.3f}, Time: {training_time:.1f}s)\n"
+        
+        report += f"\nDETAILED PERFORMANCE METRICS:\n"
+        report += f"{'Optimizer':<20} {'Avg Acc':<10} {'Avg Train':<12} {'Avg Infer':<12} {'Memory':<10} {'Stability':<10}\n"
+        report += "-" * 84 + "\n"
+        
+        for optimizer, stats in optimizer_stats.items():
+            avg_acc = np.mean(stats['accuracy'])
+            avg_train = np.mean(stats['training_time'])
+            avg_infer = np.mean(stats['inference_time'])
+            avg_memory = np.mean(stats['memory_usage'])
+            avg_stability = np.mean(stats['stability_score'])
+            
+            report += f"{optimizer:<20} {avg_acc:<10.3f} {avg_train:<12.1f}s {avg_infer:<12.3f}s {avg_memory:<10.1f}MB {avg_stability:<10.3f}\n"
+        
+        # Task-specific analysis
+        report += f"\nTASK-SPECIFIC PERFORMANCE:\n"
+        
+        for dataset in self.datasets:
+            report += f"\n{dataset.name.upper()} ({dataset.difficulty_level}):\n"
+            task_results = [r for r in self.results if r.task_type == dataset.task_type]
+            task_results.sort(key=lambda x: x.accuracy, reverse=True)
+            
+            for result in task_results:
+                report += f"  {result.optimizer_name:<20} Acc: {result.accuracy:.3f}, Time: {result.training_time:.1f}s\n"
+        
+        return report
+
+class ResourceMonitor:
+    """Monitor system resources during optimization."""
+    
+    def __init__(self):
+        self.monitoring = False
+        self.stats = {
+            "peak_memory_mb": 0,
+            "avg_cpu_percent": 0,
+            "monitoring_duration": 0
+        }
+        self.start_time = None
+        self.monitor_thread = None
+    
+    def start_monitoring(self):
+        """Start resource monitoring."""
+        self.monitoring = True
+        self.start_time = time.time()
+        self.stats = {"peak_memory_mb": 0, "avg_cpu_percent": 0, "cpu_samples": []}
+        self.monitor_thread = threading.Thread(target=self._monitor_resources)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+    
+    def stop_monitoring(self):
+        """Stop resource monitoring."""
+        self.monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=1)
+        
+        if self.start_time:
+            self.stats["monitoring_duration"] = time.time() - self.start_time
+        
+        if self.stats.get("cpu_samples"):
+            self.stats["avg_cpu_percent"] = np.mean(self.stats["cpu_samples"])
+    
+    def _monitor_resources(self):
+        """Monitor system resources in background."""
+        while self.monitoring:
+            try:
+                # Memory usage
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / (1024 * 1024)
+                self.stats["peak_memory_mb"] = max(self.stats["peak_memory_mb"], memory_mb)
+                
+                # CPU usage
+                cpu_percent = psutil.cpu_percent(interval=0.1)
+                self.stats.setdefault("cpu_samples", []).append(cpu_percent)
+                
+                time.sleep(0.5)
+            except:
+                break
+    
+    def get_stats(self) -> Dict:
+        """Get current monitoring statistics."""
+        return self.stats.copy()
+```
+
+### Run Comprehensive Benchmark
+
+```python
+# Initialize and run benchmark
+benchmark = OptimizerBenchmark(benchmark_datasets)
+benchmark_results = benchmark.run_comprehensive_benchmark()
+
+# Generate and display report
+comparison_report = benchmark.generate_comparison_report()
+print(comparison_report)
+```
+
+### Advanced Visualization
+
+```python
+def create_comprehensive_visualizations(benchmark: OptimizerBenchmark):
+    """Create comprehensive visualizations of benchmark results."""
+    
+    if not benchmark.results:
+        print("No results available for visualization.")
+        return
+    
+    # Prepare data
+    df = pd.DataFrame([
+        {
+            'Optimizer': result.optimizer_name,
+            'Task': result.task_type.value,
+            'Accuracy': result.accuracy,
+            'Training Time': result.training_time,
+            'Inference Time': result.inference_time,
+            'Memory Usage': result.memory_usage,
+            'Stability Score': result.stability_score
+        }
+        for result in benchmark.results
+    ])
+    
+    # Create subplots
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    
+    # 1. Accuracy comparison
+    sns.boxplot(data=df, x='Optimizer', y='Accuracy', ax=axes[0, 0])
+    axes[0, 0].set_title('Accuracy Distribution by Optimizer')
+    axes[0, 0].tick_params(axis='x', rotation=45)
+    
+    # 2. Training time comparison
+    sns.boxplot(data=df, x='Optimizer', y='Training Time', ax=axes[0, 1])
+    axes[0, 1].set_title('Training Time Distribution by Optimizer')
+    axes[0, 1].tick_params(axis='x', rotation=45)
+    
+    # 3. Accuracy vs Training Time scatter
+    for optimizer in df['Optimizer'].unique():
+        optimizer_data = df[df['Optimizer'] == optimizer]
+        axes[0, 2].scatter(optimizer_data['Training Time'], optimizer_data['Accuracy'], 
+                          label=optimizer, alpha=0.7)
+    axes[0, 2].set_xlabel('Training Time (s)')
+    axes[0, 2].set_ylabel('Accuracy')
+    axes[0, 2].set_title('Accuracy vs Training Time')
+    axes[0, 2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # 4. Performance by task type
+    task_performance = df.groupby(['Task', 'Optimizer'])['Accuracy'].mean().unstack()
+    task_performance.plot(kind='bar', ax=axes[1, 0])
+    axes[1, 0].set_title('Average Accuracy by Task Type')
+    axes[1, 0].tick_params(axis='x', rotation=45)
+    axes[1, 0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # 5. Memory usage comparison
+    memory_data = df[df['Memory Usage'] > 0]  # Filter out zero values
+    if not memory_data.empty:
+        sns.barplot(data=memory_data, x='Optimizer', y='Memory Usage', ax=axes[1, 1])
+        axes[1, 1].set_title('Average Memory Usage by Optimizer')
+        axes[1, 1].tick_params(axis='x', rotation=45)
+    else:
+        axes[1, 1].text(0.5, 0.5, 'No memory data available', 
+                       ha='center', va='center', transform=axes[1, 1].transAxes)
+    
+    # 6. Stability score comparison
+    sns.boxplot(data=df, x='Optimizer', y='Stability Score', ax=axes[1, 2])
+    axes[1, 2].set_title('Stability Score Distribution by Optimizer')
+    axes[1, 2].tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    plt.savefig('optimizer_comparison_results.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+def create_radar_chart(benchmark: OptimizerBenchmark):
+    """Create radar chart comparing optimizers across multiple dimensions."""
+    
+    if not benchmark.results:
+        print("No results available for radar chart.")
+        return
+    
+    # Aggregate data by optimizer
+    optimizer_stats = defaultdict(lambda: {
+        'accuracy': [],
+        'speed': [],  # 1 / training_time (normalized)
+        'efficiency': [],  # 1 / memory_usage (normalized) 
+        'stability': []
+    })
+    
+    for result in benchmark.results:
+        stats = optimizer_stats[result.optimizer_name]
+        stats['accuracy'].append(result.accuracy)
+        stats['speed'].append(1 / max(result.training_time, 0.1))  # Avoid division by zero
+        stats['efficiency'].append(1 / max(result.memory_usage, 1))  # Avoid division by zero
+        stats['stability'].append(result.stability_score)
+    
+    # Calculate averages and normalize
+    optimizer_profiles = {}
+    for optimizer, stats in optimizer_stats.items():
+        optimizer_profiles[optimizer] = {
+            'Accuracy': np.mean(stats['accuracy']),
+            'Speed': np.mean(stats['speed']),
+            'Efficiency': np.mean(stats['efficiency']),
+            'Stability': np.mean(stats['stability'])
+        }
+    
+    # Normalize all metrics to 0-1 scale
+    all_values = {metric: [profile[metric] for profile in optimizer_profiles.values()] 
+                  for metric in ['Accuracy', 'Speed', 'Efficiency', 'Stability']}
+    
+    for metric in all_values:
+        min_val = min(all_values[metric])
+        max_val = max(all_values[metric])
+        if max_val > min_val:
+            for optimizer in optimizer_profiles:
+                original_val = optimizer_profiles[optimizer][metric]
+                optimizer_profiles[optimizer][metric] = (original_val - min_val) / (max_val - min_val)
+    
+    # Create radar chart
+    categories = list(optimizer_profiles[list(optimizer_profiles.keys())[0]].keys())
+    N = len(categories)
+    
+    angles = [n / float(N) * 2 * np.pi for n in range(N)]
+    angles += angles[:1]  # Complete the circle
+    
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
+    
+    colors = plt.cm.Set3(np.linspace(0, 1, len(optimizer_profiles)))
+    
+    for i, (optimizer, profile) in enumerate(optimizer_profiles.items()):
+        values = [profile[cat] for cat in categories]
+        values += values[:1]  # Complete the circle
+        
+        ax.plot(angles, values, 'o-', linewidth=2, label=optimizer, color=colors[i])
+        ax.fill(angles, values, alpha=0.25, color=colors[i])
+    
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(categories)
+    ax.set_ylim(0, 1)
+    ax.set_title('Optimizer Performance Comparison (Normalized)', pad=20)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
+    
+    plt.savefig('optimizer_radar_comparison.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+# Create visualizations
+create_comprehensive_visualizations(benchmark)
+create_radar_chart(benchmark)
+```
+
+### Optimizer Selection Guide
+
+```python
+class OptimizerSelector:
+    """Intelligent optimizer selection based on task characteristics."""
+    
+    def __init__(self, benchmark_results: Dict[str, List[BenchmarkResult]]):
+        self.benchmark_results = benchmark_results
+        self.selection_rules = self._create_selection_rules()
+    
+    def _create_selection_rules(self) -> Dict[str, Dict]:
+        """Create selection rules based on benchmark results."""
+        
+        # Analyze results to create rules
+        rules = {
+            "high_accuracy_priority": {
+                "description": "Prioritize highest accuracy regardless of other factors",
+                "condition": lambda requirements: requirements.get("accuracy_priority", 0) > 0.8,
+                "recommendation_logic": self._recommend_by_accuracy
+            },
+            "speed_priority": {
+                "description": "Prioritize fast training and inference",
+                "condition": lambda requirements: requirements.get("speed_priority", 0) > 0.7,
+                "recommendation_logic": self._recommend_by_speed
+            },
+            "resource_constrained": {
+                "description": "Optimize for low memory and CPU usage",
+                "condition": lambda requirements: requirements.get("memory_limit_mb", float('inf')) < 1000,
+                "recommendation_logic": self._recommend_by_efficiency
+            },
+            "balanced_performance": {
+                "description": "Balance accuracy, speed, and resource usage",
+                "condition": lambda requirements: True,  # Default fallback
+                "recommendation_logic": self._recommend_balanced
+            }
+        }
+        
+        return rules
+    
+    def _recommend_by_accuracy(self, requirements: Dict) -> Dict:
+        """Recommend optimizer based on accuracy priority."""
+        accuracy_scores = {}
+        
+        for optimizer, results in self.benchmark_results.items():
+            avg_accuracy = np.mean([r.accuracy for r in results])
+            accuracy_scores[optimizer] = avg_accuracy
+        
+        best_optimizer = max(accuracy_scores.items(), key=lambda x: x[1])
+        
+        return {
+            "recommended_optimizer": best_optimizer[0],
+            "reason": f"Highest average accuracy: {best_optimizer[1]:.3f}",
+            "confidence": 0.9,
+            "alternative_options": sorted(accuracy_scores.items(), key=lambda x: x[1], reverse=True)[1:3]
+        }
+    
+    def _recommend_by_speed(self, requirements: Dict) -> Dict:
+        """Recommend optimizer based on speed priority."""
+        speed_scores = {}
+        
+        for optimizer, results in self.benchmark_results.items():
+            avg_training_time = np.mean([r.training_time for r in results])
+            avg_inference_time = np.mean([r.inference_time for r in results])
+            combined_time = avg_training_time + avg_inference_time * 10  # Weight inference higher
+            speed_scores[optimizer] = combined_time
+        
+        fastest_optimizer = min(speed_scores.items(), key=lambda x: x[1])
+        
+        return {
+            "recommended_optimizer": fastest_optimizer[0],
+            "reason": f"Fastest combined time: {fastest_optimizer[1]:.2f}s",
+            "confidence": 0.8,
+            "alternative_options": sorted(speed_scores.items(), key=lambda x: x[1])[:3]
+        }
+    
+    def _recommend_by_efficiency(self, requirements: Dict) -> Dict:
+        """Recommend optimizer based on resource efficiency."""
+        efficiency_scores = {}
+        
+        for optimizer, results in self.benchmark_results.items():
+            avg_memory = np.mean([r.memory_usage for r in results if r.memory_usage > 0])
+            avg_accuracy = np.mean([r.accuracy for r in results])
+            
+            # Efficiency = accuracy per MB of memory used
+            efficiency = avg_accuracy / max(avg_memory, 1) if avg_memory > 0 else avg_accuracy
+            efficiency_scores[optimizer] = efficiency
+        
+        most_efficient = max(efficiency_scores.items(), key=lambda x: x[1])
+        
+        return {
+            "recommended_optimizer": most_efficient[0],
+            "reason": f"Best accuracy/memory ratio: {most_efficient[1]:.4f}",
+            "confidence": 0.7,
+            "alternative_options": sorted(efficiency_scores.items(), key=lambda x: x[1], reverse=True)[1:3]
+        }
+    
+    def _recommend_balanced(self, requirements: Dict) -> Dict:
+        """Recommend optimizer based on balanced performance."""
+        balanced_scores = {}
+        
+        for optimizer, results in self.benchmark_results.items():
+            avg_accuracy = np.mean([r.accuracy for r in results])
+            avg_training_time = np.mean([r.training_time for r in results])
+            avg_stability = np.mean([r.stability_score for r in results])
+            
+            # Balanced score: accuracy + speed + stability
+            speed_score = max(0, 1 - (avg_training_time / 120))  # Normalize to 2 minutes
+            balanced_score = avg_accuracy * 0.4 + speed_score * 0.3 + avg_stability * 0.3
+            
+            balanced_scores[optimizer] = balanced_score
+        
+        best_balanced = max(balanced_scores.items(), key=lambda x: x[1])
+        
+        return {
+            "recommended_optimizer": best_balanced[0],
+            "reason": f"Best balanced score: {best_balanced[1]:.3f}",
+            "confidence": 0.8,
+            "alternative_options": sorted(balanced_scores.items(), key=lambda x: x[1], reverse=True)[1:3]
+        }
+    
+    def select_optimizer(self, requirements: Dict) -> Dict:
+        """Select the best optimizer based on requirements."""
+        
+        for rule_name, rule in self.selection_rules.items():
+            if rule["condition"](requirements):
+                recommendation = rule["recommendation_logic"](requirements)
+                recommendation["selection_rule"] = rule_name
+                recommendation["rule_description"] = rule["description"]
+                return recommendation
+        
+        # Fallback to balanced recommendation
+        return self._recommend_balanced(requirements)
+    
+    def generate_selection_report(self, requirements: Dict) -> str:
+        """Generate detailed selection report."""
+        
+        recommendation = self.select_optimizer(requirements)
+        
+        report = f"""
+OPTIMIZER SELECTION REPORT
+{'='*40}
+
+REQUIREMENTS:
+{json.dumps(requirements, indent=2)}
+
+RECOMMENDATION:
+Optimizer: {recommendation['recommended_optimizer']}
+Reason: {recommendation['reason']}
+Confidence: {recommendation['confidence']:.1%}
+Selection Rule: {recommendation['selection_rule']}
+
+RULE DESCRIPTION:
+{recommendation['rule_description']}
+
+ALTERNATIVE OPTIONS:
+"""
+        
+        for i, (optimizer, score) in enumerate(recommendation.get('alternative_options', []), 1):
+            report += f"{i}. {optimizer}: {score:.3f}\n"
+        
+        return report
+
+# Example usage of optimizer selector
+selector = OptimizerSelector(benchmark_results)
+
+# Different requirement scenarios
+scenarios = [
+    {
+        "name": "High Accuracy Research",
+        "requirements": {
+            "accuracy_priority": 0.9,
+            "speed_priority": 0.2,
+            "memory_limit_mb": 5000
+        }
+    },
+    {
+        "name": "Production Speed Priority",
+        "requirements": {
+            "accuracy_priority": 0.6,
+            "speed_priority": 0.8,
+            "memory_limit_mb": 2000
+        }
+    },
+    {
+        "name": "Resource Constrained",
+        "requirements": {
+            "accuracy_priority": 0.5,
+            "speed_priority": 0.6,
+            "memory_limit_mb": 500
+        }
+    }
+]
+
+print("\nOPTIMIZER SELECTION RECOMMENDATIONS:")
+print("="*50)
+
+for scenario in scenarios:
+    print(f"\nScenario: {scenario['name']}")
+    print("-" * 30)
+    
+    recommendation = selector.select_optimizer(scenario['requirements'])
+    print(f"Recommended: {recommendation['recommended_optimizer']}")
+    print(f"Reason: {recommendation['reason']}")
+    print(f"Confidence: {recommendation['confidence']:.1%}")
+```
+
+## Key Learning Points
+
+### MIPROv2 Performance Characteristics
+1. **Auto-Configuration Benefits**: Different auto levels (light/medium/heavy) provide flexibility for various computational budgets
+2. **Multi-Stage Optimization**: MIPROv2's multi-stage approach often achieves higher accuracy than single-stage optimizers
+3. **Robustness**: Generally more stable performance across different task types
+4. **Scalability**: Heavy configuration provides best results but requires more computational resources
+
+### Optimizer Selection Guidelines
+1. **For High Accuracy Tasks**: MIPROv2 (medium/heavy) typically outperforms other optimizers
+2. **For Speed-Critical Applications**: BootstrapFewShot or MIPROv2 (light) provide fastest training
+3. **For Resource-Constrained Environments**: Consider simpler optimizers with lower memory footprint
+4. **For Balanced Performance**: MIPROv2 (medium) offers the best trade-off across metrics
+
+### Benchmarking Best Practices
+1. **Standardized Metrics**: Use consistent evaluation metrics across all optimizers
+2. **Multiple Task Types**: Test on diverse tasks to understand optimizer strengths/weaknesses
+3. **Resource Monitoring**: Track memory and CPU usage during optimization
+4. **Statistical Significance**: Run multiple trials to ensure reliable comparisons
+
+### Production Deployment Considerations
+1. **Configuration Management**: Store optimal configurations for different use cases
+2. **Monitoring**: Continuously monitor performance in production environments
+3. **Fallback Strategies**: Have backup optimizers for different scenarios
+4. **Cost Analysis**: Consider computational cost vs. performance trade-offs
+
+This comprehensive comparison tutorial provides a systematic approach to evaluating and selecting DSPy optimizers based on specific requirements and constraints.

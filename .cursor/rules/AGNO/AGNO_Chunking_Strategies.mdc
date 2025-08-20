@@ -1,8 +1,8 @@
 ---
-description: Document chunking is a critical part of knowledge management in AGNO
-globs: 
+description: AGNO Document chunking is a critical part of knowledge management in AGNO
 alwaysApply: false
 ---
+
 # AGNO Chunking Strategies
 
 Document chunking is a critical part of knowledge management in AGNO, breaking down large documents into smaller, semantically meaningful pieces for efficient storage and retrieval. This rule provides guidelines for implementing effective chunking strategies.

@@ -1,8 +1,8 @@
 ---
 description: AGNO framework, reasoning capabilities and ReasoningTools
-globs: 
 alwaysApply: false
 ---
+
 # AGNO Reasoning Capabilities
 
 > You are an expert in AGNO framework, reasoning capabilities, ReasoningTools, and multi-step agent thinking patterns. You focus on building intelligent agents that can think, analyze, and reason through complex problems step by step.
@@ -27,16 +27,17 @@ alwaysApply: false
 ```
 
 ### ReasoningTools Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `add_instructions` | `bool` | False | Add reasoning instructions to the agent |
-| `chain_of_thought` | `bool` | False | Enable chain-of-thought reasoning |
-| `analyze` | `bool` | True | Enable analysis functionality |
-| `think` | `bool` | True | Enable thinking functionality |
-| `reflection` | `bool` | False | Enable reflection on previous steps |
-| `show_full_reasoning` | `bool` | False | Visualize the full reasoning |
-| `stream_intermediate_steps` | `bool` | False | Show all intermediate steps |
-| `show_reasoning_stream` | `bool` | False | Format reasoning for human readability |
+
+| Parameter                   | Type   | Default | Description                             |
+| --------------------------- | ------ | ------- | --------------------------------------- |
+| `add_instructions`          | `bool` | False   | Add reasoning instructions to the agent |
+| `chain_of_thought`          | `bool` | False   | Enable chain-of-thought reasoning       |
+| `analyze`                   | `bool` | True    | Enable analysis functionality           |
+| `think`                     | `bool` | True    | Enable thinking functionality           |
+| `reflection`                | `bool` | False   | Enable reflection on previous steps     |
+| `show_full_reasoning`       | `bool` | False   | Visualize the full reasoning            |
+| `stream_intermediate_steps` | `bool` | False   | Show all intermediate steps             |
+| `show_reasoning_stream`     | `bool` | False   | Format reasoning for human readability  |
 
 ## Project Structure
 
@@ -132,16 +133,17 @@ def create_basic_agent():
 ```
 
 ### ReasoningTools Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `add_instructions` | `bool` | False | Add reasoning instructions to the agent |
-| `chain_of_thought` | `bool` | False | Enable chain-of-thought reasoning |
-| `analyze` | `bool` | True | Enable analysis functionality |
-| `think` | `bool` | True | Enable thinking functionality |
-| `reflection` | `bool` | False | Enable reflection on previous steps |
-| `show_full_reasoning` | `bool` | False | Visualize the full reasoning |
-| `stream_intermediate_steps` | `bool` | False | Show all intermediate steps |
-| `show_reasoning_stream` | `bool` | False | Format reasoning for human readability |
+
+| Parameter                   | Type   | Default | Description                             |
+| --------------------------- | ------ | ------- | --------------------------------------- |
+| `add_instructions`          | `bool` | False   | Add reasoning instructions to the agent |
+| `chain_of_thought`          | `bool` | False   | Enable chain-of-thought reasoning       |
+| `analyze`                   | `bool` | True    | Enable analysis functionality           |
+| `think`                     | `bool` | True    | Enable thinking functionality           |
+| `reflection`                | `bool` | False   | Enable reflection on previous steps     |
+| `show_full_reasoning`       | `bool` | False   | Visualize the full reasoning            |
+| `stream_intermediate_steps` | `bool` | False   | Show all intermediate steps             |
+| `show_reasoning_stream`     | `bool` | False   | Format reasoning for human readability  |
 
 ## Visualizing Reasoning Process
 
@@ -253,18 +255,22 @@ class BasicResearchAgent:
 ### Best Practices for Agent Reasoning
 
 1. **Enable ReasoningTools**:
+
    - Add `ReasoningTools(add_instructions=True)` to your agent's tools
    - For complex reasoning, enable `chain_of_thought=True`
 
 2. **Provide Clear Reasoning Instructions**:
+
    - Include explicit instructions for breaking down problems
    - Guide the reasoning process with specific steps
 
 3. **Use Appropriate Visualization**:
+
    - For debugging and development: `show_full_reasoning=True`
    - For end-users: Consider using `show_reasoning_stream=True` with formatting
 
 4. **Choose the Right Model**:
+
    - Reasoning works best with powerful models (Claude 3.5/3.7, GPT-4o)
    - Simpler models may need more explicit reasoning instructions
 
@@ -347,10 +353,10 @@ class AnalysisFramework(BaseModel):
 
 class CustomReasoningTools(Toolkit):
     """Custom toolkit for advanced reasoning capabilities."""
-    
+
     def __init__(self):
         super().__init__(name="custom_reasoning")
-    
+
     def decompose_problem(self, problem: str) -> ProblemDecomposition:
         """Break down a complex problem into manageable components."""
         # Implementation would analyze the problem structure
@@ -361,7 +367,7 @@ class CustomReasoningTools(Toolkit):
             dependencies=self._analyze_dependencies(problem),
             complexity_score=self._calculate_complexity(problem),
         )
-    
+
     def create_analysis_framework(self, domain: str) -> AnalysisFramework:
         """Create a structured framework for domain-specific analysis."""
         frameworks = {
@@ -379,16 +385,16 @@ class CustomReasoningTools(Toolkit):
             ),
         }
         return frameworks.get(domain, frameworks["technical"])
-    
+
     def _identify_sub_problems(self, problem: str) -> List[str]:
         """Identify sub-problems within a complex problem."""
         # Simplified implementation
         return [f"Sub-problem related to: {problem[:30]}..."]
-    
+
     def _analyze_dependencies(self, problem: str) -> List[str]:
         """Analyze dependencies between problem components."""
         return ["Dependency analysis would be implemented here"]
-    
+
     def _calculate_complexity(self, problem: str) -> int:
         """Calculate complexity score for the problem."""
         # Simplified scoring based on problem characteristics
@@ -413,20 +419,20 @@ from typing import Optional
 
 class OptimizedReasoningAgent:
     """Agent optimized for efficient reasoning."""
-    
+
     def __init__(self, reasoning_depth: str = "balanced"):
         self.reasoning_depth = reasoning_depth
-        
+
         # Configure reasoning based on depth requirement
         reasoning_config = self._get_reasoning_config(reasoning_depth)
-        
+
         self.agent = Agent(
             model=Claude(id="claude-3-5-sonnet-20241022"),
             tools=[ReasoningTools(**reasoning_config)],
             instructions=self._get_instructions(reasoning_depth),
             markdown=True,
         )
-    
+
     def _get_reasoning_config(self, depth: str) -> dict:
         """Get reasoning configuration based on depth."""
         configs = {
@@ -453,14 +459,14 @@ class OptimizedReasoningAgent:
             },
         }
         return configs.get(depth, configs["balanced"])
-    
+
     def _get_instructions(self, depth: str) -> list:
         """Get instructions based on reasoning depth."""
         base_instructions = [
             "Think through problems systematically",
             "Provide clear and logical reasoning",
         ]
-        
+
         if depth == "comprehensive":
             base_instructions.extend([
                 "Use detailed chain-of-thought reasoning",
@@ -473,9 +479,9 @@ class OptimizedReasoningAgent:
                 "Break down complex problems into steps",
                 "Validate key assumptions",
             ])
-        
+
         return base_instructions
-    
+
     def reason(self, query: str, show_steps: bool = True) -> str:
         """Perform reasoning with optimized configuration."""
         return self.agent.print_response(
@@ -516,7 +522,7 @@ from agno.tools.reasoning import ReasoningTools
 
 class TestReasoningQuality:
     """Test suite for reasoning agent quality."""
-    
+
     @pytest.fixture
     def reasoning_agent(self):
         """Create reasoning agent for testing."""
@@ -536,48 +542,48 @@ class TestReasoningQuality:
             ],
             markdown=True,
         )
-    
+
     def test_logical_consistency(self, reasoning_agent):
         """Test logical consistency in reasoning."""
         query = "If all cats are mammals and all mammals are animals, are all cats animals?"
-        
+
         response = reasoning_agent.run(query)
         response_text = str(response)
-        
+
         # Check for logical reasoning elements
         assert "step" in response_text.lower() or "therefore" in response_text.lower()
         assert "cats" in response_text.lower()
         assert "mammals" in response_text.lower()
         assert "animals" in response_text.lower()
-        
+
         # The response should conclude that cats are animals
         assert "yes" in response_text.lower() or "true" in response_text.lower()
-    
+
     def test_mathematical_reasoning(self, reasoning_agent):
         """Test mathematical reasoning capabilities."""
         query = "If a store sells 20% more items this month than last month, and last month they sold 150 items, how many items did they sell this month?"
-        
+
         response = reasoning_agent.run(query)
         response_text = str(response)
-        
+
         # Check for mathematical reasoning
         assert "20%" in response_text or "0.2" in response_text
         assert "150" in response_text
         assert "180" in response_text  # Expected answer
-    
+
     def test_multi_step_reasoning(self, reasoning_agent):
         """Test multi-step reasoning process."""
         query = "Plan a 3-day trip to Paris with a budget of $1000, including flights, accommodation, and activities."
-        
+
         response = reasoning_agent.run(query)
         response_text = str(response)
-        
+
         # Check for planning elements
         planning_keywords = ["day 1", "day 2", "day 3", "budget", "flight", "hotel", "activity"]
         found_keywords = sum(1 for keyword in planning_keywords if keyword in response_text.lower())
-        
+
         assert found_keywords >= 5, f"Found only {found_keywords} planning keywords"
-    
+
     def test_reasoning_consistency(self, reasoning_agent):
         """Test consistency across similar queries."""
         queries = [
@@ -585,13 +591,13 @@ class TestReasoningQuality:
             "Why is physical activity important?",
             "How does exercise help health?",
         ]
-        
+
         responses = [reasoning_agent.run(query) for query in queries]
         response_texts = [str(response).lower() for response in responses]
-        
+
         # Check for consistent themes across responses
         common_themes = ["health", "fitness", "strength", "cardiovascular", "mental"]
-        
+
         for response_text in response_texts:
             found_themes = sum(1 for theme in common_themes if theme in response_text)
             assert found_themes >= 2, "Responses should contain consistent health themes"
@@ -607,30 +613,35 @@ class IncompleteTest:
 ## Best Practices Summary
 
 ### Reasoning Configuration
+
 - Use `ReasoningTools` with appropriate parameters for task complexity
 - Enable `chain_of_thought` for complex problems requiring step-by-step thinking
 - Use `reflection` for tasks requiring self-evaluation and improvement
 - Balance reasoning depth with performance requirements
 
 ### Instruction Design
+
 - Provide clear, specific reasoning instructions
 - Guide the reasoning process with structured steps
 - Include validation and reflection steps in instructions
 - Adapt instruction complexity to task requirements
 
 ### Performance Optimization
+
 - Configure reasoning depth based on task complexity
 - Use streaming for better user experience with long reasoning processes
 - Monitor reasoning quality and adjust configurations accordingly
 - Cache reasoning patterns for similar problem types
 
 ### Quality Assurance
+
 - Test reasoning consistency across similar queries
 - Validate logical coherence in reasoning chains
 - Monitor reasoning performance metrics
 - Implement feedback loops for continuous improvement
 
 ## References
+
 - [AGNO ReasoningTools Documentation](mdc:https:/docs.agno.com/tools/reasoning)
 - [Chain-of-Thought Prompting Research](mdc:https:/arxiv.org/abs/2201.11903)
 - [Multi-Step Reasoning Patterns](mdc:https:/docs.agno.com/patterns/reasoning)

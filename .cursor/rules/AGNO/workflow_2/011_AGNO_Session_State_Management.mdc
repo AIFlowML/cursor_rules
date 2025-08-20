@@ -1,0 +1,1010 @@
+---
+description: "AGNO session state management, workflow context preservation, and cross-step state handling patterns"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 session state management. You design robust state handling systems, manage workflow context across steps, and implement sophisticated state preservation and manipulation patterns for complex multi-step workflows.
+
+## Session State Management Patterns
+
+```
+┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
+│   State Definition  │───▶│  State Management    │───▶│  Workflow Integration│
+│                     │    │                      │    │                     │
+│ • Session Context   │    │ • State Preservation │    │ • Cross-Step Access │
+│ • State Variables   │    │ • Context Updates    │    │ • State Validation  │
+│ • Initialization    │    │ • State Serialization│    │ • Error Recovery    │
+│ • Data Structures   │    │ • Memory Management  │    │ • State Persistence │
+└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+```
+
+## Instant State Management Patterns
+
+### Quick Start - Basic Session State
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+
+# Define agent for state-aware processing
+stateful_agent = Agent(
+    name="Stateful Processor",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Process data with session state awareness"
+)
+
+def stateful_processing_function(step_input: StepInput) -> StepOutput:
+    """Basic function with session state management"""
+
+    # Access session state (stored in step_input context)
+    current_message = step_input.message
+    session_context = step_input.previous_step_content or ""
+
+    # Build state-aware prompt
+    state_aware_prompt = f"""
+    STATEFUL PROCESSING REQUEST:
+
+    Current Input: {current_message}
+    Session Context: {session_context[:300] if session_context else "No previous context"}
+
+    Processing Requirements:
+    1. Maintain awareness of previous session context
+    2. Build upon previous processing results
+    3. Update session state for next steps
+    4. Preserve important context across steps
+
+    Provide response that integrates with session state.
+    """
+
+    try:
+        # Process with state awareness
+        result = stateful_agent.run(state_aware_prompt)
+
+        # Create enhanced output with state information
+        stateful_output = f"""
+        # Stateful Processing Results
+
+        **Session State Summary**
+        - Current Input: {current_message}
+        - Previous Context: {"Available" if session_context else "None"}
+        - State Management: ✓ Active
+
+        ## Processing Results
+        {result.content}
+
+        ## State Information
+        - Context Preserved: ✓ Session continuity maintained
+        - State Updates: Ready for next step
+        """
+
+        return StepOutput(
+            content=stateful_output,
+            response=result,
+            metadata={
+                "session_state": "active",
+                "context_preserved": bool(session_context),
+                "state_management": "basic"
+            }
+        )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Stateful processing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+# Create steps with state awareness
+state_step = Step(
+    name="stateful_processing",
+    executor=stateful_processing_function,
+    description="Processing with basic session state management"
+)
+
+# Create workflow with storage for state persistence
+stateful_workflow = Workflow(
+    name="Basic Stateful Workflow",
+    description="Workflow with basic session state management",
+    storage=SqliteStorage(
+        table_name="stateful_workflows",
+        db_file="stateful_data.db",
+        mode="workflow_v2"
+    ),
+    steps=[state_step]
+)
+
+stateful_workflow.run("Initialize session with user preferences")
+```
+
+### Production Ready - Advanced Session State Management
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import Dict, Any, List, Optional
+import json
+import logging
+import uuid
+from datetime import datetime
+from dataclasses import dataclass, asdict
+
+# Configure logging for state management
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class SessionState:
+    """Structured session state with type safety"""
+    session_id: str
+    created_at: str
+    user_context: Dict[str, Any] = None
+    workflow_progress: Dict[str, Any] = None
+    accumulated_results: List[str] = None
+    state_variables: Dict[str, Any] = None
+    metadata: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.user_context is None:
+            self.user_context = {}
+        if self.workflow_progress is None:
+            self.workflow_progress = {"completed_steps": [], "current_step": None}
+        if self.accumulated_results is None:
+            self.accumulated_results = []
+        if self.state_variables is None:
+            self.state_variables = {}
+        if self.metadata is None:
+            self.metadata = {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert session state to dictionary"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SessionState':
+        """Create session state from dictionary"""
+        return cls(**data)
+
+    def update_progress(self, step_name: str, step_result: str):
+        """Update workflow progress"""
+        self.workflow_progress["completed_steps"].append({
+            "step_name": step_name,
+            "completed_at": datetime.now().isoformat(),
+            "result_summary": step_result[:100] + "..." if len(step_result) > 100 else step_result
+        })
+        self.workflow_progress["current_step"] = step_name
+
+    def add_result(self, result: str):
+        """Add result to accumulated results"""
+        self.accumulated_results.append({
+            "result": result,
+            "added_at": datetime.now().isoformat()
+        })
+
+    def set_variable(self, key: str, value: Any):
+        """Set session variable"""
+        self.state_variables[key] = {
+            "value": value,
+            "updated_at": datetime.now().isoformat()
+        }
+
+    def get_variable(self, key: str, default=None):
+        """Get session variable"""
+        var_data = self.state_variables.get(key, {})
+        return var_data.get("value", default)
+
+class AdvancedStateManager:
+    """Advanced session state management with persistence and validation"""
+
+    def __init__(self, storage_backend=None):
+        self.storage_backend = storage_backend
+        self.active_sessions = {}
+        self.state_validators = {}
+
+    def create_session(self, session_id: str = None, user_context: Dict[str, Any] = None) -> SessionState:
+        """Create new session with optional context"""
+
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+
+        session_state = SessionState(
+            session_id=session_id,
+            created_at=datetime.now().isoformat(),
+            user_context=user_context or {}
+        )
+
+        self.active_sessions[session_id] = session_state
+        logger.info(f"Created session: {session_id}")
+
+        return session_state
+
+    def get_session(self, session_id: str) -> Optional[SessionState]:
+        """Get existing session state"""
+        return self.active_sessions.get(session_id)
+
+    def update_session(self, session_id: str, updates: Dict[str, Any]):
+        """Update session state with validation"""
+
+        if session_id not in self.active_sessions:
+            raise ValueError(f"Session {session_id} not found")
+
+        session = self.active_sessions[session_id]
+
+        # Apply updates
+        for key, value in updates.items():
+            if hasattr(session, key):
+                setattr(session, key, value)
+            else:
+                session.metadata[key] = value
+
+        logger.info(f"Updated session {session_id} with {len(updates)} changes")
+
+    def register_state_validator(self, validator_name: str, validator_func):
+        """Register state validation function"""
+        self.state_validators[validator_name] = validator_func
+        logger.info(f"Registered state validator: {validator_name}")
+
+    def validate_session_state(self, session_id: str) -> Dict[str, Any]:
+        """Validate session state using registered validators"""
+
+        session = self.get_session(session_id)
+        if not session:
+            return {"valid": False, "error": "Session not found"}
+
+        validation_results = {"valid": True, "validator_results": {}}
+
+        for validator_name, validator_func in self.state_validators.items():
+            try:
+                is_valid, message = validator_func(session)
+                validation_results["validator_results"][validator_name] = {
+                    "valid": is_valid,
+                    "message": message
+                }
+
+                if not is_valid:
+                    validation_results["valid"] = False
+
+            except Exception as e:
+                validation_results["validator_results"][validator_name] = {
+                    "valid": False,
+                    "error": str(e)
+                }
+                validation_results["valid"] = False
+
+        return validation_results
+
+# Define specialized agents for state-managed workflows
+initialization_agent = Agent(
+    name="Session Initialization Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Initialize and configure session state",
+    instructions=[
+        "Set up comprehensive session context and initial state",
+        "Establish user preferences and workflow configuration",
+        "Initialize state variables for multi-step processing"
+    ]
+)
+
+state_processing_agent = Agent(
+    name="State-Aware Processing Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Process data with full session state awareness",
+    instructions=[
+        "Leverage previous session context for informed processing",
+        "Update session state with processing results",
+        "Maintain state consistency across workflow steps"
+    ]
+)
+
+state_synthesis_agent = Agent(
+    name="State Synthesis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Synthesize results using complete session history",
+    instructions=[
+        "Integrate all session results into comprehensive synthesis",
+        "Leverage complete workflow history for insights",
+        "Generate final results that reflect entire session journey"
+    ]
+)
+
+class StatefulWorkflowBuilder:
+    """Builder for creating workflows with advanced state management"""
+
+    def __init__(self, state_manager: AdvancedStateManager):
+        self.state_manager = state_manager
+        self.session_id = None
+
+    def initialize_session_state_function(self, step_input: StepInput) -> StepOutput:
+        """Initialize comprehensive session state"""
+
+        try:
+            logger.info("Initializing advanced session state")
+
+            # Create new session
+            session = self.state_manager.create_session(
+                user_context={
+                    "initial_request": step_input.message,
+                    "workflow_type": "advanced_stateful",
+                    "initialization_time": datetime.now().isoformat()
+                }
+            )
+
+            self.session_id = session.session_id
+
+            # Initialize with agent
+            initialization_prompt = f"""
+            SESSION INITIALIZATION REQUEST:
+
+            Initial User Request: {step_input.message}
+            Session ID: {session.session_id}
+
+            Initialization Requirements:
+            1. Analyze user request and establish session context
+            2. Identify key state variables needed for multi-step processing
+            3. Set up workflow configuration and preferences
+            4. Initialize tracking for accumulated results
+            5. Establish success criteria and validation requirements
+
+            Create comprehensive session initialization and state setup.
+            """
+
+            # Execute initialization
+            init_result = initialization_agent.run(initialization_prompt)
+
+            # Update session with initialization results
+            session.update_progress("session_initialization", init_result.content)
+            session.set_variable("workflow_initialized", True)
+            session.set_variable("initialization_result", init_result.content[:500])
+
+            # Create initialization output
+            initialization_output = f"""
+            # Advanced Session State Initialization
+
+            **Session Configuration**
+            - Session ID: {session.session_id}
+            - Created: {session.created_at}
+            - Initial Request: {step_input.message}
+            - State Management: ✓ Advanced Active
+
+            ## Initialization Results
+            {init_result.content}
+
+            ## Session State Status
+            - State Variables: {len(session.state_variables)} initialized
+            - Progress Tracking: ✓ Active
+            - Result Accumulation: ✓ Ready
+            - Validation Framework: ✓ Enabled
+
+            ## Next Steps
+            - Session ready for stateful processing
+            - All state management capabilities activated
+            - Cross-step context preservation enabled
+            """
+
+            return StepOutput(
+                content=initialization_output,
+                response=init_result,
+                metadata={
+                    "session_id": session.session_id,
+                    "state_management": "advanced",
+                    "initialization": "complete",
+                    "state_variables": len(session.state_variables)
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Session initialization failed: {e}")
+            return StepOutput(
+                content=f"Session initialization failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+    def state_aware_processing_function(self, step_input: StepInput) -> StepOutput:
+        """Process with full session state context"""
+
+        try:
+            logger.info(f"State-aware processing for session: {self.session_id}")
+
+            # Get session state
+            session = self.state_manager.get_session(self.session_id)
+            if not session:
+                raise ValueError("Session state not found")
+
+            # Build comprehensive state context
+            state_context = {
+                "session_progress": session.workflow_progress,
+                "accumulated_results": session.accumulated_results[-3:] if session.accumulated_results else [],  # Last 3 results
+                "state_variables": session.state_variables,
+                "user_context": session.user_context
+            }
+
+            # Create state-aware processing prompt
+            processing_prompt = f"""
+            STATE-AWARE PROCESSING REQUEST:
+
+            Current Input: {step_input.message}
+            Session ID: {session.session_id}
+
+            Session Context:
+            - Previous Steps: {len(session.workflow_progress['completed_steps'])}
+            - Accumulated Results: {len(session.accumulated_results)}
+            - Active State Variables: {list(session.state_variables.keys())}
+            - User Context: {json.dumps(session.user_context, indent=2)[:300]}
+
+            Recent Results Context:
+            {json.dumps(state_context['accumulated_results'], indent=2)[:500] if state_context['accumulated_results'] else "No previous results"}
+
+            Processing Requirements:
+            1. Leverage complete session history for informed processing
+            2. Build upon previous results and maintain consistency
+            3. Update session state with new findings
+            4. Consider user context and preferences throughout
+            5. Prepare state updates for subsequent steps
+
+            Provide comprehensive analysis that integrates session state.
+            """
+
+            # Execute state-aware processing
+            processing_result = state_processing_agent.run(processing_prompt)
+
+            # Update session state with results
+            session.update_progress("state_aware_processing", processing_result.content)
+            session.add_result(processing_result.content)
+            session.set_variable("last_processing_result", processing_result.content[:200])
+            session.set_variable("processing_count", session.get_variable("processing_count", 0) + 1)
+
+            # Create state-integrated output
+            processing_output = f"""
+            # State-Aware Processing Results
+
+            **Session Context**
+            - Session ID: {session.session_id}
+            - Processing Step: {len(session.workflow_progress['completed_steps'])}
+            - Total Results: {len(session.accumulated_results)}
+            - State Variables: {len(session.state_variables)}
+
+            ## Current Processing Results
+            {processing_result.content}
+
+            ## Session State Updates
+            - Progress Tracking: ✓ Updated
+            - Results Accumulation: ✓ Added to session history
+            - State Variables: ✓ Updated with processing metadata
+            - Context Preservation: ✓ Maintained for next steps
+
+            ## Session State Summary
+            - Completed Steps: {[step['step_name'] for step in session.workflow_progress['completed_steps']]}
+            - Key Variables: {list(session.state_variables.keys())}
+            - Processing Efficiency: State-optimized workflow execution
+            """
+
+            return StepOutput(
+                content=processing_output,
+                response=processing_result,
+                metadata={
+                    "session_id": session.session_id,
+                    "processing_step": len(session.workflow_progress['completed_steps']),
+                    "state_variables_count": len(session.state_variables),
+                    "accumulated_results_count": len(session.accumulated_results)
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"State-aware processing failed: {e}")
+            return StepOutput(
+                content=f"State-aware processing failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+    def state_synthesis_function(self, step_input: StepInput) -> StepOutput:
+        """Synthesize results using complete session state"""
+
+        try:
+            logger.info(f"State synthesis for session: {self.session_id}")
+
+            # Get complete session state
+            session = self.state_manager.get_session(self.session_id)
+            if not session:
+                raise ValueError("Session state not found")
+
+            # Validate session state before synthesis
+            validation_results = self.state_manager.validate_session_state(self.session_id)
+
+            # Create comprehensive synthesis prompt
+            synthesis_prompt = f"""
+            COMPREHENSIVE SESSION STATE SYNTHESIS:
+
+            Final Input: {step_input.message}
+            Session ID: {session.session_id}
+            Session Duration: From {session.created_at} to {datetime.now().isoformat()}
+
+            Complete Session History:
+
+            ## Workflow Progress
+            {json.dumps(session.workflow_progress, indent=2)}
+
+            ## All Accumulated Results
+            {json.dumps(session.accumulated_results, indent=2)[:1500]}...
+
+            ## Session State Variables
+            {json.dumps(session.state_variables, indent=2)}
+
+            ## User Context
+            {json.dumps(session.user_context, indent=2)}
+
+            ## State Validation
+            Session State Valid: {validation_results['valid']}
+
+            Synthesis Requirements:
+            1. Integrate ALL session results into comprehensive final output
+            2. Leverage complete workflow history and state evolution
+            3. Address original user request with full context awareness
+            4. Provide insights that only emerge from complete session view
+            5. Create executive summary of entire session journey
+
+            Generate comprehensive synthesis that represents the complete session value.
+            """
+
+            # Execute comprehensive synthesis
+            synthesis_result = state_synthesis_agent.run(synthesis_prompt)
+
+            # Final session state update
+            session.update_progress("comprehensive_synthesis", synthesis_result.content)
+            session.set_variable("synthesis_completed", True)
+            session.set_variable("final_result", synthesis_result.content[:300])
+
+            # Create comprehensive final output
+            final_output = f"""
+            # Comprehensive Session State Synthesis
+
+            **Final Session Summary**
+            - Session ID: {session.session_id}
+            - Total Processing Steps: {len(session.workflow_progress['completed_steps'])}
+            - Accumulated Results: {len(session.accumulated_results)}
+            - Session Variables: {len(session.state_variables)}
+            - State Validation: {"✓ Passed" if validation_results['valid'] else "⚠ Issues Found"}
+
+            ## Complete Session Synthesis
+            {synthesis_result.content}
+
+            ## Session Journey Summary
+            ### Processing Timeline
+            {chr(10).join([f"- {step['step_name']}: {step['completed_at']}" for step in session.workflow_progress['completed_steps']])}
+
+            ### Key State Evolution
+            - Initial Context: {session.user_context.get('initial_request', 'N/A')}
+            - Processing Phases: {len(session.workflow_progress['completed_steps'])}
+            - Final State Variables: {len(session.state_variables)}
+            - Synthesis Quality: Comprehensive multi-step integration
+
+            ## Session Completion Status
+            - State Management: ✓ Complete
+            - Result Integration: ✓ All steps synthesized
+            - Context Preservation: ✓ Full session history maintained
+            - Validation: {"✓ Passed" if validation_results['valid'] else "⚠ Review needed"}
+            """
+
+            return StepOutput(
+                content=final_output,
+                response=synthesis_result,
+                metadata={
+                    "session_id": session.session_id,
+                    "session_complete": True,
+                    "total_steps": len(session.workflow_progress['completed_steps']),
+                    "state_validation": validation_results['valid'],
+                    "comprehensive_synthesis": True
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"State synthesis failed: {e}")
+            return StepOutput(
+                content=f"State synthesis failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+# Register state validators
+def validate_minimum_processing(session: SessionState) -> tuple:
+    """Validate that minimum processing steps have been completed"""
+    min_steps = 2
+    completed = len(session.workflow_progress['completed_steps'])
+    return completed >= min_steps, f"Completed {completed}/{min_steps} minimum steps"
+
+def validate_user_context(session: SessionState) -> tuple:
+    """Validate that user context is properly maintained"""
+    has_initial_request = 'initial_request' in session.user_context
+    return has_initial_request, "User context validation"
+
+# Create advanced state management system
+advanced_state_manager = AdvancedStateManager()
+advanced_state_manager.register_state_validator("minimum_processing", validate_minimum_processing)
+advanced_state_manager.register_state_validator("user_context", validate_user_context)
+
+# Create stateful workflow builder
+stateful_builder = StatefulWorkflowBuilder(advanced_state_manager)
+
+# Define advanced stateful workflow steps
+session_init_step = Step(
+    name="advanced_session_initialization",
+    executor=stateful_builder.initialize_session_state_function,
+    description="Initialize advanced session state with comprehensive context"
+)
+
+stateful_processing_step = Step(
+    name="state_aware_processing",
+    executor=stateful_builder.state_aware_processing_function,
+    description="Process with full session state awareness and context integration"
+)
+
+state_synthesis_step = Step(
+    name="comprehensive_state_synthesis",
+    executor=stateful_builder.state_synthesis_function,
+    description="Synthesize results using complete session history and state"
+)
+
+# Create production workflow with advanced state management
+advanced_stateful_workflow = Workflow(
+    name="Advanced Session State Management Pipeline",
+    description="Comprehensive workflow with sophisticated session state management",
+    storage=SqliteStorage(
+        table_name="stateful_sessions",
+        db_file="advanced_sessions.db",
+        mode="workflow_v2"
+    ),
+    steps=[
+        session_init_step,
+        stateful_processing_step,
+        state_synthesis_step
+    ]
+)
+
+# Execute with comprehensive state monitoring
+if __name__ == "__main__":
+    try:
+        logger.info("Starting advanced stateful workflow")
+
+        result = advanced_stateful_workflow.run(
+            message="Analyze the competitive landscape for AI-powered educational platforms with focus on K-12 personalized learning, including market size, key players, technology trends, and strategic recommendations",
+            stream=False
+        )
+
+        print("Advanced stateful workflow completed successfully")
+
+        # Print session summary
+        if stateful_builder.session_id:
+            session = advanced_state_manager.get_session(stateful_builder.session_id)
+            if session:
+                print(f"Session completed: {session.session_id}")
+                print(f"Total steps: {len(session.workflow_progress['completed_steps'])}")
+                print(f"State variables: {len(session.state_variables)}")
+                print(f"Accumulated results: {len(session.accumulated_results)}")
+
+    except Exception as e:
+        logger.error(f"Advanced stateful workflow failed: {e}")
+        print(f"Workflow failed: {e}")
+```
+
+## Advanced State Management Patterns
+
+### State Persistence and Recovery
+
+```python
+import pickle
+import os
+
+class PersistentStateManager(AdvancedStateManager):
+    """State manager with file-based persistence and recovery"""
+
+    def __init__(self, storage_backend=None, state_file_path="session_states.pkl"):
+        super().__init__(storage_backend)
+        self.state_file_path = state_file_path
+        self.load_persistent_states()
+
+    def save_persistent_states(self):
+        """Save all session states to persistent storage"""
+        try:
+            state_data = {
+                session_id: session.to_dict()
+                for session_id, session in self.active_sessions.items()
+            }
+
+            with open(self.state_file_path, 'wb') as f:
+                pickle.dump(state_data, f)
+
+            logger.info(f"Saved {len(state_data)} session states to {self.state_file_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save persistent states: {e}")
+
+    def load_persistent_states(self):
+        """Load session states from persistent storage"""
+        try:
+            if os.path.exists(self.state_file_path):
+                with open(self.state_file_path, 'rb') as f:
+                    state_data = pickle.load(f)
+
+                for session_id, session_dict in state_data.items():
+                    self.active_sessions[session_id] = SessionState.from_dict(session_dict)
+
+                logger.info(f"Loaded {len(state_data)} session states from {self.state_file_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to load persistent states: {e}")
+
+    def create_session(self, session_id: str = None, user_context: Dict[str, Any] = None) -> SessionState:
+        """Create session with automatic persistence"""
+        session = super().create_session(session_id, user_context)
+        self.save_persistent_states()
+        return session
+
+    def update_session(self, session_id: str, updates: Dict[str, Any]):
+        """Update session with automatic persistence"""
+        super().update_session(session_id, updates)
+        self.save_persistent_states()
+
+def create_recoverable_workflow_function(persistent_manager: PersistentStateManager):
+    """Create function that can recover from failures"""
+
+    def recoverable_processing_function(step_input: StepInput) -> StepOutput:
+        try:
+            # Attempt to recover session if workflow was interrupted
+            session_id = step_input.metadata.get('session_id') if step_input.metadata else None
+
+            if session_id:
+                session = persistent_manager.get_session(session_id)
+                if session:
+                    logger.info(f"Recovered session: {session_id}")
+                else:
+                    logger.info(f"Creating new session: {session_id}")
+                    session = persistent_manager.create_session(session_id)
+            else:
+                session = persistent_manager.create_session()
+
+            # Process with recovery awareness
+            recovery_prompt = f"""
+            RECOVERABLE PROCESSING WITH STATE RECOVERY:
+
+            Current Input: {step_input.message}
+            Session ID: {session.session_id}
+            Recovery Status: {'Recovered' if session_id else 'New Session'}
+
+            Previous Session Context:
+            {json.dumps(session.to_dict(), indent=2)[:500] if session.accumulated_results else "No previous context"}
+
+            Process with awareness of potential recovery scenario.
+            """
+
+            result = stateful_agent.run(recovery_prompt)
+
+            # Update session with recovery information
+            session.set_variable("recovery_processed", True)
+            session.add_result(result.content)
+
+            return StepOutput(
+                content=result.content,
+                metadata={"session_id": session.session_id, "recovery_capable": True}
+            )
+
+        except Exception as e:
+            return StepOutput(
+                content=f"Recoverable processing failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+    return recoverable_processing_function
+```
+
+### State-Based Conditional Logic
+
+```python
+def create_state_conditional_router(state_manager: AdvancedStateManager):
+    """Create conditional routing based on session state"""
+
+    def state_conditional_function(step_input: StepInput) -> StepOutput:
+        """Route processing based on session state conditions"""
+
+        try:
+            session_id = step_input.metadata.get('session_id') if step_input.metadata else None
+            session = state_manager.get_session(session_id) if session_id else None
+
+            if not session:
+                return StepOutput(
+                    content="State-conditional routing requires active session",
+                    success=False,
+                    error="No session state available"
+                )
+
+            # Determine routing based on state conditions
+            processing_count = session.get_variable("processing_count", 0)
+            user_type = session.user_context.get("user_type", "standard")
+            complexity_level = session.get_variable("complexity_level", "medium")
+
+            # Route based on state conditions
+            if processing_count == 0:
+                route = "initialization"
+            elif processing_count < 3 and complexity_level == "high":
+                route = "deep_analysis"
+            elif user_type == "premium":
+                route = "premium_processing"
+            else:
+                route = "standard_processing"
+
+            # Execute route-specific processing
+            routing_result = execute_route_processing(route, step_input, session)
+
+            # Update session with routing information
+            session.set_variable("last_route", route)
+            session.set_variable("routing_count", session.get_variable("routing_count", 0) + 1)
+
+            routing_output = f"""
+            # State-Conditional Routing Results
+
+            **Routing Decision**
+            - Route Selected: {route}
+            - Processing Count: {processing_count}
+            - User Type: {user_type}
+            - Complexity Level: {complexity_level}
+
+            ## Route Processing Results
+            {routing_result}
+
+            ## State-Based Logic
+            - Routing Logic: ✓ State-driven decision making
+            - Conditional Processing: ✓ Optimized for session context
+            - Adaptive Workflow: ✓ Dynamic route selection
+            """
+
+            return StepOutput(
+                content=routing_output,
+                metadata={
+                    "route_selected": route,
+                    "state_conditional": True,
+                    "processing_count": processing_count
+                }
+            )
+
+        except Exception as e:
+            return StepOutput(
+                content=f"State-conditional routing failed: {e}",
+                success=False,
+                error=str(e)
+            )
+
+    return state_conditional_function
+
+def execute_route_processing(route: str, step_input: StepInput, session: SessionState) -> str:
+    """Execute processing based on selected route"""
+
+    if route == "initialization":
+        return "Executing initialization processing for new session"
+    elif route == "deep_analysis":
+        return "Executing deep analysis processing for high complexity"
+    elif route == "premium_processing":
+        return "Executing premium processing with enhanced features"
+    else:
+        return "Executing standard processing workflow"
+```
+
+## Speed Tips
+
+### State Management Optimization
+
+- **State Structure**: Use structured state objects with type safety for better performance
+- **Memory Management**: Implement state cleanup and garbage collection for long-running sessions
+- **Selective Persistence**: Persist only essential state data to minimize I/O overhead
+- **State Validation**: Implement efficient validation to catch state corruption early
+- **Context Trimming**: Limit context size while preserving essential information
+- **Batch Updates**: Batch state updates to reduce storage operations
+
+### Common State Patterns
+
+```python
+# Pattern 1: Simple state accumulation
+def accumulate_results(session: SessionState, new_result: str):
+    session.add_result(new_result)
+
+# Pattern 2: State variable tracking
+def track_processing_metrics(session: SessionState, step_name: str, duration: float):
+    session.set_variable(f"{step_name}_duration", duration)
+    session.set_variable("total_steps", session.get_variable("total_steps", 0) + 1)
+
+# Pattern 3: Conditional state updates
+def conditional_state_update(session: SessionState, condition: bool, updates: Dict):
+    if condition:
+        for key, value in updates.items():
+            session.set_variable(key, value)
+
+# Pattern 4: State-based routing
+def route_based_on_state(session: SessionState) -> str:
+    processing_count = session.get_variable("processing_count", 0)
+    return "advanced" if processing_count > 2 else "basic"
+```
+
+## Common Pitfalls (CRITICAL)
+
+### State Management Anti-patterns
+
+```python
+# ❌ WRONG - No state persistence
+def no_state_function(step_input: StepInput) -> StepOutput:
+    # Process without any state awareness
+    result = agent.run(step_input.message)
+    return StepOutput(content=result.content)  # State lost!
+
+# ✅ CORRECT - Proper state management
+def stateful_function(step_input: StepInput) -> StepOutput:
+    session = state_manager.get_session(get_session_id(step_input))
+
+    # Process with state awareness
+    context = build_context_from_session(session)
+    result = agent.run(f"Context: {context}\nTask: {step_input.message}")
+
+    # Update state
+    session.add_result(result.content)
+    return StepOutput(content=result.content, metadata={"session_id": session.session_id})
+
+# ❌ WRONG - Memory leaks with unlimited state growth
+def memory_leak_state(session: SessionState, result: str):
+    session.accumulated_results.append(result)  # Grows indefinitely!
+
+# ✅ CORRECT - Managed state growth
+def managed_state_growth(session: SessionState, result: str):
+    session.accumulated_results.append(result)
+
+    # Keep only last N results
+    if len(session.accumulated_results) > 10:
+        session.accumulated_results = session.accumulated_results[-10:]
+```
+
+### Context Management Issues
+
+```python
+# ❌ WRONG - Context overflow
+def context_overflow(session: SessionState) -> str:
+    # Include entire session history - too much context!
+    return json.dumps(session.to_dict())
+
+# ✅ CORRECT - Smart context management
+def smart_context(session: SessionState) -> str:
+    # Include only relevant recent context
+    recent_results = session.accumulated_results[-3:] if session.accumulated_results else []
+    key_variables = {k: v for k, v in session.state_variables.items() if "key" in k}
+
+    return json.dumps({
+        "recent_results": recent_results,
+        "key_variables": key_variables,
+        "progress_summary": len(session.workflow_progress['completed_steps'])
+    })
+
+# ❌ WRONG - No state validation
+def no_validation(session: SessionState):
+    # Use session without validation - can cause errors!
+    return session.state_variables["required_field"]  # Might not exist!
+
+# ✅ CORRECT - Proper state validation
+def validated_state_access(session: SessionState):
+    if "required_field" not in session.state_variables:
+        session.set_variable("required_field", "default_value")
+
+    return session.get_variable("required_field", "fallback_value")
+```
+
+## Best Practices Summary
+
+- **Structured State**: Use structured state objects with type safety and validation
+- **Memory Management**: Implement state cleanup and size limits for long-running sessions
+- **Persistence Strategy**: Choose appropriate persistence based on session importance and duration
+- **Context Management**: Balance context richness with performance and token limits
+- **State Validation**: Implement comprehensive validation to ensure state consistency
+- **Error Recovery**: Design state management to handle interruptions and failures gracefully
+- **Performance Monitoring**: Track state management performance and optimize for scale
+- **Security**: Implement appropriate access controls and data protection for sensitive state data

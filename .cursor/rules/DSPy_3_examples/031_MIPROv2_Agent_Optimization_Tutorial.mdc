@@ -1,0 +1,1160 @@
+# DSPy 3.0.1 MIPROv2 Agent Optimization Tutorial
+
+Comprehensive example of using MIPROv2 to optimize intelligent agent systems with DSPy 3.0.1. This tutorial demonstrates multi-tool agent optimization, reasoning chain improvement, and production deployment patterns.
+
+## Core Concepts
+
+### MIPROv2 for Agent Systems
+- **Agent-Specific Metrics**: Task completion rate, tool usage efficiency, reasoning quality
+- **Multi-Tool Optimization**: Simultaneous optimization across different tool types
+- **Contextual Learning**: Adapting agent behavior based on task context and user feedback
+- **Safety Optimization**: Ensuring agent actions remain within defined boundaries
+
+### Production Agent Architecture
+```python
+import dspy
+import asyncio
+from typing import Dict, List, Any, Optional, Union
+from dataclasses import dataclass
+from datetime import datetime
+import json
+import logging
+from pathlib import Path
+
+# Configure DSPy with unified LM interface
+lm = dspy.LM(model="gpt-4o-mini", max_tokens=4000, temperature=0.1)
+dspy.configure(lm=lm)
+
+@dataclass
+class AgentTask:
+    """Structure for agent task definition."""
+    id: str
+    description: str
+    tools_required: List[str]
+    context: Dict[str, Any]
+    expected_outcome: str
+    priority: int = 1
+    timeout: int = 300
+
+@dataclass
+class AgentAction:
+    """Structure for agent actions."""
+    tool: str
+    parameters: Dict[str, Any]
+    reasoning: str
+    confidence: float
+    timestamp: datetime = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+
+class ToolExecutor:
+    """Simulated tool execution environment."""
+    
+    def __init__(self):
+        self.available_tools = {
+            "search_knowledge": self._search_knowledge,
+            "calculate": self._calculate,
+            "send_email": self._send_email,
+            "schedule_meeting": self._schedule_meeting,
+            "analyze_document": self._analyze_document,
+            "generate_report": self._generate_report
+        }
+        self.execution_log = []
+    
+    def _search_knowledge(self, query: str, domain: str = "general") -> Dict:
+        """Simulate knowledge search."""
+        results = [
+            f"Knowledge about {query} in {domain} domain",
+            f"Related concepts to {query}",
+            f"Best practices for {query}"
+        ]
+        return {"results": results, "confidence": 0.85}
+    
+    def _calculate(self, expression: str) -> Dict:
+        """Simulate calculation."""
+        try:
+            result = eval(expression)
+            return {"result": result, "success": True}
+        except:
+            return {"error": "Invalid expression", "success": False}
+    
+    def _send_email(self, to: str, subject: str, body: str) -> Dict:
+        """Simulate email sending."""
+        return {
+            "message_id": f"msg_{len(self.execution_log)}",
+            "status": "sent",
+            "recipients": [to]
+        }
+    
+    def _schedule_meeting(self, participants: List[str], duration: int, topic: str) -> Dict:
+        """Simulate meeting scheduling."""
+        return {
+            "meeting_id": f"meeting_{len(self.execution_log)}",
+            "scheduled": True,
+            "participants": participants,
+            "duration_minutes": duration
+        }
+    
+    def _analyze_document(self, document_path: str, analysis_type: str = "summary") -> Dict:
+        """Simulate document analysis."""
+        return {
+            "analysis": f"{analysis_type} analysis of {document_path}",
+            "key_points": ["Point 1", "Point 2", "Point 3"],
+            "confidence": 0.9
+        }
+    
+    def _generate_report(self, data: Dict, format_type: str = "pdf") -> Dict:
+        """Simulate report generation."""
+        return {
+            "report_id": f"report_{len(self.execution_log)}",
+            "format": format_type,
+            "pages": 5,
+            "generated": True
+        }
+    
+    def execute_tool(self, tool_name: str, **kwargs) -> Dict:
+        """Execute a tool with given parameters."""
+        if tool_name not in self.available_tools:
+            return {"error": f"Tool {tool_name} not available", "success": False}
+        
+        try:
+            result = self.available_tools[tool_name](**kwargs)
+            self.execution_log.append({
+                "tool": tool_name,
+                "parameters": kwargs,
+                "result": result,
+                "timestamp": datetime.now()
+            })
+            return {"success": True, "result": result}
+        except Exception as e:
+            error_result = {"error": str(e), "success": False}
+            self.execution_log.append({
+                "tool": tool_name,
+                "parameters": kwargs,
+                "result": error_result,
+                "timestamp": datetime.now()
+            })
+            return error_result
+
+# Initialize tool executor
+tool_executor = ToolExecutor()
+```
+
+### Agent Signatures
+
+```python
+class AnalyzeTask(dspy.Signature):
+    """Analyze a task and determine the best approach."""
+    task_description: str = dspy.InputField(desc="Description of the task to complete")
+    available_tools: List[str] = dspy.InputField(desc="List of available tools")
+    context: str = dspy.InputField(desc="Additional context about the task")
+    
+    approach: str = dspy.OutputField(desc="Recommended approach to complete the task")
+    required_tools: List[str] = dspy.OutputField(desc="Tools needed to complete the task")
+    reasoning: str = dspy.OutputField(desc="Detailed reasoning for the approach")
+    risk_assessment: str = dspy.OutputField(desc="Potential risks and mitigation strategies")
+
+class PlanExecution(dspy.Signature):
+    """Create a detailed execution plan for the task."""
+    task_description: str = dspy.InputField()
+    approach: str = dspy.InputField()
+    required_tools: List[str] = dspy.InputField()
+    
+    execution_steps: List[str] = dspy.OutputField(desc="Detailed steps to execute the task")
+    tool_sequence: List[str] = dspy.OutputField(desc="Sequence of tools to use")
+    success_criteria: List[str] = dspy.OutputField(desc="Criteria to determine task completion")
+
+class ExecuteAction(dspy.Signature):
+    """Execute a specific action with a tool."""
+    action_description: str = dspy.InputField(desc="What action to perform")
+    tool_name: str = dspy.InputField(desc="Tool to use for the action")
+    context: str = dspy.InputField(desc="Current context and previous results")
+    
+    tool_parameters: Dict[str, Any] = dspy.OutputField(desc="Parameters to pass to the tool")
+    expected_outcome: str = dspy.OutputField(desc="Expected outcome from this action")
+    confidence: float = dspy.OutputField(desc="Confidence in this action (0-1)")
+
+class EvaluateResult(dspy.Signature):
+    """Evaluate the result of an action and determine next steps."""
+    action_taken: str = dspy.InputField(desc="Description of the action taken")
+    tool_result: str = dspy.InputField(desc="Result returned by the tool")
+    original_goal: str = dspy.InputField(desc="Original goal of the task")
+    
+    success_level: float = dspy.OutputField(desc="Success level of the action (0-1)")
+    next_action: str = dspy.OutputField(desc="Recommended next action")
+    completion_status: str = dspy.OutputField(desc="Task completion status: continuing, completed, or failed")
+```
+
+### Intelligent Agent Module
+
+```python
+class IntelligentAgent(dspy.Module):
+    """Main agent module with reasoning and tool execution capabilities."""
+    
+    def __init__(self, max_iterations: int = 10):
+        super().__init__()
+        self.max_iterations = max_iterations
+        
+        # Agent reasoning components
+        self.analyze_task = dspy.ChainOfThought(AnalyzeTask)
+        self.plan_execution = dspy.ChainOfThought(PlanExecution)
+        self.execute_action = dspy.ChainOfThought(ExecuteAction)
+        self.evaluate_result = dspy.ChainOfThought(EvaluateResult)
+        
+        # Execution tracking
+        self.execution_history = []
+        self.current_context = ""
+    
+    def forward(self, task: AgentTask, tool_executor: ToolExecutor):
+        """Execute a task using intelligent reasoning and tool usage."""
+        
+        # Step 1: Analyze the task
+        analysis = self.analyze_task(
+            task_description=task.description,
+            available_tools=list(tool_executor.available_tools.keys()),
+            context=json.dumps(task.context)
+        )
+        
+        # Step 2: Create execution plan
+        plan = self.plan_execution(
+            task_description=task.description,
+            approach=analysis.approach,
+            required_tools=analysis.required_tools
+        )
+        
+        # Step 3: Execute the plan iteratively
+        current_goal = task.description
+        execution_log = []
+        
+        for iteration in range(self.max_iterations):
+            # Update context with previous results
+            context_info = {
+                "iteration": iteration + 1,
+                "previous_results": execution_log[-3:] if execution_log else [],
+                "current_plan": plan.execution_steps,
+                "remaining_steps": plan.execution_steps[iteration:] if iteration < len(plan.execution_steps) else []
+            }
+            
+            # Determine next action
+            action = self.execute_action(
+                action_description=plan.execution_steps[iteration] if iteration < len(plan.execution_steps) else "Complete remaining tasks",
+                tool_name=plan.tool_sequence[iteration] if iteration < len(plan.tool_sequence) else "analyze_document",
+                context=json.dumps(context_info)
+            )
+            
+            # Execute the action
+            tool_result = tool_executor.execute_tool(
+                tool_name=action.tool_parameters.get("tool", "search_knowledge"),
+                **{k: v for k, v in action.tool_parameters.items() if k != "tool"}
+            )
+            
+            execution_log.append({
+                "iteration": iteration + 1,
+                "action": action,
+                "tool_result": tool_result,
+                "timestamp": datetime.now()
+            })
+            
+            # Evaluate the result
+            evaluation = self.evaluate_result(
+                action_taken=f"Used {action.tool_parameters.get('tool', 'unknown')} with parameters {action.tool_parameters}",
+                tool_result=json.dumps(tool_result),
+                original_goal=current_goal
+            )
+            
+            # Check if task is complete
+            if evaluation.completion_status in ["completed", "failed"]:
+                break
+        
+        return dspy.Prediction(
+            task_analysis=analysis,
+            execution_plan=plan,
+            execution_log=execution_log,
+            final_evaluation=evaluation,
+            success=evaluation.completion_status == "completed"
+        )
+
+# Initialize the agent
+agent = IntelligentAgent(max_iterations=8)
+```
+
+### MIPROv2 Optimization Setup
+
+```python
+class AgentTaskMetric(dspy.Metric):
+    """Custom metric for evaluating agent task performance."""
+    
+    def __init__(self, weight_completion: float = 0.4, weight_efficiency: float = 0.3, weight_quality: float = 0.3):
+        self.weight_completion = weight_completion
+        self.weight_efficiency = weight_efficiency
+        self.weight_quality = weight_quality
+    
+    def __call__(self, gold, pred, trace=None):
+        """Evaluate agent performance on multiple dimensions."""
+        if not pred or not hasattr(pred, 'success'):
+            return 0.0
+        
+        # Completion score
+        completion_score = 1.0 if pred.success else 0.0
+        
+        # Efficiency score (fewer iterations is better)
+        max_iterations = 8
+        actual_iterations = len(pred.execution_log)
+        efficiency_score = max(0, (max_iterations - actual_iterations) / max_iterations)
+        
+        # Quality score based on reasoning and tool usage
+        quality_score = 0.0
+        if hasattr(pred, 'task_analysis'):
+            # Quality of initial analysis
+            analysis_quality = min(1.0, len(pred.task_analysis.reasoning.split()) / 50)
+            
+            # Tool usage appropriateness
+            tools_used = set()
+            for log_entry in pred.execution_log:
+                if log_entry['tool_result'].get('success', False):
+                    tools_used.add(log_entry['action'].tool_parameters.get('tool', ''))
+            
+            tool_diversity = len(tools_used) / len(tool_executor.available_tools)
+            quality_score = (analysis_quality + tool_diversity) / 2
+        
+        # Combined score
+        final_score = (
+            completion_score * self.weight_completion +
+            efficiency_score * self.weight_efficiency +
+            quality_score * self.weight_quality
+        )
+        
+        return final_score
+
+# Create evaluation metric
+agent_metric = AgentTaskMetric()
+
+def create_agent_training_data():
+    """Create training examples for agent optimization."""
+    training_tasks = [
+        AgentTask(
+            id="task_001",
+            description="Research and summarize information about renewable energy trends",
+            tools_required=["search_knowledge", "generate_report"],
+            context={"domain": "energy", "urgency": "medium"},
+            expected_outcome="Comprehensive report on renewable energy trends"
+        ),
+        AgentTask(
+            id="task_002", 
+            description="Calculate project budget and send summary to stakeholders",
+            tools_required=["calculate", "send_email"],
+            context={"project": "website_redesign", "stakeholders": ["manager@company.com"]},
+            expected_outcome="Budget calculated and email sent"
+        ),
+        AgentTask(
+            id="task_003",
+            description="Analyze contract document and schedule review meeting",
+            tools_required=["analyze_document", "schedule_meeting"],
+            context={"document": "/contracts/service_agreement.pdf", "participants": ["legal@company.com", "business@company.com"]},
+            expected_outcome="Document analyzed and meeting scheduled"
+        ),
+        AgentTask(
+            id="task_004",
+            description="Research competitors and generate market analysis report",
+            tools_required=["search_knowledge", "generate_report"],
+            context={"industry": "fintech", "competitors": ["company_a", "company_b"]},
+            expected_outcome="Market analysis report generated"
+        ),
+        AgentTask(
+            id="task_005",
+            description="Calculate ROI for multiple investment options and email recommendations",
+            tools_required=["calculate", "send_email", "generate_report"],
+            context={"investments": {"option_a": 100000, "option_b": 150000}, "contact": "investor@fund.com"},
+            expected_outcome="ROI calculated and recommendations sent"
+        )
+    ]
+    
+    # Create training examples
+    training_examples = []
+    for task in training_tasks:
+        # Run the agent to get baseline performance
+        result = agent(task, tool_executor)
+        
+        # Create example with gold standard (successful completion expected)
+        example = dspy.Example(
+            task=task,
+            tool_executor=tool_executor
+        ).with_inputs("task", "tool_executor")
+        
+        training_examples.append(example)
+    
+    return training_examples
+
+# Create training data
+training_data = create_agent_training_data()
+```
+
+### MIPROv2 Optimization Process
+
+```python
+from dspy.teleprompt import MIPROv2
+
+# Configure MIPROv2 with agent-specific settings
+optimizer = MIPROv2(
+    metric=agent_metric,
+    auto="medium",  # Use medium auto-configuration for balanced optimization
+    num_threads=4,
+    verbose=True,
+    track_stats=True
+)
+
+# Custom optimization configuration for agents
+optimization_config = {
+    "max_bootstrapped_demos": 8,
+    "max_labeled_demos": 12,
+    "num_candidates": 25,
+    "init_temperature": 0.8,
+    "minibatch_size": 4,
+    "minibatch_full_eval_steps": 3,
+    "num_trials": 15,
+    "metric_threshold": 0.75,
+    "max_errors": 5
+}
+
+# Apply configuration
+for key, value in optimization_config.items():
+    if hasattr(optimizer, key):
+        setattr(optimizer, key, value)
+
+print("Starting MIPROv2 agent optimization...")
+print(f"Training examples: {len(training_data)}")
+print(f"Optimization configuration: {optimization_config}")
+
+# Run optimization
+optimized_agent = optimizer.compile(
+    student=agent,
+    trainset=training_data,
+    valset=training_data[-2:],  # Use last 2 examples for validation
+    requires_permission_to_run=False
+)
+
+print("Agent optimization completed!")
+```
+
+### Performance Evaluation
+
+```python
+class AgentEvaluator:
+    """Comprehensive agent performance evaluator."""
+    
+    def __init__(self, metric: AgentTaskMetric):
+        self.metric = metric
+        self.evaluation_results = []
+    
+    def evaluate_agent(self, agent_module, test_tasks: List[AgentTask], name: str = "Agent") -> Dict:
+        """Evaluate agent performance on test tasks."""
+        results = []
+        total_score = 0.0
+        successful_tasks = 0
+        
+        print(f"\nEvaluating {name}...")
+        
+        for i, task in enumerate(test_tasks):
+            print(f"Task {i+1}/{len(test_tasks)}: {task.description[:50]}...")
+            
+            try:
+                # Execute task
+                start_time = datetime.now()
+                result = agent_module(task, tool_executor)
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Calculate score
+                score = self.metric(gold=None, pred=result)
+                total_score += score
+                
+                if result.success:
+                    successful_tasks += 1
+                
+                task_result = {
+                    "task_id": task.id,
+                    "task_description": task.description,
+                    "success": result.success,
+                    "score": score,
+                    "execution_time": execution_time,
+                    "iterations_used": len(result.execution_log),
+                    "tools_used": list(set([
+                        log['action'].tool_parameters.get('tool', 'unknown') 
+                        for log in result.execution_log
+                    ])),
+                    "reasoning_quality": len(result.task_analysis.reasoning.split()) if hasattr(result, 'task_analysis') else 0
+                }
+                
+                results.append(task_result)
+                print(f"  Score: {score:.3f}, Success: {result.success}, Time: {execution_time:.2f}s")
+                
+            except Exception as e:
+                print(f"  Error: {str(e)}")
+                results.append({
+                    "task_id": task.id,
+                    "task_description": task.description,
+                    "success": False,
+                    "score": 0.0,
+                    "error": str(e)
+                })
+        
+        # Calculate summary metrics
+        avg_score = total_score / len(test_tasks)
+        success_rate = successful_tasks / len(test_tasks)
+        avg_execution_time = sum([r.get('execution_time', 0) for r in results]) / len(results)
+        
+        summary = {
+            "agent_name": name,
+            "total_tasks": len(test_tasks),
+            "successful_tasks": successful_tasks,
+            "success_rate": success_rate,
+            "average_score": avg_score,
+            "average_execution_time": avg_execution_time,
+            "task_results": results
+        }
+        
+        self.evaluation_results.append(summary)
+        return summary
+
+# Create test tasks
+test_tasks = [
+    AgentTask(
+        id="test_001",
+        description="Research latest AI developments and create executive summary",
+        tools_required=["search_knowledge", "generate_report"],
+        context={"audience": "executives", "focus": "business_impact"},
+        expected_outcome="Executive summary of AI developments"
+    ),
+    AgentTask(
+        id="test_002",
+        description="Calculate quarterly revenue projections and schedule review meeting",
+        tools_required=["calculate", "schedule_meeting"],
+        context={"previous_quarter": 500000, "growth_rate": 0.15, "team": ["cfo@company.com", "vp@company.com"]},
+        expected_outcome="Revenue projections calculated and meeting scheduled"
+    ),
+    AgentTask(
+        id="test_003",
+        description="Analyze customer feedback document and send improvement recommendations",
+        tools_required=["analyze_document", "send_email", "generate_report"],
+        context={"document": "/feedback/customer_survey_2024.pdf", "recipient": "product@company.com"},
+        expected_outcome="Feedback analyzed and recommendations sent"
+    )
+]
+
+# Evaluate both agents
+evaluator = AgentEvaluator(agent_metric)
+
+# Baseline agent evaluation
+baseline_results = evaluator.evaluate_agent(agent, test_tasks, "Baseline Agent")
+
+# Optimized agent evaluation  
+optimized_results = evaluator.evaluate_agent(optimized_agent, test_tasks, "MIPROv2 Optimized Agent")
+```
+
+### Results Analysis and Visualization
+
+```python
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def analyze_optimization_results(baseline_results: Dict, optimized_results: Dict):
+    """Analyze and visualize optimization improvements."""
+    
+    print("\n" + "="*60)
+    print("AGENT OPTIMIZATION RESULTS ANALYSIS")
+    print("="*60)
+    
+    # Performance comparison
+    metrics = ["success_rate", "average_score", "average_execution_time"]
+    baseline_values = [baseline_results[m] for m in metrics]
+    optimized_values = [optimized_results[m] for m in metrics]
+    
+    print(f"\nPERFORMANCE COMPARISON:")
+    print(f"{'Metric':<25} {'Baseline':<15} {'Optimized':<15} {'Improvement':<15}")
+    print("-" * 70)
+    
+    for i, metric in enumerate(metrics):
+        baseline_val = baseline_values[i]
+        optimized_val = optimized_values[i]
+        
+        if metric == "average_execution_time":
+            improvement = f"{((baseline_val - optimized_val) / baseline_val * 100):+.1f}%"
+        else:
+            improvement = f"{((optimized_val - baseline_val) / baseline_val * 100):+.1f}%"
+        
+        print(f"{metric.replace('_', ' ').title():<25} {baseline_val:<15.3f} {optimized_val:<15.3f} {improvement:<15}")
+    
+    # Task-by-task analysis
+    print(f"\nTASK-BY-TASK ANALYSIS:")
+    print(f"{'Task':<40} {'Baseline Score':<15} {'Optimized Score':<15} {'Improvement':<15}")
+    print("-" * 85)
+    
+    for i in range(len(baseline_results["task_results"])):
+        baseline_task = baseline_results["task_results"][i]
+        optimized_task = optimized_results["task_results"][i]
+        
+        task_desc = baseline_task["task_description"][:37] + "..."
+        baseline_score = baseline_task["score"]
+        optimized_score = optimized_task["score"]
+        improvement = f"{((optimized_score - baseline_score) / max(baseline_score, 0.001) * 100):+.1f}%"
+        
+        print(f"{task_desc:<40} {baseline_score:<15.3f} {optimized_score:<15.3f} {improvement:<15}")
+    
+    # Tool usage analysis
+    print(f"\nTOOL USAGE ANALYSIS:")
+    baseline_tools = {}
+    optimized_tools = {}
+    
+    for task_result in baseline_results["task_results"]:
+        for tool in task_result.get("tools_used", []):
+            baseline_tools[tool] = baseline_tools.get(tool, 0) + 1
+    
+    for task_result in optimized_results["task_results"]:
+        for tool in task_result.get("tools_used", []):
+            optimized_tools[tool] = optimized_tools.get(tool, 0) + 1
+    
+    all_tools = set(list(baseline_tools.keys()) + list(optimized_tools.keys()))
+    
+    print(f"{'Tool':<20} {'Baseline Usage':<15} {'Optimized Usage':<15} {'Change':<15}")
+    print("-" * 65)
+    
+    for tool in sorted(all_tools):
+        baseline_count = baseline_tools.get(tool, 0)
+        optimized_count = optimized_tools.get(tool, 0)
+        change = optimized_count - baseline_count
+        change_str = f"{change:+d}"
+        
+        print(f"{tool:<20} {baseline_count:<15} {optimized_count:<15} {change_str:<15}")
+
+# Run analysis
+analyze_optimization_results(baseline_results, optimized_results)
+```
+
+### Production Deployment Pipeline
+
+```python
+import pickle
+from pathlib import Path
+import mlflow
+import mlflow.pyfunc
+import os
+
+class ProductionAgentWrapper(mlflow.pyfunc.PythonModel):
+    """MLflow wrapper for production agent deployment."""
+    
+    def load_context(self, context):
+        """Load the optimized agent model."""
+        self.agent = pickle.load(open(context.artifacts["agent_model"], "rb"))
+        self.tool_executor = ToolExecutor()
+    
+    def predict(self, context, model_input):
+        """Handle prediction requests."""
+        if isinstance(model_input, dict):
+            task = AgentTask(**model_input)
+        else:
+            # Parse from DataFrame or other formats
+            task_data = model_input.iloc[0].to_dict()
+            task = AgentTask(**task_data)
+        
+        result = self.agent(task, self.tool_executor)
+        
+        return {
+            "success": result.success,
+            "execution_log": [
+                {
+                    "iteration": log["iteration"],
+                    "tool_used": log["action"].tool_parameters.get("tool", "unknown"),
+                    "success": log["tool_result"].get("success", False)
+                }
+                for log in result.execution_log
+            ],
+            "final_evaluation": {
+                "completion_status": result.final_evaluation.completion_status,
+                "success_level": result.final_evaluation.success_level
+            }
+        }
+
+def deploy_agent_to_production():
+    """Deploy optimized agent to production environment."""
+    
+    # Create deployment directory
+    deployment_dir = Path("agent_deployment")
+    deployment_dir.mkdir(exist_ok=True)
+    
+    # Save optimized agent
+    agent_path = deployment_dir / "optimized_agent.pkl"
+    with open(agent_path, "wb") as f:
+        pickle.dump(optimized_agent, f)
+    
+    # MLflow deployment
+    with mlflow.start_run(run_name="agent_deployment"):
+        # Log optimization metrics
+        mlflow.log_metric("baseline_success_rate", baseline_results["success_rate"])
+        mlflow.log_metric("optimized_success_rate", optimized_results["success_rate"])
+        mlflow.log_metric("baseline_avg_score", baseline_results["average_score"])
+        mlflow.log_metric("optimized_avg_score", optimized_results["average_score"])
+        
+        # Log artifacts
+        mlflow.log_artifact(str(agent_path))
+        
+        # Create conda environment
+        conda_env = {
+            "channels": ["defaults", "conda-forge"],
+            "dependencies": [
+                "python=3.9",
+                "pip",
+                {
+                    "pip": [
+                        "dspy-ai>=2.4.0",
+                        "openai>=1.0.0",
+                        "pandas",
+                        "numpy",
+                        "scikit-learn"
+                    ]
+                }
+            ]
+        }
+        
+        # Log model
+        mlflow.pyfunc.log_model(
+            artifact_path="agent_model",
+            python_model=ProductionAgentWrapper(),
+            artifacts={"agent_model": str(agent_path)},
+            conda_env=conda_env,
+            signature=mlflow.models.infer_signature(
+                model_input={"description": "Sample task", "tools_required": ["search_knowledge"]},
+                model_output={"success": True, "execution_log": [], "final_evaluation": {}}
+            )
+        )
+    
+    print(f"Agent deployed to MLflow!")
+    print(f"Deployment artifacts saved to: {deployment_dir}")
+
+# Deploy the optimized agent
+deploy_agent_to_production()
+```
+
+### FastAPI Production Service
+
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+import uuid
+from typing import Dict, Any
+import asyncio
+
+app = FastAPI(title="Intelligent Agent API", version="1.0.0")
+
+# Global agent instance
+production_agent = optimized_agent
+production_tool_executor = ToolExecutor()
+
+class TaskRequest(BaseModel):
+    description: str
+    tools_required: List[str] = []
+    context: Dict[str, Any] = {}
+    priority: int = 1
+    timeout: int = 300
+
+class TaskResponse(BaseModel):
+    task_id: str
+    status: str
+    result: Dict[str, Any] = {}
+    message: str = ""
+
+# Task tracking
+active_tasks: Dict[str, Dict] = {}
+
+@app.post("/agent/execute", response_model=TaskResponse)
+async def execute_agent_task(request: TaskRequest, background_tasks: BackgroundTasks):
+    """Execute an agent task asynchronously."""
+    
+    task_id = str(uuid.uuid4())
+    
+    # Create agent task
+    agent_task = AgentTask(
+        id=task_id,
+        description=request.description,
+        tools_required=request.tools_required,
+        context=request.context,
+        expected_outcome="Task completion",
+        priority=request.priority,
+        timeout=request.timeout
+    )
+    
+    # Track task
+    active_tasks[task_id] = {
+        "status": "running",
+        "started_at": datetime.now(),
+        "task": agent_task
+    }
+    
+    # Execute in background
+    background_tasks.add_task(execute_agent_background, task_id, agent_task)
+    
+    return TaskResponse(
+        task_id=task_id,
+        status="running",
+        message="Task execution started"
+    )
+
+async def execute_agent_background(task_id: str, agent_task: AgentTask):
+    """Execute agent task in background."""
+    try:
+        # Execute the task
+        result = production_agent(agent_task, production_tool_executor)
+        
+        # Update task status
+        active_tasks[task_id].update({
+            "status": "completed" if result.success else "failed",
+            "completed_at": datetime.now(),
+            "result": {
+                "success": result.success,
+                "execution_log": result.execution_log,
+                "task_analysis": result.task_analysis.__dict__ if hasattr(result, 'task_analysis') else {},
+                "final_evaluation": result.final_evaluation.__dict__ if hasattr(result, 'final_evaluation') else {}
+            }
+        })
+        
+    except Exception as e:
+        active_tasks[task_id].update({
+            "status": "error",
+            "completed_at": datetime.now(),
+            "error": str(e)
+        })
+
+@app.get("/agent/status/{task_id}", response_model=TaskResponse)
+async def get_task_status(task_id: str):
+    """Get the status of a specific task."""
+    
+    if task_id not in active_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task_info = active_tasks[task_id]
+    
+    return TaskResponse(
+        task_id=task_id,
+        status=task_info["status"],
+        result=task_info.get("result", {}),
+        message=task_info.get("error", "")
+    )
+
+@app.get("/agent/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "agent_loaded": production_agent is not None,
+        "active_tasks": len(active_tasks),
+        "timestamp": datetime.now()
+    }
+
+@app.delete("/agent/task/{task_id}")
+async def cancel_task(task_id: str):
+    """Cancel a running task."""
+    if task_id not in active_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if active_tasks[task_id]["status"] == "running":
+        active_tasks[task_id]["status"] = "cancelled"
+        active_tasks[task_id]["completed_at"] = datetime.now()
+    
+    return {"message": f"Task {task_id} cancelled"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Monitoring and Observability
+
+```python
+import logging
+from typing import Any
+import json
+import time
+import psutil
+import threading
+from datetime import datetime, timedelta
+
+class AgentMonitor:
+    """Comprehensive monitoring for production agent."""
+    
+    def __init__(self, log_file: str = "agent_monitor.log"):
+        self.log_file = log_file
+        self.setup_logging()
+        self.metrics = {
+            "tasks_executed": 0,
+            "successful_tasks": 0,
+            "failed_tasks": 0,
+            "average_execution_time": 0.0,
+            "tool_usage_stats": {},
+            "error_counts": {},
+            "performance_history": []
+        }
+        self.start_monitoring()
+    
+    def setup_logging(self):
+        """Setup comprehensive logging."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(self.log_file),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("AgentMonitor")
+    
+    def log_task_execution(self, task_id: str, task: AgentTask, result: Any, execution_time: float):
+        """Log task execution details."""
+        
+        self.metrics["tasks_executed"] += 1
+        
+        if result.success:
+            self.metrics["successful_tasks"] += 1
+        else:
+            self.metrics["failed_tasks"] += 1
+        
+        # Update average execution time
+        total_time = self.metrics["average_execution_time"] * (self.metrics["tasks_executed"] - 1)
+        self.metrics["average_execution_time"] = (total_time + execution_time) / self.metrics["tasks_executed"]
+        
+        # Track tool usage
+        if hasattr(result, 'execution_log'):
+            for log_entry in result.execution_log:
+                tool = log_entry.get('action', {}).get('tool_parameters', {}).get('tool', 'unknown')
+                self.metrics["tool_usage_stats"][tool] = self.metrics["tool_usage_stats"].get(tool, 0) + 1
+        
+        # Log details
+        log_data = {
+            "task_id": task_id,
+            "task_description": task.description,
+            "success": result.success,
+            "execution_time": execution_time,
+            "tools_used": len(result.execution_log) if hasattr(result, 'execution_log') else 0,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        self.logger.info(f"Task executed: {json.dumps(log_data)}")
+    
+    def log_error(self, task_id: str, error: Exception):
+        """Log error details."""
+        error_type = type(error).__name__
+        self.metrics["error_counts"][error_type] = self.metrics["error_counts"].get(error_type, 0) + 1
+        
+        self.logger.error(f"Task {task_id} failed: {str(error)}")
+    
+    def start_monitoring(self):
+        """Start system monitoring thread."""
+        self.monitoring_thread = threading.Thread(target=self._monitor_system, daemon=True)
+        self.monitoring_thread.start()
+    
+    def _monitor_system(self):
+        """Monitor system resources."""
+        while True:
+            try:
+                # System metrics
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory = psutil.virtual_memory()
+                
+                performance_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory.percent,
+                    "memory_used_gb": memory.used / (1024**3),
+                    "tasks_in_queue": len(active_tasks),
+                    "success_rate": (
+                        self.metrics["successful_tasks"] / max(self.metrics["tasks_executed"], 1)
+                    ) * 100
+                }
+                
+                self.metrics["performance_history"].append(performance_data)
+                
+                # Keep only last 1000 records
+                if len(self.metrics["performance_history"]) > 1000:
+                    self.metrics["performance_history"] = self.metrics["performance_history"][-1000:]
+                
+                # Log if concerning metrics
+                if cpu_percent > 80 or memory.percent > 85:
+                    self.logger.warning(f"High resource usage: CPU {cpu_percent}%, Memory {memory.percent}%")
+                
+                time.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                self.logger.error(f"Monitoring error: {str(e)}")
+                time.sleep(60)
+    
+    def get_health_metrics(self) -> Dict:
+        """Get current health metrics."""
+        recent_performance = self.metrics["performance_history"][-10:] if self.metrics["performance_history"] else []
+        
+        return {
+            "overall_stats": {
+                "tasks_executed": self.metrics["tasks_executed"],
+                "success_rate": (self.metrics["successful_tasks"] / max(self.metrics["tasks_executed"], 1)) * 100,
+                "average_execution_time": self.metrics["average_execution_time"],
+                "uptime_hours": len(self.metrics["performance_history"]) / 60  # Approximate
+            },
+            "tool_usage": self.metrics["tool_usage_stats"],
+            "error_summary": self.metrics["error_counts"],
+            "recent_performance": recent_performance,
+            "current_load": len(active_tasks)
+        }
+    
+    def generate_report(self) -> str:
+        """Generate comprehensive monitoring report."""
+        metrics = self.get_health_metrics()
+        
+        report = f"""
+AGENT MONITORING REPORT
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*50}
+
+OVERALL PERFORMANCE:
+- Tasks Executed: {metrics['overall_stats']['tasks_executed']}
+- Success Rate: {metrics['overall_stats']['success_rate']:.1f}%
+- Average Execution Time: {metrics['overall_stats']['average_execution_time']:.2f}s
+- Uptime: {metrics['overall_stats']['uptime_hours']:.1f} hours
+
+TOOL USAGE STATISTICS:
+"""
+        for tool, count in sorted(metrics['tool_usage'].items(), key=lambda x: x[1], reverse=True):
+            report += f"- {tool}: {count} uses\n"
+        
+        if metrics['error_summary']:
+            report += "\nERROR SUMMARY:\n"
+            for error_type, count in sorted(metrics['error_summary'].items(), key=lambda x: x[1], reverse=True):
+                report += f"- {error_type}: {count} occurrences\n"
+        
+        report += f"\nCURRENT LOAD: {metrics['current_load']} active tasks\n"
+        
+        return report
+
+# Initialize monitoring
+monitor = AgentMonitor()
+
+# Add monitoring to the FastAPI app
+@app.get("/agent/metrics")
+async def get_agent_metrics():
+    """Get agent performance metrics."""
+    return monitor.get_health_metrics()
+
+@app.get("/agent/report")
+async def get_monitoring_report():
+    """Get comprehensive monitoring report."""
+    return {"report": monitor.generate_report()}
+```
+
+### Kubernetes Deployment Configuration
+
+```yaml
+# k8s-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intelligent-agent-api
+  labels:
+    app: intelligent-agent
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: intelligent-agent
+  template:
+    metadata:
+      labels:
+        app: intelligent-agent
+    spec:
+      containers:
+      - name: agent-api
+        image: intelligent-agent:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: openai-key
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /agent/health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /agent/health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intelligent-agent-service
+spec:
+  selector:
+    app: intelligent-agent
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: intelligent-agent-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: intelligent-agent-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+## Key Learning Points
+
+### MIPROv2 Agent Optimization Benefits
+1. **Improved Task Completion**: Higher success rates through better reasoning patterns
+2. **Enhanced Tool Usage**: More efficient and appropriate tool selection
+3. **Better Error Recovery**: Improved handling of failed actions and edge cases
+4. **Context Awareness**: Enhanced ability to use previous results in decision making
+
+### Production Deployment Features  
+1. **Scalable Architecture**: Kubernetes deployment with auto-scaling
+2. **Comprehensive Monitoring**: Real-time metrics and performance tracking
+3. **Error Handling**: Robust error recovery and logging
+4. **API Integration**: RESTful API for easy integration
+
+### Best Practices
+1. **Metric Design**: Create comprehensive metrics that capture all aspects of agent performance
+2. **Iterative Optimization**: Use MIPROv2's iterative approach to gradually improve performance
+3. **Production Readiness**: Include monitoring, logging, and error handling from the start
+4. **Resource Management**: Monitor system resources and implement appropriate scaling
+
+This tutorial demonstrates how MIPROv2 can significantly improve agent system performance through systematic optimization of reasoning patterns, tool usage, and task execution strategies.

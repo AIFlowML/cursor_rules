@@ -1,0 +1,217 @@
+---
+description: DSPy 3.0.1 Philosophy and Core Changes - Programming not prompting foundation models
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1, the framework for programming—not just prompting—foundation models. Focus on building modular, composable AI systems through declarative Python code and automated optimization.
+
+## DSPy 3.0.1 Development Flow
+
+```
+Define Task → Create Signature → Build Module → Optimize → Deploy
+     ↓             ↓              ↓           ↓        ↓
+Semantic     Input/Output     Predict/CoT    Bootstrap  Production
+Structure    Declaration      Composition    Few-Shot   System
+     ↓             ↓              ↓           ↓        ↓
+High-level   Type-safe        Reasoning      Auto-tuned Optimized
+Abstraction  Interface        Chains         Prompts    Performance
+```
+
+## Instant Patterns
+
+### Quick Start - DSPy 3.0.1 Way
+
+```python
+import dspy
+
+# 1. Configure LM (NEW unified interface)
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3, max_tokens=1000)
+dspy.configure(lm=lm)
+
+# 2. Define signature (semantic structure)
+signature = "question, context -> answer"
+
+# 3. Build module (not prompts!)
+qa_module = dspy.Predict(signature)
+
+# 4. Use immediately - no prompt engineering
+result = qa_module(
+    question="What is DSPy?",
+    context="DSPy is a framework for programming foundation models."
+)
+print(result.answer)
+```
+
+### Production Ready - Full Optimization Pipeline
+
+```python
+import dspy
+from dspy import evaluate
+
+# Configure system
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+
+# Define semantic task structure
+class QASignature(dspy.Signature):
+    """Answer questions based on provided context."""
+    question: str = dspy.InputField(desc="User's question")
+    context: list[str] = dspy.InputField(desc="Relevant passages")
+    answer: str = dspy.OutputField(desc="Accurate, contextual answer")
+
+# Build modular program (composition over prompting)
+class QAProgram(dspy.Module):
+    def __init__(self):
+        self.generate_answer = dspy.ChainOfThought(QASignature)
+
+    def forward(self, question, context):
+        return self.generate_answer(question=question, context=context)
+
+# Create and optimize
+qa_program = QAProgram()
+
+# Auto-optimize with data (DSPy's superpower)
+optimizer = dspy.BootstrapFewShot(metric=dspy.evaluate.answer_exact_match)
+optimized_qa = optimizer.compile(qa_program, trainset=trainset)
+
+# Deploy optimized system
+result = optimized_qa(question="...", context=["..."])
+```
+
+## Major 3.0.1 Changes
+
+### 1. Unified LM Interface
+
+```python
+# OLD (pre-3.0): Complex configuration
+import dspy
+import openai
+dspy.configure(lm=dspy.OpenAI(model="gpt-4"))
+
+# NEW (3.0.1): Unified, simple interface
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.7)
+dspy.configure(lm=lm)
+
+# Supports all LiteLLM providers
+anthropic_lm = dspy.LM("anthropic/claude-3-5-sonnet-20241022")
+ollama_lm = dspy.LM("ollama/llama3.1", api_base="http://localhost:11434")
+```
+
+### 2. Enhanced Type System
+
+```python
+from typing import Literal
+
+# NEW: Rich typing support
+class ClassifySignature(dspy.Signature):
+    text: str = dspy.InputField()
+    category: Literal["positive", "negative", "neutral"] = dspy.OutputField()
+    confidence: float = dspy.OutputField(desc="Confidence score 0-1")
+
+# Automatic type validation and casting
+classifier = dspy.Predict(ClassifySignature)
+result = classifier(text="Great product!")
+assert isinstance(result.confidence, float)
+```
+
+### 3. Advanced Module Ecosystem
+
+```python
+# NEW modules in 3.0.1
+parallel_reasoning = dspy.Parallel([
+    dspy.ChainOfThought("question -> analysis1"),
+    dspy.ProgramOfThought("question -> analysis2")
+])
+
+best_answer = dspy.BestOfN(
+    dspy.ChainOfThought("question -> answer"),
+    n=5,
+    metric=quality_metric
+)
+
+refined_output = dspy.Refine(
+    dspy.Predict("draft -> improved"),
+    iterations=3
+)
+```
+
+### 4. Improved Async Support
+
+```python
+# Full async/await support
+async def process_batch(questions):
+    qa = dspy.Predict("question -> answer")
+
+    tasks = [qa.acall(question=q) for q in questions]
+    results = await asyncio.gather(*tasks)
+    return results
+```
+
+## Speed Tips
+
+### Instant Productivity Patterns
+
+- **Start with string signatures**: `"input -> output"` before complex classes
+- **Use dspy.configure()**: Set LM once, use everywhere
+- **Compose modules**: Build complex programs from simple parts
+- **Trust the optimizer**: Let DSPy handle prompt engineering
+- **Type everything**: Use Literal, list[], dict[] for better results
+
+### Performance Optimizations
+
+```python
+# Cache expensive operations
+lm = dspy.LM("openai/gpt-4o", cache=True)
+
+# Batch processing
+results = await asyncio.gather(*[
+    module.acall(**inputs) for inputs in batch
+])
+
+# Use faster models for optimization
+fast_lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=fast_lm)
+optimizer.compile(program, trainset=data)
+```
+
+## Common Pitfalls
+
+### Don't Fight the Framework
+
+```python
+# ❌ DON'T: Manual prompt engineering
+prompt = "You are a helpful assistant. Given the question..."
+response = lm(prompt)
+
+# ✅ DO: Declare semantic structure
+signature = "question, context -> answer"
+predictor = dspy.Predict(signature)
+```
+
+### Don't Skip Optimization
+
+```python
+# ❌ DON'T: Use raw modules in production
+raw_module = dspy.Predict("question -> answer")
+
+# ✅ DO: Optimize with real data
+optimizer = dspy.BootstrapFewShot()
+optimized = optimizer.compile(program, trainset=examples)
+```
+
+## Best Practices Summary
+
+- **Think Programs, Not Prompts**: Compose modular, reusable components
+- **Declare Semantics**: Use signatures to specify what, not how
+- **Embrace Automation**: Let DSPy optimize prompts and few-shot examples
+- **Type Everything**: Rich types improve both development and runtime
+- **Compose Fearlessly**: Build complex systems from simple modules
+- **Optimize Relentlessly**: Use real data to auto-improve performance
+- **Cache Aggressively**: Enable caching for development and production
+
+## References
+
+- [DSPy 3.0.1 Documentation](https://dspy.ai)
+- [LM Interface Guide](/docs/api/models/LM.md)
+- [Signature System](/docs/api/signatures/Signature.md)
+- [Module Ecosystem](/docs/api/modules/)

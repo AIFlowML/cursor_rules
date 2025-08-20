@@ -1,0 +1,979 @@
+---
+description: DSPY 3 GEPA FacilitySupport Tutorial - Enterprise multi-task classification optimization with GEPA
+alwaysApply: false
+---
+
+> You are an expert in GEPA optimization for enterprise multi-task classification using DSPy 3.0.1 based on the official facility support analyzer tutorial.
+
+## GEPA Enterprise Classification Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│              GEPA Facility Support Analysis System                │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────┐  │
+│  │ Support Message  │    │ Multi-Task       │    │ Structured   │  │
+│  │ Input            │───▶│ Classification   │───▶│ Output       │  │
+│  │                  │    │ Pipeline         │    │              │  │
+│  └──────────────────┘    └──────────────────┘    └──────────────┘  │
+│           │                         │                      │       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                 Three-Task Classification                       │ │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │ │
+│  │  │ Urgency     │  │ Sentiment   │  │ Categories              │ │ │
+│  │  │ Classifier  │  │ Classifier  │  │ Multi-Label Classifier  │ │ │
+│  │  │ (low/med/   │  │ (pos/neu/   │  │ (10 facility categories)│ │ │
+│  │  │  high)      │  │  neg)       │  │                         │ │ │
+│  │  └─────────────┘  └─────────────┘  └─────────────────────────┘ │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│           │                         │                      │       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                   GEPA Feedback System                         │ │
+│  │  • Individual task performance scores                          │ │
+│  │  • Multi-task weighted composite score                        │ │ │
+│  │  • Predictor-level feedback for each classifier               │ │ │
+│  │  • Domain-specific improvement guidance                       │ │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+## Tutorial Implementation
+
+### Facility Support Dataset Setup (From Tutorial)
+
+```python
+import dspy
+import json
+import random
+import requests
+from typing import List, Literal
+
+# Load facility support dataset
+def init_facility_dataset():
+    """Load and prepare facility support analyzer dataset"""
+    # Load from official dataset URL
+    url = "https://raw.githubusercontent.com/meta-llama/llama-prompt-ops/refs/heads/main/use-cases/facility-support-analyzer/dataset.json"
+    dataset = json.loads(requests.get(url).text)
+
+    # Convert to DSPy format
+    dspy_dataset = [
+        dspy.Example({
+            "message": d['fields']['input'],
+            "answer": d['answer'],
+        }).with_inputs("message")
+        for d in dataset
+    ]
+
+    # Shuffle for consistent splits
+    random.Random(0).shuffle(dspy_dataset)
+    total_examples = len(dspy_dataset)
+
+    # Split: 33% train, 33% validation, 34% test
+    train_set = dspy_dataset[:int(total_examples * 0.33)]
+    val_set = dspy_dataset[int(total_examples * 0.33):int(total_examples * 0.66)]
+    test_set = dspy_dataset[int(total_examples * 0.66):]
+
+    return train_set, val_set, test_set
+
+train_set, val_set, test_set = init_facility_dataset()
+print(f"Train: {len(train_set)}, Val: {len(val_set)}, Test: {len(test_set)}")
+
+# Example data structure
+print("Example message:", train_set[0]['message'])
+print("\nExample answer structure:")
+for k, v in json.loads(train_set[0]['answer']).items():
+    print(f"  {k}: {v}")
+```
+
+### Multi-Task Classification System
+
+```python
+from typing import List, Literal
+
+# Define the three classification tasks
+class FacilitySupportAnalyzerUrgency(dspy.Signature):
+    """
+    Read the provided message and determine the urgency level.
+    """
+    message: str = dspy.InputField()
+    urgency: Literal['low', 'medium', 'high'] = dspy.OutputField()
+
+class FacilitySupportAnalyzerSentiment(dspy.Signature):
+    """
+    Read the provided message and determine the sentiment.
+    """
+    message: str = dspy.InputField()
+    sentiment: Literal['positive', 'neutral', 'negative'] = dspy.OutputField()
+
+class FacilitySupportAnalyzerCategories(dspy.Signature):
+    """
+    Read the provided message and determine the set of categories applicable to the message.
+    """
+    message: str = dspy.InputField()
+    categories: List[Literal[
+        "emergency_repair_services",
+        "routine_maintenance_requests",
+        "quality_and_safety_concerns",
+        "specialized_cleaning_services",
+        "general_inquiries",
+        "sustainability_and_environmental_practices",
+        "training_and_support_requests",
+        "cleaning_services_scheduling",
+        "customer_feedback_and_complaints",
+        "facility_management_issues"
+    ]] = dspy.OutputField()
+
+# Multi-Module Enterprise System
+class FacilitySupportAnalyzerMM(dspy.Module):
+    def __init__(self):
+        self.urgency_module = dspy.ChainOfThought(FacilitySupportAnalyzerUrgency)
+        self.sentiment_module = dspy.ChainOfThought(FacilitySupportAnalyzerSentiment)
+        self.categories_module = dspy.ChainOfThought(FacilitySupportAnalyzerCategories)
+
+    def __call__(self, message: str):
+        # Execute all three classification tasks
+        urgency = self.urgency_module(message=message)
+        sentiment = self.sentiment_module(message=message)
+        categories = self.categories_module(message=message)
+
+        return dspy.Prediction(
+            urgency=urgency.urgency,
+            sentiment=sentiment.sentiment,
+            categories=categories.categories
+        )
+
+# Initialize multi-task system
+program = FacilitySupportAnalyzerMM()
+```
+
+### Multi-Task Evaluation Metrics
+
+```python
+def score_urgency(gold_urgency, pred_urgency):
+    """Compute score for the urgency module."""
+    return 1.0 if gold_urgency == pred_urgency else 0.0
+
+def score_sentiment(gold_sentiment, pred_sentiment):
+    """Compute score for the sentiment module."""
+    return 1.0 if gold_sentiment == pred_sentiment else 0.0
+
+def score_categories(gold_categories, pred_categories):
+    """Compute F1 score for the categories module (multi-label)."""
+    if not gold_categories and not pred_categories:
+        return 1.0  # Both empty
+
+    if not gold_categories or not pred_categories:
+        return 0.0  # One empty, one not
+
+    # Convert to sets for set operations
+    gold_set = set(gold_categories)
+    pred_set = set(pred_categories)
+
+    # Calculate precision, recall, F1
+    if len(pred_set) == 0:
+        precision = 0.0
+    else:
+        precision = len(gold_set & pred_set) / len(pred_set)
+
+    if len(gold_set) == 0:
+        recall = 0.0
+    else:
+        recall = len(gold_set & pred_set) / len(gold_set)
+
+    if precision + recall == 0:
+        return 0.0
+
+    f1 = 2 * precision * recall / (precision + recall)
+    return f1
+
+def comprehensive_facility_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+    """Comprehensive multi-task evaluation metric"""
+    try:
+        # Parse gold standard
+        gold_answer = json.loads(example['answer'])
+        gold_urgency = gold_answer['urgency']
+        gold_sentiment = gold_answer['sentiment']
+        gold_categories = gold_answer['categories']
+
+        # Score individual tasks
+        urgency_score = score_urgency(gold_urgency, prediction.urgency)
+        sentiment_score = score_sentiment(gold_sentiment, prediction.sentiment)
+        categories_score = score_categories(gold_categories, prediction.categories)
+
+        # Weighted composite score (can be adjusted for business priorities)
+        composite_score = (
+            0.3 * urgency_score +      # Urgency is critical for response time
+            0.2 * sentiment_score +    # Sentiment affects customer satisfaction
+            0.5 * categories_score     # Categories drive routing and resource allocation
+        )
+
+        return composite_score
+
+    except Exception as e:
+        return 0.0  # Return 0 for any parsing/evaluation errors
+```
+
+### Performance Results (From Tutorial Context)
+
+- **Enterprise Classification**: Multi-task performance improvement with predictor-level feedback
+- **GEPA Advantage**: Leverages textual feedback to improve individual classifiers
+- **Business Impact**: Improved routing accuracy for facility management requests
+- **Scalability**: Handles enterprise-scale message volumes efficiently
+
+### Production GEPA Enterprise System
+
+```python
+import mlflow
+from typing import Dict, List, Any, Optional
+import logging
+import numpy as np
+from dataclasses import dataclass
+
+@dataclass
+class EnterpriseClassificationConfig:
+    urgency_weight: float = 0.3
+    sentiment_weight: float = 0.2
+    categories_weight: float = 0.5
+    min_performance_threshold: float = 0.8
+    category_priority_weights: Dict[str, float] = None
+
+class EnterpriseGEPAOptimizer:
+    def __init__(
+        self,
+        base_lm: str = "openai/gpt-4.1-nano",
+        reflection_lm: str = "openai/gpt-4.1",
+        budget: str = "medium",
+        config: EnterpriseClassificationConfig = None,
+        api_key: str = None
+    ):
+        # Configure for enterprise classification
+        self.base_lm = dspy.LM(base_lm, temperature=1, api_key=api_key)
+        self.reflection_lm = dspy.LM(reflection_lm, api_key=api_key)
+        self.budget = budget
+        self.config = config or EnterpriseClassificationConfig()
+
+        # Setup enterprise tracking
+        mlflow.set_experiment("GEPA-Enterprise-Classification")
+        mlflow.dspy.autolog(
+            log_compiles=True,
+            log_evals=True,
+            log_traces_from_compile=True
+        )
+
+        self.category_mapping = self._load_category_mapping()
+
+    def _load_category_mapping(self) -> Dict[str, str]:
+        """Map categories to business-friendly names"""
+        return {
+            "emergency_repair_services": "Emergency Repairs",
+            "routine_maintenance_requests": "Routine Maintenance",
+            "quality_and_safety_concerns": "Quality & Safety",
+            "specialized_cleaning_services": "Specialized Cleaning",
+            "general_inquiries": "General Inquiries",
+            "sustainability_and_environmental_practices": "Sustainability",
+            "training_and_support_requests": "Training & Support",
+            "cleaning_services_scheduling": "Cleaning Scheduling",
+            "customer_feedback_and_complaints": "Customer Feedback",
+            "facility_management_issues": "Facility Management"
+        }
+
+    def create_enterprise_feedback_metric(self) -> callable:
+        """Create comprehensive feedback metric for enterprise classification"""
+
+        def enterprise_feedback_metric(example, prediction, trace=None, pred_name=None, pred_trace=None):
+            try:
+                # Parse gold standard
+                gold_answer = json.loads(example['answer'])
+                gold_urgency = gold_answer['urgency']
+                gold_sentiment = gold_answer['sentiment']
+                gold_categories = gold_answer['categories']
+
+                # Individual task scores
+                urgency_score = score_urgency(gold_urgency, prediction.urgency)
+                sentiment_score = score_sentiment(gold_sentiment, prediction.sentiment)
+                categories_score = score_categories(gold_categories, prediction.categories)
+
+                # Weighted composite score
+                composite_score = (
+                    self.config.urgency_weight * urgency_score +
+                    self.config.sentiment_weight * sentiment_score +
+                    self.config.categories_weight * categories_score
+                )
+
+                # Generate detailed feedback
+                feedback_sections = []
+
+                # Overall performance
+                if composite_score >= 0.9:
+                    feedback_sections.append("🏆 EXCELLENT multi-task performance")
+                elif composite_score >= 0.7:
+                    feedback_sections.append("✅ GOOD multi-task performance")
+                elif composite_score >= 0.5:
+                    feedback_sections.append("⚠️ MODERATE performance - needs improvement")
+                else:
+                    feedback_sections.append("❌ POOR performance - significant issues")
+
+                # Individual task analysis
+                task_feedback = []
+
+                if urgency_score == 1.0:
+                    task_feedback.append(f"Urgency: ✅ Correct ({prediction.urgency})")
+                else:
+                    task_feedback.append(f"Urgency: ❌ Expected {gold_urgency}, got {prediction.urgency}")
+
+                if sentiment_score == 1.0:
+                    task_feedback.append(f"Sentiment: ✅ Correct ({prediction.sentiment})")
+                else:
+                    task_feedback.append(f"Sentiment: ❌ Expected {gold_sentiment}, got {prediction.sentiment}")
+
+                if categories_score >= 0.8:
+                    task_feedback.append(f"Categories: ✅ Good F1={categories_score:.2f}")
+                else:
+                    missing_cats = set(gold_categories) - set(prediction.categories)
+                    extra_cats = set(prediction.categories) - set(gold_categories)
+                    cat_issues = []
+                    if missing_cats:
+                        cat_issues.append(f"Missing: {list(missing_cats)}")
+                    if extra_cats:
+                        cat_issues.append(f"Extra: {list(extra_cats)}")
+                    task_feedback.append(f"Categories: ❌ F1={categories_score:.2f} ({' | '.join(cat_issues)})")
+
+                feedback_sections.append(" • ".join(task_feedback))
+
+                # Business context guidance
+                business_guidance = self._generate_business_guidance(
+                    example['message'], gold_answer, prediction
+                )
+                if business_guidance:
+                    feedback_sections.append(f"Business Context: {business_guidance}")
+
+                # Improvement suggestions
+                if composite_score < 0.8:
+                    improvements = self._suggest_enterprise_improvements(
+                        urgency_score, sentiment_score, categories_score, pred_name
+                    )
+                    feedback_sections.append(f"Improvements: {improvements}")
+
+                feedback_text = " | ".join(feedback_sections)
+
+                return dspy.Prediction(score=composite_score, feedback=feedback_text)
+
+            except Exception as e:
+                error_feedback = f"EVALUATION_ERROR: {str(e)} | Check data format and model outputs"
+                return dspy.Prediction(score=0.0, feedback=error_feedback)
+
+        return enterprise_feedback_metric
+
+    def _generate_business_guidance(
+        self,
+        message: str,
+        gold_answer: Dict,
+        prediction: dspy.Prediction
+    ) -> str:
+        """Generate business-specific guidance for facility management"""
+
+        guidance_parts = []
+        message_lower = message.lower()
+
+        # Urgency-specific business guidance
+        if gold_answer['urgency'] == 'high' and prediction.urgency != 'high':
+            guidance_parts.append("High-urgency issues require immediate escalation")
+
+        # Critical category guidance
+        critical_categories = ['emergency_repair_services', 'quality_and_safety_concerns']
+        for cat in critical_categories:
+            if cat in gold_answer['categories'] and cat not in prediction.categories:
+                cat_name = self.category_mapping[cat]
+                guidance_parts.append(f"{cat_name} requires specialized routing")
+
+        # Customer sentiment handling
+        if gold_answer['sentiment'] == 'negative' and prediction.sentiment != 'negative':
+            guidance_parts.append("Negative sentiment indicates customer retention risk")
+
+        return " • ".join(guidance_parts) if guidance_parts else None
+
+    def _suggest_enterprise_improvements(
+        self,
+        urgency_score: float,
+        sentiment_score: float,
+        categories_score: float,
+        pred_name: str = None
+    ) -> str:
+        """Suggest specific improvements for enterprise classification"""
+
+        improvements = []
+
+        # Task-specific improvements
+        if urgency_score < 1.0:
+            improvements.append("Focus on urgency indicators (immediate, ASAP, emergency)")
+
+        if sentiment_score < 1.0:
+            improvements.append("Analyze tone and emotional language more carefully")
+
+        if categories_score < 0.7:
+            improvements.append("Improve multi-label classification with broader context analysis")
+
+        # Predictor-specific improvements
+        if pred_name:
+            if 'urgency' in pred_name.lower():
+                improvements.append("Consider business hours and SLA requirements for urgency")
+            elif 'categories' in pred_name.lower():
+                improvements.append("Use keyword matching combined with context understanding")
+
+        return " • ".join(improvements) if improvements else "Review classification criteria"
+
+    def optimize_enterprise_classification(
+        self,
+        train_set: List[dspy.Example],
+        val_set: List[dspy.Example],
+        test_set: List[dspy.Example]
+    ) -> dspy.Module:
+        """Run GEPA optimization for enterprise classification system"""
+
+        with mlflow.start_run(run_name=f"GEPA-Enterprise-{self.budget}"):
+            # Log enterprise configuration
+            mlflow.log_params({
+                "domain": "enterprise_facility_management",
+                "task_type": "multi_task_classification",
+                "urgency_weight": self.config.urgency_weight,
+                "sentiment_weight": self.config.sentiment_weight,
+                "categories_weight": self.config.categories_weight,
+                "num_categories": len(self.category_mapping),
+                "train_size": len(train_set),
+                "val_size": len(val_set),
+                "test_size": len(test_set)
+            })
+
+            # Initialize multi-task system
+            program = FacilitySupportAnalyzerMM()
+            program.set_lm(self.base_lm)
+
+            # Baseline evaluation
+            baseline_evaluator = dspy.Evaluate(
+                devset=test_set,
+                metric=comprehensive_facility_metric,
+                num_threads=16,
+                display_progress=True,
+                display_table=5
+            )
+
+            baseline_score = baseline_evaluator(program)
+            mlflow.log_metric("baseline_composite_score", baseline_score)
+
+            # Analyze baseline performance by task
+            baseline_task_analysis = self.analyze_task_performance(program, test_set[:50])
+            for task, metrics in baseline_task_analysis.items():
+                mlflow.log_metrics({f"baseline_{task}_{k}": v for k, v in metrics.items()})
+
+            # Create enterprise feedback metric
+            enterprise_feedback = self.create_enterprise_feedback_metric()
+
+            # Configure GEPA for enterprise optimization
+            optimizer = dspy.GEPA(
+                metric=enterprise_feedback,
+                auto=self.budget,
+                num_threads=16,
+                track_stats=True,
+                track_best_outputs=True,
+                reflection_minibatch_size=5,  # Larger batches for enterprise complexity
+                reflection_lm=self.reflection_lm
+            )
+
+            # Run optimization
+            logging.info("Starting GEPA enterprise classification optimization...")
+            optimized_program = optimizer.compile(
+                program,
+                trainset=train_set,
+                valset=val_set,
+            )
+
+            # Final evaluation
+            final_score = baseline_evaluator(optimized_program)
+            improvement = final_score - baseline_score
+            improvement_percent = (improvement / baseline_score) * 100 if baseline_score > 0 else 0
+
+            # Detailed task analysis
+            final_task_analysis = self.analyze_task_performance(optimized_program, test_set[:50])
+
+            # Log optimization results
+            mlflow.log_metrics({
+                "final_composite_score": final_score,
+                "absolute_improvement": improvement,
+                "improvement_percent": improvement_percent,
+                "meets_threshold": int(final_score >= self.config.min_performance_threshold)
+            })
+
+            # Log task-level improvements
+            for task in baseline_task_analysis:
+                baseline_acc = baseline_task_analysis[task]['accuracy']
+                final_acc = final_task_analysis[task]['accuracy']
+                mlflow.log_metric(f"{task}_improvement", final_acc - baseline_acc)
+
+            # Business impact analysis
+            business_impact = self.calculate_business_impact(
+                baseline_task_analysis, final_task_analysis
+            )
+            mlflow.log_dict(business_impact, "business_impact.json")
+
+            logging.info(f"Enterprise GEPA Optimization Complete:")
+            logging.info(f"  Baseline: {baseline_score:.1%}")
+            logging.info(f"  Optimized: {final_score:.1%}")
+            logging.info(f"  Improvement: {improvement_percent:+.1f}%")
+
+            return optimized_program
+
+    def analyze_task_performance(
+        self,
+        program: dspy.Module,
+        test_examples: List[dspy.Example]
+    ) -> Dict[str, Dict[str, float]]:
+        """Analyze performance for each classification task"""
+
+        task_results = {
+            'urgency': {'correct': 0, 'total': 0},
+            'sentiment': {'correct': 0, 'total': 0},
+            'categories': {'f1_scores': []}
+        }
+
+        for example in test_examples:
+            try:
+                prediction = program(message=example['message'])
+                gold_answer = json.loads(example['answer'])
+
+                # Urgency task
+                if prediction.urgency == gold_answer['urgency']:
+                    task_results['urgency']['correct'] += 1
+                task_results['urgency']['total'] += 1
+
+                # Sentiment task
+                if prediction.sentiment == gold_answer['sentiment']:
+                    task_results['sentiment']['correct'] += 1
+                task_results['sentiment']['total'] += 1
+
+                # Categories task (F1)
+                f1 = score_categories(gold_answer['categories'], prediction.categories)
+                task_results['categories']['f1_scores'].append(f1)
+
+            except Exception:
+                continue
+
+        # Calculate final metrics
+        return {
+            'urgency': {
+                'accuracy': task_results['urgency']['correct'] / max(task_results['urgency']['total'], 1),
+                'count': task_results['urgency']['total']
+            },
+            'sentiment': {
+                'accuracy': task_results['sentiment']['correct'] / max(task_results['sentiment']['total'], 1),
+                'count': task_results['sentiment']['total']
+            },
+            'categories': {
+                'mean_f1': np.mean(task_results['categories']['f1_scores']) if task_results['categories']['f1_scores'] else 0,
+                'count': len(task_results['categories']['f1_scores'])
+            }
+        }
+
+    def calculate_business_impact(
+        self,
+        baseline_performance: Dict,
+        optimized_performance: Dict
+    ) -> Dict[str, Any]:
+        """Calculate business impact of optimization improvements"""
+
+        # Example business impact calculations
+        urgency_improvement = optimized_performance['urgency']['accuracy'] - baseline_performance['urgency']['accuracy']
+        sentiment_improvement = optimized_performance['sentiment']['accuracy'] - baseline_performance['sentiment']['accuracy']
+        categories_improvement = optimized_performance['categories']['mean_f1'] - baseline_performance['categories']['mean_f1']
+
+        # Business impact estimates (example values)
+        impact_estimates = {
+            'response_time_improvement': {
+                'percentage': urgency_improvement * 20,  # 20% response time improvement per accuracy point
+                'description': "Improved urgency classification reduces response time"
+            },
+            'customer_satisfaction': {
+                'percentage': sentiment_improvement * 15,  # 15% satisfaction improvement
+                'description': "Better sentiment detection improves customer handling"
+            },
+            'routing_efficiency': {
+                'percentage': categories_improvement * 25,  # 25% routing efficiency
+                'description': "Improved categorization reduces manual routing"
+            },
+            'cost_savings': {
+                'estimated_annual': (urgency_improvement + categories_improvement) * 50000,  # $50K per accuracy point
+                'description': "Reduced manual review and improved automation"
+            }
+        }
+
+        return impact_estimates
+
+# Usage Example
+def run_enterprise_optimization():
+    """Complete enterprise classification optimization pipeline"""
+
+    # Load enterprise dataset
+    train_set, val_set, test_set = init_facility_dataset()
+
+    # Configure for enterprise needs
+    enterprise_config = EnterpriseClassificationConfig(
+        urgency_weight=0.4,     # Higher urgency weight for SLA compliance
+        sentiment_weight=0.2,   # Standard sentiment weight
+        categories_weight=0.4,  # High routing accuracy importance
+        min_performance_threshold=0.85
+    )
+
+    # Initialize optimizer
+    optimizer = EnterpriseGEPAOptimizer(
+        budget="medium",  # Good balance for enterprise
+        config=enterprise_config,
+        api_key="your-api-key"
+    )
+
+    # Run optimization
+    optimized_system = optimizer.optimize_enterprise_classification(
+        train_set=train_set,
+        val_set=val_set,
+        test_set=test_set
+    )
+
+    return optimized_system
+```
+
+## Production Enhancements
+
+### Enterprise Dashboard Integration
+
+```python
+class EnterpriseDashboard:
+    def __init__(self):
+        self.performance_metrics = {}
+        self.alert_thresholds = {
+            'urgency_accuracy': 0.9,
+            'categories_f1': 0.8,
+            'response_time': 2.0  # seconds
+        }
+
+    def create_performance_dashboard(
+        self,
+        optimized_program: dspy.Module,
+        baseline_program: dspy.Module,
+        test_data: List[dspy.Example]
+    ):
+        """Create comprehensive performance dashboard"""
+
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # Performance comparison
+        baseline_perf = self.evaluate_detailed_performance(baseline_program, test_data)
+        optimized_perf = self.evaluate_detailed_performance(optimized_program, test_data)
+
+        # Create visualization
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+        # Task-level accuracy comparison
+        tasks = ['urgency', 'sentiment', 'categories']
+        baseline_scores = [baseline_perf[task]['accuracy'] for task in tasks[:2]] + [baseline_perf['categories']['mean_f1']]
+        optimized_scores = [optimized_perf[task]['accuracy'] for task in tasks[:2]] + [optimized_perf['categories']['mean_f1']]
+
+        x = np.arange(len(tasks))
+        width = 0.35
+
+        axes[0,0].bar(x - width/2, baseline_scores, width, label='Baseline', alpha=0.8)
+        axes[0,0].bar(x + width/2, optimized_scores, width, label='Optimized', alpha=0.8)
+        axes[0,0].set_ylabel('Performance Score')
+        axes[0,0].set_title('Task-Level Performance Comparison')
+        axes[0,0].set_xticks(x)
+        axes[0,0].set_xticklabels(tasks)
+        axes[0,0].legend()
+        axes[0,0].grid(True, alpha=0.3)
+
+        # Category performance heatmap
+        category_performance = self.analyze_category_performance(optimized_program, test_data)
+        sns.heatmap(
+            category_performance.values.reshape(-1, 1),
+            annot=True,
+            yticklabels=category_performance.index,
+            cmap='RdYlGn',
+            ax=axes[0,1]
+        )
+        axes[0,1].set_title('Performance by Category')
+
+        # Error analysis
+        error_analysis = self.analyze_common_errors(optimized_program, test_data)
+        axes[1,0].pie(error_analysis.values(), labels=error_analysis.keys(), autopct='%1.1f%%')
+        axes[1,0].set_title('Error Distribution')
+
+        # Business impact metrics
+        business_impact = ['Response Time', 'Routing Accuracy', 'Customer Satisfaction']
+        impact_values = [15, 20, 12]  # Example improvements
+        axes[1,1].bar(business_impact, impact_values, color='green', alpha=0.7)
+        axes[1,1].set_ylabel('Improvement %')
+        axes[1,1].set_title('Business Impact Metrics')
+        axes[1,1].tick_params(axis='x', rotation=45)
+
+        plt.tight_layout()
+        plt.savefig('enterprise_dashboard.png', dpi=300, bbox_inches='tight')
+        mlflow.log_artifact('enterprise_dashboard.png')
+        plt.close()
+
+    def evaluate_detailed_performance(
+        self,
+        program: dspy.Module,
+        test_data: List[dspy.Example]
+    ) -> Dict:
+        """Detailed performance evaluation for dashboard"""
+        # Implementation similar to analyze_task_performance but more comprehensive
+        pass
+```
+
+### Real-time Monitoring System
+
+```python
+class EnterpriseMonitoringSystem:
+    def __init__(self):
+        self.performance_buffer = []
+        self.alert_handlers = []
+
+    def monitor_classification_performance(
+        self,
+        program: dspy.Module,
+        live_data_stream: callable
+    ):
+        """Monitor classification performance in real-time"""
+
+        performance_window = []
+
+        for message_batch in live_data_stream():
+            batch_performance = []
+
+            for message in message_batch:
+                try:
+                    prediction = program(message=message['text'])
+
+                    # Calculate confidence scores
+                    confidence = self.calculate_prediction_confidence(prediction)
+
+                    # Performance tracking
+                    perf_metrics = {
+                        'timestamp': datetime.now(),
+                        'urgency_confidence': confidence['urgency'],
+                        'sentiment_confidence': confidence['sentiment'],
+                        'categories_confidence': confidence['categories'],
+                        'response_time': time.time() - message['timestamp']
+                    }
+
+                    batch_performance.append(perf_metrics)
+
+                except Exception as e:
+                    self.handle_classification_error(e, message)
+
+            # Window-based performance analysis
+            performance_window.extend(batch_performance)
+            if len(performance_window) > 100:  # Keep last 100 predictions
+                performance_window = performance_window[-100:]
+
+            # Check for performance degradation
+            self.check_performance_alerts(performance_window)
+
+    def calculate_prediction_confidence(self, prediction: dspy.Prediction) -> Dict[str, float]:
+        """Calculate confidence scores for each classification task"""
+        # Implement confidence calculation based on model outputs
+        # This could use prediction probabilities if available
+        return {
+            'urgency': 0.85,  # Placeholder
+            'sentiment': 0.90,
+            'categories': 0.75
+        }
+
+    def check_performance_alerts(self, performance_window: List[Dict]):
+        """Check for performance issues and send alerts"""
+        if len(performance_window) < 10:
+            return
+
+        recent_performance = performance_window[-10:]
+        avg_response_time = np.mean([p['response_time'] for p in recent_performance])
+        avg_urgency_conf = np.mean([p['urgency_confidence'] for p in recent_performance])
+
+        alerts = []
+        if avg_response_time > 2.0:
+            alerts.append(f"High response time: {avg_response_time:.2f}s")
+
+        if avg_urgency_conf < 0.8:
+            alerts.append(f"Low urgency confidence: {avg_urgency_conf:.2f}")
+
+        for alert in alerts:
+            self.send_alert(alert)
+
+    def send_alert(self, message: str):
+        """Send performance alert to monitoring systems"""
+        logging.warning(f"PERFORMANCE ALERT: {message}")
+        # Integrate with your alerting system (Slack, email, etc.)
+```
+
+## Optimization Strategies
+
+### When to Use GEPA for Enterprise Classification
+
+- **Multi-task systems** requiring coordinated optimization
+- **Business-critical applications** where accuracy improvements have high ROI
+- **Complex domain knowledge** that can be encoded in feedback
+- **Enterprise workflows** requiring consistent classification quality
+- **Regulatory compliance** contexts requiring explainable decisions
+
+### Enterprise-Specific Configuration
+
+```python
+def configure_enterprise_gepa(
+    business_priority: str = "accuracy",
+    compliance_level: str = "standard"
+) -> Dict[str, Any]:
+    """Configure GEPA for different enterprise contexts"""
+
+    configs = {
+        "accuracy_focused": {
+            "budget": "heavy",
+            "reflection_minibatch_size": 3,
+            "weights": {"urgency": 0.4, "sentiment": 0.2, "categories": 0.4}
+        },
+        "cost_optimized": {
+            "budget": "light",
+            "reflection_minibatch_size": 5,
+            "weights": {"urgency": 0.3, "sentiment": 0.2, "categories": 0.5}
+        },
+        "balanced": {
+            "budget": "medium",
+            "reflection_minibatch_size": 4,
+            "weights": {"urgency": 0.35, "sentiment": 0.25, "categories": 0.4}
+        }
+    }
+
+    base_config = configs.get(business_priority, configs["balanced"])
+
+    # Compliance adjustments
+    if compliance_level == "high":
+        base_config["track_stats"] = True
+        base_config["track_best_outputs"] = True
+        base_config["enable_explanations"] = True
+
+    return base_config
+```
+
+## Speed Tips
+
+- **Optimize batch processing**: Process multiple messages simultaneously
+- **Cache category mappings**: Pre-compute category relationships
+- **Parallel task evaluation**: Run urgency/sentiment/categories in parallel
+- **Smart sampling**: Use representative samples for validation
+- **Predictor-specific optimization**: Focus GEPA on worst-performing tasks
+- **Business hours scheduling**: Run optimization during low-usage periods
+
+## Common Issues
+
+### Multi-Task Learning Challenges
+
+```python
+def diagnose_multitask_issues(
+    task_performances: Dict[str, float]
+) -> List[str]:
+    """Diagnose common multi-task optimization issues"""
+
+    issues = []
+
+    # Task imbalance
+    performance_values = list(task_performances.values())
+    perf_std = np.std(performance_values)
+
+    if perf_std > 0.2:
+        worst_task = min(task_performances.keys(), key=lambda k: task_performances[k])
+        issues.append(f"Task imbalance - {worst_task} significantly underperforming")
+
+    # Individual task issues
+    if task_performances.get('urgency', 0) < 0.8:
+        issues.append("Urgency classification needs domain-specific patterns")
+
+    if task_performances.get('categories', 0) < 0.7:
+        issues.append("Categories task may need hierarchical classification approach")
+
+    return issues
+```
+
+### Category Classification Issues
+
+```python
+def improve_category_classification(
+    predictions: List[dspy.Prediction],
+    gold_standards: List[List[str]]
+) -> Dict[str, Any]:
+    """Analyze and improve category classification"""
+
+    # Analyze common category confusions
+    confusion_patterns = {}
+
+    for pred, gold in zip(predictions, gold_standards):
+        pred_cats = set(pred.categories)
+        gold_cats = set(gold)
+
+        # Missing categories
+        for missing_cat in gold_cats - pred_cats:
+            if missing_cat not in confusion_patterns:
+                confusion_patterns[missing_cat] = {'missed': 0, 'total': 0}
+            confusion_patterns[missing_cat]['missed'] += 1
+
+        # Track total occurrences
+        for cat in gold_cats:
+            if cat not in confusion_patterns:
+                confusion_patterns[cat] = {'missed': 0, 'total': 0}
+            confusion_patterns[cat]['total'] += 1
+
+    # Calculate miss rates
+    miss_rates = {
+        cat: stats['missed'] / max(stats['total'], 1)
+        for cat, stats in confusion_patterns.items()
+    }
+
+    # Recommendations
+    recommendations = []
+    for cat, miss_rate in miss_rates.items():
+        if miss_rate > 0.3:
+            recommendations.append(f"Improve detection for {cat} (miss rate: {miss_rate:.1%})")
+
+    return {
+        'miss_rates': miss_rates,
+        'recommendations': recommendations
+    }
+```
+
+## Best Practices Summary
+
+### Enterprise GEPA Classification
+
+1. **Multi-Task Feedback**: Provide task-specific feedback for each classifier
+2. **Business Context Integration**: Include domain knowledge in feedback
+3. **Weighted Performance Metrics**: Balance tasks based on business impact
+4. **Predictor-Level Optimization**: Target improvements to specific modules
+5. **Performance Monitoring**: Implement real-time quality tracking
+6. **Compliance Documentation**: Maintain audit trails for optimization decisions
+
+### Production Enterprise Systems
+
+- **A/B Testing**: Compare optimized vs baseline in production
+- **Gradual Rollout**: Deploy improvements incrementally
+- **Performance Dashboards**: Monitor business impact metrics
+- **Error Analysis**: Track and analyze classification failures
+- **User Feedback Integration**: Incorporate human corrections into optimization
+
+### Quality Assurance for Enterprise
+
+- **Cross-Industry Validation**: Test on diverse facility management scenarios
+- **Stress Testing**: Validate performance under high message volumes
+- **Bias Auditing**: Check for classification biases across message types
+- **Business Impact Measurement**: Track ROI of optimization improvements
+
+## References
+
+- [Facility Support Analyzer Tutorial](https://dspy.ai/docs/tutorials/gepa_facilitysupportanalyzer/) - Official enterprise classification tutorial
+- [Multi-Task Learning Best Practices](https://dspy.ai/docs/deep-dive/multi-task-optimization/)
+- [GEPA Paper](https://arxiv.org/abs/2507.19457) - Reflective prompt evolution methodology
+- [Enterprise AI Deployment Guide](https://dspy.ai/docs/production/enterprise-deployment/)
+- [MLflow Enterprise Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)

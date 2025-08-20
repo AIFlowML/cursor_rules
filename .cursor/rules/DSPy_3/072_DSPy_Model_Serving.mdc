@@ -1,0 +1,954 @@
+---
+description: Model Serving - LM serving patterns and load balancing for scalable DSPy production deployments
+globs: ["**/*.py", "**/*.ipynb", "**/*.yaml", "**/*.json", "**/*.dockerfile"]
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 model serving and load balancing for production environments.
+
+## Model Serving Architecture Flow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Client Apps   │ => │  Load Balancer  │ => │   API Gateway   │
+│  (Web/Mobile)   │    │  (nginx/HAProxy)│    │   (Kong/Envoy)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                       │
+                                v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                    DSPy Serving Layer                          │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   FastAPI Pod 1 │   FastAPI Pod 2 │     FastAPI Pod N           │
+│   dspy.asyncify │   dspy.asyncify │     dspy.asyncify          │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+                                │
+                                v
+┌─────────────────────────────────────────────────────────────────┐
+│                    LM Provider Layer                           │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   OpenAI API    │   Anthropic     │     Local Models            │
+│   (Rate Limited)│   (Rate Limited)│     (SGLang/vLLM)          │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+                                │
+                                v
+┌─────────────────────────────────────────────────────────────────┐
+│                  Model Management Layer                        │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   MLflow Model  │   Model Cache   │     Circuit Breakers        │
+│   Registry      │   (Redis/FS)    │     (Retry Logic)           │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Model Serving Patterns
+
+### Quick Start
+```python
+# quick_serve.py - Minimal model serving setup
+import dspy
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+from typing import Optional
+import asyncio
+
+app = FastAPI(title="DSPy Model Server", version="1.0.0")
+
+class PredictionRequest(BaseModel):
+    question: str
+    max_tokens: Optional[int] = 1000
+    temperature: Optional[float] = 0.1
+
+class ModelServer:
+    def __init__(self):
+        # Configure DSPy with multiple LM options
+        self.lm_configs = {
+            "gpt-4o-mini": dspy.LM("openai/gpt-4o-mini", max_tokens=4000),
+            "claude-3-haiku": dspy.LM("anthropic/claude-3-haiku-20240307", max_tokens=4000),
+        }
+        
+        # Default configuration
+        dspy.configure(
+            lm=self.lm_configs["gpt-4o-mini"],
+            async_max_workers=8
+        )
+        
+        # Initialize and asyncify program
+        self.program = dspy.ChainOfThought("question -> answer")
+        self.async_program = dspy.asyncify(self.program)
+    
+    async def predict(self, request: PredictionRequest) -> dict:
+        try:
+            result = await self.async_program(question=request.question)
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model": "gpt-4o-mini",
+                "status": "success"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+# Initialize server
+model_server = ModelServer()
+
+@app.post("/predict")
+async def predict_endpoint(request: PredictionRequest):
+    return await model_server.predict(request)
+
+@app.get("/models")
+async def list_models():
+    return {"available_models": list(model_server.lm_configs.keys())}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "server": "dspy-model-server"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, workers=4)
+```
+
+### Enterprise Model Serving
+```python
+# enterprise_serve.py - Production model serving with load balancing
+import dspy
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel, Field
+import uvicorn
+import asyncio
+import logging
+import time
+from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
+import random
+import json
+from dataclasses import dataclass
+from enum import Enum
+
+# Configure structured logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ModelProvider(str, Enum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    LOCAL = "local"
+
+@dataclass
+class LMConfig:
+    provider: ModelProvider
+    model_name: str
+    max_tokens: int
+    temperature: float
+    timeout: float
+    cost_per_token: float  # For cost tracking
+    rate_limit: int  # Requests per minute
+
+class ModelLoadBalancer:
+    """Advanced load balancer for DSPy LM providers with failover and cost optimization."""
+    
+    def __init__(self):
+        self.models = {}
+        self.model_stats = {}  # Track success rates, latencies, costs
+        self.circuit_breakers = {}  # Track failed models
+        
+    def add_model(self, name: str, config: LMConfig):
+        """Add a model configuration to the load balancer."""
+        try:
+            if config.provider == ModelProvider.OPENAI:
+                lm = dspy.LM(f"openai/{config.model_name}", 
+                           max_tokens=config.max_tokens,
+                           temperature=config.temperature,
+                           timeout=config.timeout)
+            elif config.provider == ModelProvider.ANTHROPIC:
+                lm = dspy.LM(f"anthropic/{config.model_name}",
+                           max_tokens=config.max_tokens,
+                           temperature=config.temperature,
+                           timeout=config.timeout)
+            elif config.provider == ModelProvider.LOCAL:
+                lm = dspy.LM(f"local/{config.model_name}",
+                           max_tokens=config.max_tokens,
+                           temperature=config.temperature)
+            
+            self.models[name] = {
+                "lm": lm,
+                "config": config,
+                "program": dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+            }
+            
+            self.model_stats[name] = {
+                "requests": 0,
+                "successes": 0,
+                "failures": 0,
+                "total_latency": 0.0,
+                "total_cost": 0.0,
+                "last_success": time.time()
+            }
+            
+            self.circuit_breakers[name] = {
+                "failures": 0,
+                "last_failure": 0,
+                "is_open": False
+            }
+            
+            logger.info(f"Added model {name} with provider {config.provider}")
+            
+        except Exception as e:
+            logger.error(f"Failed to add model {name}: {e}")
+    
+    def select_model(self, strategy: str = "cost_optimized") -> str:
+        """Select the best model based on the strategy."""
+        available_models = [
+            name for name, breaker in self.circuit_breakers.items()
+            if not breaker["is_open"] or (time.time() - breaker["last_failure"]) > 300  # 5 min cooldown
+        ]
+        
+        if not available_models:
+            raise HTTPException(status_code=503, detail="No models available")
+        
+        if strategy == "cost_optimized":
+            # Select cheapest model with good success rate
+            return min(available_models, key=lambda x: (
+                self.models[x]["config"].cost_per_token,
+                -self.get_success_rate(x)
+            ))
+        elif strategy == "performance":
+            # Select fastest model
+            return min(available_models, key=lambda x: self.get_avg_latency(x))
+        elif strategy == "round_robin":
+            return random.choice(available_models)
+        else:
+            return available_models[0]
+    
+    def get_success_rate(self, model_name: str) -> float:
+        stats = self.model_stats[model_name]
+        if stats["requests"] == 0:
+            return 1.0  # New model, assume good
+        return stats["successes"] / stats["requests"]
+    
+    def get_avg_latency(self, model_name: str) -> float:
+        stats = self.model_stats[model_name]
+        if stats["successes"] == 0:
+            return float('inf')
+        return stats["total_latency"] / stats["successes"]
+    
+    async def predict_with_fallback(self, question: str, strategy: str = "cost_optimized") -> Dict[str, Any]:
+        """Make prediction with automatic fallback to other models."""
+        attempt_count = 0
+        max_attempts = min(3, len(self.models))
+        
+        while attempt_count < max_attempts:
+            try:
+                model_name = self.select_model(strategy)
+                model_info = self.models[model_name]
+                
+                start_time = time.time()
+                
+                # Make prediction
+                result = await model_info["program"](question=question)
+                
+                latency = time.time() - start_time
+                
+                # Update stats on success
+                self.update_stats(model_name, success=True, latency=latency)
+                
+                # Reset circuit breaker
+                self.circuit_breakers[model_name]["failures"] = 0
+                self.circuit_breakers[model_name]["is_open"] = False
+                
+                return {
+                    "answer": result.answer,
+                    "reasoning": getattr(result, "reasoning", ""),
+                    "model": model_name,
+                    "provider": model_info["config"].provider.value,
+                    "latency": latency,
+                    "cost": self.calculate_cost(model_name, question, result.answer),
+                    "status": "success"
+                }
+                
+            except Exception as e:
+                attempt_count += 1
+                self.update_stats(model_name, success=False)
+                
+                # Update circuit breaker
+                breaker = self.circuit_breakers[model_name]
+                breaker["failures"] += 1
+                breaker["last_failure"] = time.time()
+                
+                if breaker["failures"] >= 5:  # Open circuit after 5 failures
+                    breaker["is_open"] = True
+                    logger.warning(f"Circuit breaker opened for model {model_name}")
+                
+                logger.error(f"Model {model_name} failed (attempt {attempt_count}): {e}")
+                
+                if attempt_count >= max_attempts:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"All models failed. Last error: {str(e)}"
+                    )
+        
+        raise HTTPException(status_code=503, detail="No models available for prediction")
+    
+    def update_stats(self, model_name: str, success: bool, latency: float = 0.0):
+        """Update model performance statistics."""
+        stats = self.model_stats[model_name]
+        stats["requests"] += 1
+        
+        if success:
+            stats["successes"] += 1
+            stats["total_latency"] += latency
+            stats["last_success"] = time.time()
+        else:
+            stats["failures"] += 1
+    
+    def calculate_cost(self, model_name: str, input_text: str, output_text: str) -> float:
+        """Calculate estimated cost for the request."""
+        config = self.models[model_name]["config"]
+        total_tokens = len(input_text.split()) + len(output_text.split())  # Rough estimate
+        return total_tokens * config.cost_per_token
+    
+    def get_model_stats(self) -> Dict[str, Any]:
+        """Get comprehensive statistics for all models."""
+        stats = {}
+        for model_name in self.models:
+            model_stats = self.model_stats[model_name]
+            circuit_breaker = self.circuit_breakers[model_name]
+            
+            stats[model_name] = {
+                "provider": self.models[model_name]["config"].provider.value,
+                "requests": model_stats["requests"],
+                "success_rate": self.get_success_rate(model_name),
+                "avg_latency": self.get_avg_latency(model_name) if model_stats["successes"] > 0 else 0,
+                "total_cost": model_stats["total_cost"],
+                "circuit_breaker_open": circuit_breaker["is_open"],
+                "last_success": model_stats["last_success"]
+            }
+        
+        return stats
+
+class EnterpriseModelServer:
+    """Enterprise-grade model server with load balancing and monitoring."""
+    
+    def __init__(self):
+        self.load_balancer = ModelLoadBalancer()
+        self.setup_models()
+    
+    def setup_models(self):
+        """Configure all available models."""
+        # OpenAI models
+        self.load_balancer.add_model(
+            "gpt-4o-mini-fast",
+            LMConfig(
+                provider=ModelProvider.OPENAI,
+                model_name="gpt-4o-mini",
+                max_tokens=2000,
+                temperature=0.1,
+                timeout=30.0,
+                cost_per_token=0.00002,
+                rate_limit=1000
+            )
+        )
+        
+        self.load_balancer.add_model(
+            "gpt-4o-quality",
+            LMConfig(
+                provider=ModelProvider.OPENAI,
+                model_name="gpt-4o",
+                max_tokens=4000,
+                temperature=0.1,
+                timeout=60.0,
+                cost_per_token=0.0001,
+                rate_limit=500
+            )
+        )
+        
+        # Anthropic models
+        self.load_balancer.add_model(
+            "claude-haiku-fast",
+            LMConfig(
+                provider=ModelProvider.ANTHROPIC,
+                model_name="claude-3-haiku-20240307",
+                max_tokens=2000,
+                temperature=0.1,
+                timeout=30.0,
+                cost_per_token=0.000025,
+                rate_limit=800
+            )
+        )
+        
+        # Local model (if available)
+        try:
+            self.load_balancer.add_model(
+                "llama-local",
+                LMConfig(
+                    provider=ModelProvider.LOCAL,
+                    model_name="llama-3.1-8b",
+                    max_tokens=2000,
+                    temperature=0.1,
+                    timeout=45.0,
+                    cost_per_token=0.0,  # Free local inference
+                    rate_limit=100
+                )
+            )
+        except:
+            logger.info("Local model not available")
+    
+    async def predict(self, question: str, strategy: str = "cost_optimized") -> Dict[str, Any]:
+        """Make prediction using load balancing strategy."""
+        return await self.load_balancer.predict_with_fallback(question, strategy)
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get comprehensive health status."""
+        stats = self.load_balancer.get_model_stats()
+        
+        healthy_models = sum(1 for model_stats in stats.values() 
+                           if not model_stats["circuit_breaker_open"])
+        total_models = len(stats)
+        
+        overall_status = "healthy" if healthy_models > 0 else "unhealthy"
+        if healthy_models < total_models:
+            overall_status = "degraded"
+        
+        return {
+            "status": overall_status,
+            "healthy_models": healthy_models,
+            "total_models": total_models,
+            "model_stats": stats
+        }
+
+# FastAPI application setup
+server = EnterpriseModelServer()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting Enterprise Model Server")
+    yield
+    logger.info("Shutting down Enterprise Model Server")
+
+app = FastAPI(
+    title="DSPy Enterprise Model Server",
+    description="Production model serving with load balancing and failover",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+class PredictionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    strategy: Optional[str] = Field("cost_optimized", regex="^(cost_optimized|performance|round_robin)$")
+
+@app.post("/predict")
+async def predict_endpoint(request: PredictionRequest):
+    """Main prediction endpoint with load balancing."""
+    return await server.predict(request.question, request.strategy)
+
+@app.get("/health")
+async def health_endpoint():
+    """Comprehensive health check endpoint."""
+    return server.get_health_status()
+
+@app.get("/models")
+async def list_models():
+    """List all available models and their status."""
+    return server.get_health_status()["model_stats"]
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus-compatible metrics endpoint."""
+    stats = server.load_balancer.get_model_stats()
+    
+    metrics = []
+    for model_name, model_stats in stats.items():
+        metrics.extend([
+            f"dspy_model_requests_total{{model=\"{model_name}\"}} {model_stats['requests']}",
+            f"dspy_model_success_rate{{model=\"{model_name}\"}} {model_stats['success_rate']}",
+            f"dspy_model_avg_latency_seconds{{model=\"{model_name}\"}} {model_stats['avg_latency']}",
+            f"dspy_model_total_cost{{model=\"{model_name}\"}} {model_stats['total_cost']}",
+            f"dspy_model_circuit_breaker_open{{model=\"{model_name}\"}} {int(model_stats['circuit_breaker_open'])}"
+        ])
+    
+    return "\n".join(metrics)
+
+# Production server configuration
+if __name__ == "__main__":
+    uvicorn.run(
+        "enterprise_serve:app",
+        host="0.0.0.0",
+        port=8000,
+        workers=1,  # Single worker for state consistency
+        reload=False,
+        access_log=True
+    )
+```
+
+## Core Model Serving Patterns
+
+### Basic Load Balancing
+```python
+# Simple round-robin load balancing for DSPy
+import dspy
+from typing import List, Dict
+import random
+
+class SimpleLoadBalancer:
+    def __init__(self, model_configs: List[Dict[str, str]]):
+        self.models = []
+        self.current_index = 0
+        
+        for config in model_configs:
+            lm = dspy.LM(config["model"], max_tokens=config.get("max_tokens", 2000))
+            program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+            
+            self.models.append({
+                "name": config["name"],
+                "lm": lm,
+                "program": program
+            })
+    
+    def get_next_model(self):
+        """Round-robin selection."""
+        model = self.models[self.current_index]
+        self.current_index = (self.current_index + 1) % len(self.models)
+        return model
+    
+    async def predict(self, question: str) -> dict:
+        model = self.get_next_model()
+        
+        try:
+            # Temporarily configure DSPy with selected model
+            dspy.configure(lm=model["lm"])
+            result = await model["program"](question=question)
+            
+            return {
+                "answer": result.answer,
+                "model": model["name"],
+                "status": "success"
+            }
+        except Exception as e:
+            return {"error": str(e), "model": model["name"], "status": "error"}
+
+# Usage
+models = [
+    {"name": "gpt-4o-mini", "model": "openai/gpt-4o-mini"},
+    {"name": "claude-haiku", "model": "anthropic/claude-3-haiku-20240307"},
+]
+
+lb = SimpleLoadBalancer(models)
+```
+
+### Advanced Circuit Breaker
+```python
+# Circuit breaker pattern for model serving reliability
+import time
+from enum import Enum
+from typing import Callable, Any
+import asyncio
+
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open" 
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 5, timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.timeout = timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = CircuitState.CLOSED
+    
+    async def call(self, func: Callable, *args, **kwargs) -> Any:
+        if self.state == CircuitState.OPEN:
+            if time.time() - self.last_failure_time > self.timeout:
+                self.state = CircuitState.HALF_OPEN
+            else:
+                raise Exception("Circuit breaker is OPEN")
+        
+        try:
+            result = await func(*args, **kwargs)
+            self.on_success()
+            return result
+        except Exception as e:
+            self.on_failure()
+            raise e
+    
+    def on_success(self):
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
+    
+    def on_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+
+class ResilientModelServer:
+    def __init__(self):
+        self.models = {}
+        self.circuit_breakers = {}
+        
+        # Configure models with circuit breakers
+        model_configs = [
+            {"name": "primary", "model": "openai/gpt-4o-mini"},
+            {"name": "backup", "model": "anthropic/claude-3-haiku-20240307"}
+        ]
+        
+        for config in model_configs:
+            lm = dspy.LM(config["model"])
+            program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+            
+            self.models[config["name"]] = {
+                "lm": lm,
+                "program": program
+            }
+            self.circuit_breakers[config["name"]] = CircuitBreaker()
+    
+    async def predict_with_fallback(self, question: str) -> dict:
+        for model_name in ["primary", "backup"]:
+            try:
+                breaker = self.circuit_breakers[model_name]
+                model = self.models[model_name]
+                
+                # Configure DSPy with current model
+                dspy.configure(lm=model["lm"])
+                
+                result = await breaker.call(model["program"], question=question)
+                
+                return {
+                    "answer": result.answer,
+                    "model": model_name,
+                    "circuit_state": breaker.state.value,
+                    "status": "success"
+                }
+                
+            except Exception as e:
+                continue
+        
+        raise Exception("All models failed")
+```
+
+## Performance Optimization
+
+### Model Caching Strategy
+```python
+# Advanced caching for model serving
+import redis
+import pickle
+import hashlib
+from typing import Optional, Any
+import asyncio
+
+class ModelCache:
+    def __init__(self, redis_host: str = "localhost", redis_port: int = 6379):
+        self.redis = redis.Redis(host=redis_host, port=redis_port, decode_responses=False)
+        self.local_cache = {}  # In-memory cache for hot data
+        self.cache_stats = {"hits": 0, "misses": 0}
+    
+    def generate_cache_key(self, question: str, model_name: str) -> str:
+        """Generate cache key from question and model."""
+        content = f"{model_name}:{question}"
+        return f"dspy:prediction:{hashlib.sha256(content.encode()).hexdigest()}"
+    
+    async def get(self, question: str, model_name: str) -> Optional[dict]:
+        """Get cached prediction if available."""
+        key = self.generate_cache_key(question, model_name)
+        
+        # Check local cache first (fastest)
+        if key in self.local_cache:
+            self.cache_stats["hits"] += 1
+            return self.local_cache[key]
+        
+        # Check Redis cache
+        try:
+            cached_data = self.redis.get(key)
+            if cached_data:
+                result = pickle.loads(cached_data)
+                # Populate local cache
+                self.local_cache[key] = result
+                self.cache_stats["hits"] += 1
+                return result
+        except Exception as e:
+            print(f"Cache get error: {e}")
+        
+        self.cache_stats["misses"] += 1
+        return None
+    
+    async def set(self, question: str, model_name: str, result: dict, ttl: int = 3600):
+        """Cache prediction result."""
+        key = self.generate_cache_key(question, model_name)
+        
+        try:
+            # Store in Redis with TTL
+            serialized_data = pickle.dumps(result)
+            self.redis.setex(key, ttl, serialized_data)
+            
+            # Store in local cache (no TTL for simplicity)
+            self.local_cache[key] = result
+            
+        except Exception as e:
+            print(f"Cache set error: {e}")
+    
+    def get_cache_stats(self) -> dict:
+        """Get cache performance statistics."""
+        total_requests = self.cache_stats["hits"] + self.cache_stats["misses"]
+        hit_rate = self.cache_stats["hits"] / total_requests if total_requests > 0 else 0
+        
+        return {
+            "cache_hits": self.cache_stats["hits"],
+            "cache_misses": self.cache_stats["misses"],
+            "hit_rate": hit_rate,
+            "local_cache_size": len(self.local_cache)
+        }
+
+class CachedModelServer:
+    def __init__(self):
+        self.cache = ModelCache()
+        
+        # Initialize DSPy models
+        self.lm = dspy.LM("openai/gpt-4o-mini")
+        dspy.configure(lm=self.lm, async_max_workers=8)
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+    
+    async def predict(self, question: str) -> dict:
+        model_name = "gpt-4o-mini"
+        
+        # Try cache first
+        cached_result = await self.cache.get(question, model_name)
+        if cached_result:
+            cached_result["cached"] = True
+            return cached_result
+        
+        # Generate new prediction
+        try:
+            result = await self.program(question=question)
+            
+            response = {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model": model_name,
+                "cached": False,
+                "status": "success"
+            }
+            
+            # Cache the result
+            await self.cache.set(question, model_name, response)
+            
+            return response
+            
+        except Exception as e:
+            return {"error": str(e), "status": "error", "cached": False}
+```
+
+### Connection Pool Management
+```python
+# Connection pool for better resource utilization
+import asyncio
+import aiohttp
+from typing import Optional
+import dspy
+
+class ConnectionManager:
+    def __init__(self, max_connections: int = 100):
+        self.connector = aiohttp.TCPConnector(
+            limit=max_connections,
+            limit_per_host=50,
+            ttl_dns_cache=300,
+            use_dns_cache=True
+        )
+        
+        self.session = aiohttp.ClientSession(
+            connector=self.connector,
+            timeout=aiohttp.ClientTimeout(total=60)
+        )
+    
+    async def close(self):
+        await self.session.close()
+
+class OptimizedModelServer:
+    def __init__(self):
+        self.connection_manager = ConnectionManager()
+        
+        # Configure DSPy with optimized settings
+        self.lm = dspy.LM(
+            "openai/gpt-4o-mini",
+            max_tokens=4000,
+            timeout=30.0
+        )
+        
+        dspy.configure(
+            lm=self.lm,
+            async_max_workers=16,  # Adjust based on your CPU cores
+            experimental=True
+        )
+        
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+    
+    async def predict_batch(self, questions: List[str]) -> List[dict]:
+        """Process multiple questions in parallel."""
+        tasks = []
+        
+        for question in questions:
+            task = asyncio.create_task(self._predict_single(question))
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle exceptions in results
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                processed_results.append({
+                    "error": str(result),
+                    "question": questions[i],
+                    "status": "error"
+                })
+            else:
+                processed_results.append(result)
+        
+        return processed_results
+    
+    async def _predict_single(self, question: str) -> dict:
+        try:
+            result = await self.program(question=question)
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "status": "success"
+            }
+        except Exception as e:
+            return {"error": str(e), "status": "error"}
+    
+    async def cleanup(self):
+        await self.connection_manager.close()
+```
+
+## Security and Compliance
+
+### Rate Limiting
+```python
+# Rate limiting for model serving endpoints
+from collections import defaultdict
+import time
+from typing import Dict
+
+class RateLimiter:
+    def __init__(self, requests_per_minute: int = 60):
+        self.requests_per_minute = requests_per_minute
+        self.requests: Dict[str, list] = defaultdict(list)
+    
+    def is_allowed(self, client_id: str) -> bool:
+        current_time = time.time()
+        minute_ago = current_time - 60
+        
+        # Clean old requests
+        self.requests[client_id] = [
+            req_time for req_time in self.requests[client_id]
+            if req_time > minute_ago
+        ]
+        
+        # Check if under limit
+        if len(self.requests[client_id]) < self.requests_per_minute:
+            self.requests[client_id].append(current_time)
+            return True
+        
+        return False
+
+# Usage with FastAPI
+from fastapi import HTTPException, Request
+
+rate_limiter = RateLimiter(requests_per_minute=100)
+
+@app.post("/predict")
+async def rate_limited_predict(request: PredictionRequest, req: Request):
+    client_id = req.client.host
+    
+    if not rate_limiter.is_allowed(client_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later."
+        )
+    
+    return await model_server.predict(request.question)
+```
+
+### Input Sanitization
+```python
+# Input validation and sanitization for model serving
+import re
+from typing import List
+
+class InputValidator:
+    def __init__(self):
+        self.dangerous_patterns = [
+            r'<script.*?</script>',
+            r'javascript:',
+            r'eval\(',
+            r'exec\(',
+            r'import\s+os',
+            r'subprocess\.',
+        ]
+        
+        self.max_length = 5000
+        self.min_length = 1
+    
+    def validate_question(self, question: str) -> str:
+        """Validate and sanitize input question."""
+        # Length check
+        if len(question) < self.min_length:
+            raise ValueError("Question too short")
+        
+        if len(question) > self.max_length:
+            raise ValueError("Question too long")
+        
+        # Check for dangerous patterns
+        for pattern in self.dangerous_patterns:
+            if re.search(pattern, question, re.IGNORECASE):
+                raise ValueError("Invalid content detected")
+        
+        # Basic sanitization
+        sanitized = question.strip()
+        sanitized = re.sub(r'[^\w\s\?\.\,\!\-\(\)]', '', sanitized)
+        
+        return sanitized
+
+validator = InputValidator()
+
+@app.post("/predict")
+async def validated_predict(request: PredictionRequest):
+    try:
+        clean_question = validator.validate_question(request.question)
+        return await model_server.predict(clean_question)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+```
+
+## Speed Tips
+- Use connection pooling with `aiohttp.TCPConnector` to reduce connection overhead
+- Implement multi-level caching (Redis + in-memory) for frequently asked questions
+- Configure optimal `async_max_workers` based on your CPU cores and expected load
+- Use batch processing for multiple simultaneous requests to improve throughput
+- Implement circuit breakers to prevent cascading failures across model providers
+- Cache model configurations and avoid re-initializing DSPy programs repeatedly
+
+## Common Pitfalls
+- Not implementing proper circuit breakers leading to cascade failures
+- Inadequate error handling for LM provider rate limits and timeouts  
+- Missing connection pooling causing resource exhaustion under load
+- Not monitoring model performance metrics and cost attribution
+- Insufficient caching strategy leading to repeated expensive API calls
+- Overlooking proper async configuration causing thread pool exhaustion
+
+## Best Practices Summary
+- Always implement load balancing and failover for production model serving
+- Use circuit breakers to isolate failing models and prevent system-wide outages
+- Implement comprehensive caching with appropriate TTL values
+- Monitor model performance, costs, and success rates continuously
+- Set up proper rate limiting to prevent abuse and manage costs
+- Use structured logging with correlation IDs for debugging across services
+- Implement graceful degradation when models are unavailable
+
+## References
+- [DSPy Async Tutorial](https://dspy-docs.vercel.app/tutorials/async/)
+- [FastAPI Advanced Features](https://fastapi.tiangolo.com/advanced/)
+- [Circuit Breaker Pattern](https://martinfowler.com/bliki/CircuitBreaker.html)
+- [Redis Caching Best Practices](https://redis.io/docs/manual/patterns/)
+- [Load Balancing Strategies](https://www.nginx.com/resources/glossary/load-balancing/)

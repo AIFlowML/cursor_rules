@@ -1,0 +1,456 @@
+---
+description: AGNO Workflows 2.0 - Master the core concepts for multi-agent orchestration
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0, the powerful orchestration system for multi-agent automation. Master step-wise controlled execution for maximum efficiency.
+
+## AGNO Workflows 2.0 Development Flow
+
+```
+Define Workflow → Create Steps → Configure Execution → Run → Handle Results
+       ↓              ↓           ↓               ↓          ↓
+   Architecture    Executors    Flow Control    Execute   Process Output
+   Planning        (Agents/     (Sequential/    Workflow  Extract Results
+       ↓           Teams/Funcs)  Parallel/Loop)     ↓          ↓
+   Sequential         ↓              ↓          Response   Type Safety
+   Parallel      Step Creation   Conditions     Generated  Ready for Use
+   Conditional        ↓              ↓              ↓           ↓
+   Loops         Ready for      Workflow       WorkflowRun  Structured Data
+   Routing       Execution      Configured     Response     Available
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Workflow
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Configure agents
+researcher = Agent(
+    name="Researcher",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Research topics and gather information"
+)
+
+writer = Agent(
+    name="Writer", 
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Create compelling content from research"
+)
+
+# Create workflow - Sequential by default
+workflow = Workflow(
+    name="Content Creation Pipeline",
+    steps=[researcher, writer]  # Direct agent usage
+)
+
+# Execute immediately
+workflow.print_response("AI trends in 2024", markdown=True)
+```
+
+### Production Ready - Advanced Configuration
+```python
+from agno.workflow.v2 import Step, Workflow, StepOutput
+from agno.storage.sqlite import SqliteStorage
+from agno.team import Team
+import asyncio
+
+# Define specialized agents
+hackernews_agent = Agent(
+    name="HackerNews Researcher",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools()],
+    role="Extract insights from HackerNews discussions"
+)
+
+web_agent = Agent(
+    name="Web Researcher", 
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Search web for latest trends and data"
+)
+
+# Create coordinated team
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",  # Agents collaborate
+    members=[hackernews_agent, web_agent],
+    instructions="Research comprehensively from multiple sources"
+)
+
+# Custom function for data processing
+def data_processor(step_input):
+    """Process and enhance research data"""
+    research_data = step_input.previous_step_content
+    
+    # Custom processing logic
+    enhanced_data = f"""
+    ## Research Analysis Report
+    
+    **Source Data Quality**: {len(research_data.split()) if research_data else 0} words
+    **Processing Status**: Enhanced with custom analysis
+    
+    **Research Findings:**
+    {research_data}
+    
+    **Custom Enhancements:**
+    - Data validation completed
+    - Key insights extracted
+    - Structured for content creation
+    """
+    
+    return StepOutput(content=enhanced_data)
+
+# Production workflow with full configuration
+workflow = Workflow(
+    name="Enterprise Content Pipeline",
+    description="Multi-agent content creation with enhanced processing",
+    steps=[
+        research_team,           # Team execution
+        data_processor,          # Custom function
+        content_agent,           # Agent execution
+    ],
+    storage=SqliteStorage(      # Persistent storage
+        table_name="workflow_v2",
+        db_file="tmp/workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True,          # Event tracking
+    workflow_session_state={}   # Shared state
+)
+
+# Async execution with streaming
+async def run_pipeline():
+    response = workflow.arun(
+        message="Analyze quantum computing trends",
+        stream=True,
+        stream_intermediate_steps=True
+    )
+    
+    async for event in response:
+        print(f"Event: {event.event}")
+```
+
+## Core Architectural Components
+
+### 1. Workflow Class - The Orchestrator
+```python
+from agno.workflow.v2 import Workflow
+
+# Basic orchestrator
+workflow = Workflow(
+    name="My Workflow",           # Required: Workflow identifier
+    description="Process data",   # Optional: Workflow description
+    steps=[step1, step2],        # Required: Execution sequence
+    storage=storage_backend,     # Optional: Persistence layer
+    store_events=True,           # Optional: Event tracking
+    workflow_session_state={},   # Optional: Shared state
+    events_to_skip=[]           # Optional: Filter events
+)
+```
+
+### 2. Step - Fundamental Unit of Work  
+```python
+from agno.workflow.v2 import Step
+
+# Agent-based step
+agent_step = Step(
+    name="Research Phase",        # Optional: Step identifier
+    description="Gather data",   # Optional: Step description  
+    agent=research_agent         # Executor: Single agent
+)
+
+# Team-based step
+team_step = Step(
+    name="Analysis Phase",
+    team=analysis_team           # Executor: Team of agents
+)
+
+# Function-based step
+function_step = Step(
+    name="Processing Phase", 
+    executor=custom_function     # Executor: Custom Python function
+)
+
+# Direct assignment (shorthand)
+workflow = Workflow(
+    steps=[
+        research_agent,          # Direct agent assignment
+        analysis_team,           # Direct team assignment  
+        custom_function          # Direct function assignment
+    ]
+)
+```
+
+### 3. Execution Flow Types
+
+#### Sequential (Default)
+```python
+# Linear execution: Step 1 → Step 2 → Step 3
+workflow = Workflow(
+    name="Sequential Pipeline",
+    steps=[researcher, analyzer, writer]
+)
+```
+
+#### Parallel Execution
+```python
+from agno.workflow.v2 import Parallel
+
+# Concurrent execution with result joining
+workflow = Workflow(
+    name="Parallel Research",
+    steps=[
+        Parallel(
+            Step(name="HN Research", agent=hn_agent),
+            Step(name="Web Research", agent=web_agent),
+            Step(name="Academic Research", agent=academic_agent),
+            name="Research Phase"
+        ),
+        synthesizer_agent  # Processes all parallel results
+    ]
+)
+```
+
+#### Conditional Execution
+```python
+from agno.workflow.v2 import Condition
+
+def is_technical_topic(step_input):
+    return "technology" in step_input.message.lower()
+
+workflow = Workflow(
+    name="Conditional Processing",
+    steps=[
+        Condition(
+            name="Tech Topic Check",
+            evaluator=is_technical_topic,
+            steps=[Step(name="Tech Analysis", agent=tech_expert)]
+        ),
+        general_processor  # Always runs
+    ]
+)
+```
+
+#### Loop/Iteration 
+```python
+from agno.workflow.v2 import Loop
+
+def quality_check(outputs):
+    # Continue loop if quality insufficient
+    return len(outputs[-1].content) > 500
+
+workflow = Workflow(
+    name="Quality-Driven Process",
+    steps=[
+        Loop(
+            name="Iterative Research",
+            steps=[Step(name="Deep Research", agent=researcher)],
+            end_condition=quality_check,
+            max_iterations=3
+        ),
+        final_processor
+    ]
+)
+```
+
+#### Dynamic Routing
+```python
+from agno.workflow.v2 import Router
+
+def route_by_complexity(step_input):
+    topic = step_input.message
+    if "complex" in topic.lower():
+        return [expert_team]
+    else:
+        return [basic_agent]
+
+workflow = Workflow(
+    name="Dynamic Routing",
+    steps=[
+        Router(
+            name="Complexity Router",
+            selector=route_by_complexity,
+            choices=[expert_team, basic_agent]
+        )
+    ]
+)
+```
+
+## Input and Output Patterns
+
+### Supported Input Types
+```python
+# String input (most common)
+workflow.run("Analyze AI trends")
+
+# Pydantic model input (structured)
+from pydantic import BaseModel
+
+class ResearchRequest(BaseModel):
+    topic: str
+    depth: int
+    sources: list[str]
+
+request = ResearchRequest(
+    topic="AI trends", 
+    depth=5, 
+    sources=["academic", "industry"]
+)
+workflow.run(request)
+
+# List input (batch processing)
+topics = ["AI", "ML", "Robotics"]
+workflow.run(topics)
+
+# Dictionary input (key-value pairs)
+params = {
+    "query": "AI trends",
+    "timeframe": "2024",
+    "sources": ["web", "academic"]
+}
+workflow.run(params)
+```
+
+### Output Handling
+```python
+# Direct response access
+response = workflow.run("Analyze quantum computing")
+print(response.content)      # Main content
+print(response.run_id)       # Execution identifier
+print(response.events)       # Execution events (if stored)
+print(response.images)       # Media outputs
+print(response.artifacts)    # File artifacts
+
+# Streaming response
+for event in workflow.run("Research topic", stream=True):
+    print(f"Event: {event.event}")
+    print(f"Content: {event.content}")
+
+# Async execution
+async def process():
+    response = await workflow.arun("Process data")
+    return response.content
+```
+
+## Core Benefits
+
+### Why Use Workflows 2.0?
+- **Deterministic Orchestration**: Predictable step-by-step execution
+- **Mixed Executor Support**: Agents, teams, and custom functions  
+- **Advanced Flow Control**: Parallel, conditional, loops, routing
+- **State Management**: Persistent session state across steps
+- **Error Handling**: Built-in retry mechanisms and early stopping
+- **Streaming Support**: Real-time feedback and progress tracking
+- **Type Safety**: Structured inputs/outputs with Pydantic
+- **Production Ready**: Storage, logging, event tracking
+
+### Workflow vs Teams
+- **Workflows**: Deterministic automation with step control
+- **Teams**: Agentic coordination and dynamic collaboration
+- **Use Workflows When**: You need controlled, predictable flows
+- **Use Teams When**: Agents need to collaborate dynamically
+
+## Speed Tips
+
+### Instant Development Patterns
+```python
+# Rapid prototyping pattern
+def quick_workflow(name, *executors):
+    """Create workflow instantly from executors"""
+    return Workflow(name=name, steps=list(executors))
+
+# Usage
+content_pipeline = quick_workflow(
+    "Content Pipeline",
+    researcher_agent,
+    writer_agent,
+    editor_agent
+)
+
+# One-line execution
+quick_workflow("Analysis", analyst, reviewer).print_response("Data")
+```
+
+### Performance Optimization  
+```python
+# Reuse workflow instances
+pipeline = Workflow(name="Reusable", steps=[agent1, agent2])
+
+# Process multiple inputs efficiently
+inputs = ["Topic 1", "Topic 2", "Topic 3"]
+results = [pipeline.run(input_msg) for input_msg in inputs]
+
+# Async batch processing
+async def batch_process(inputs):
+    tasks = [pipeline.arun(msg) for msg in inputs]
+    return await asyncio.gather(*tasks)
+```
+
+## Common Pitfalls
+
+### Configuration Errors
+```python
+# ❌ DON'T: Empty steps array
+workflow = Workflow(name="Empty", steps=[])
+
+# ✅ DO: Always provide at least one step
+workflow = Workflow(name="Valid", steps=[agent])
+
+# ❌ DON'T: Mix incompatible executors incorrectly
+step = Step(agent=agent, team=team)  # Invalid - choose one
+
+# ✅ DO: Use single executor per step
+step = Step(agent=agent)  # Valid agent step
+step = Step(team=team)    # Valid team step
+step = Step(executor=func)  # Valid function step
+```
+
+### Input/Output Mismatches
+```python
+# ❌ DON'T: Expect structured output without configuration
+response = workflow.run("data")
+result = response.parsed_data  # May not exist
+
+# ✅ DO: Configure agents with response models for structure
+agent = Agent(
+    name="Structured Agent",
+    model=OpenAIChat(id="gpt-4"),
+    response_model=MyDataModel  # Ensures structured output
+)
+```
+
+### Resource Management
+```python
+# ❌ DON'T: Create workflows in loops
+for task in tasks:
+    workflow = Workflow(steps=[agent])  # Memory leak
+    workflow.run(task)
+
+# ✅ DO: Reuse workflow instances  
+workflow = Workflow(steps=[agent])
+for task in tasks:
+    workflow.run(task)  # Efficient reuse
+```
+
+## Best Practices Summary
+
+- **Plan Architecture**: Choose appropriate execution patterns upfront
+- **Name Components**: Use descriptive names for workflows and steps
+- **Configure Storage**: Set up persistence for production workflows
+- **Handle Errors**: Implement validation and early stopping
+- **Optimize Performance**: Reuse instances and batch operations
+- **Monitor Execution**: Enable event storage for debugging
+- **Type Safety**: Use Pydantic models for structured data flow
+- **State Management**: Leverage session state for cross-step data
+- **Test Thoroughly**: Validate all execution paths and error conditions
+
+## References
+
+- [Workflow Development Guide](/docs/workflows_2/types_of_workflows.md)
+- [Running Workflows](/docs/workflows_2/run_workflow.md)  
+- [Advanced Concepts](/docs/workflows_2/advanced.md)
+- [Migration Guide](/docs/workflows_2/migration.md)

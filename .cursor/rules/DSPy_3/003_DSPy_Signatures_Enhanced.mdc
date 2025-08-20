@@ -1,0 +1,371 @@
+---
+description: DSPy 3.0.1 Enhanced Signatures - Master declarative input/output interfaces with rich typing
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's enhanced signature system. Create powerful, type-safe interfaces that declare what your modules do, not how they do it.
+
+## Signature Development Flow
+
+```
+Define Task → Choose Style → Add Types → Describe Fields → Use in Module
+     ↓             ↓           ↓            ↓             ↓
+Semantic      String vs     Literal/List  InputField    Predict/CoT
+Structure     Class         Union/Custom   OutputField   Composition
+     ↓             ↓           ↓            ↓             ↓
+Input/Output  "in -> out"   Type Safety   Descriptions  Auto-Prompt
+Mapping       class Sig     Validation    Context       Optimization
+```
+
+## Instant Patterns
+
+### Quick Start - String Signatures
+
+```python
+import dspy
+
+# Most common pattern - semantic string signatures
+qa_signature = "question -> answer"
+summarize_signature = "document -> summary"
+classify_signature = "text -> category"
+
+# Use immediately
+qa_module = dspy.Predict(qa_signature)
+result = qa_module(question="What is machine learning?")
+print(result.answer)
+```
+
+### Production Ready - Class-Based Signatures
+
+```python
+from typing import Literal, List, Optional
+import dspy
+
+class AdvancedQASignature(dspy.Signature):
+    """Answer questions using provided context with confidence scoring."""
+
+    question: str = dspy.InputField(
+        desc="The user's question requiring an answer"
+    )
+    context: List[str] = dspy.InputField(
+        desc="Relevant passages that may contain the answer",
+        min_length=1,
+        max_length=10
+    )
+    reasoning: str = dspy.OutputField(
+        desc="Step-by-step reasoning process",
+        prefix="Reasoning:"
+    )
+    answer: str = dspy.OutputField(
+        desc="Concise, accurate answer based on context"
+    )
+    confidence: Literal["high", "medium", "low"] = dspy.OutputField(
+        desc="Confidence level in the answer accuracy"
+    )
+
+# Use with full type safety
+qa_module = dspy.ChainOfThought(AdvancedQASignature)
+result = qa_module(
+    question="How does photosynthesis work?",
+    context=["Plants convert sunlight to energy...", "Chlorophyll captures light..."]
+)
+
+# Type-checked results
+assert isinstance(result.context, list)
+assert result.confidence in ["high", "medium", "low"]
+```
+
+## String Signatures - Quick & Powerful
+
+### Basic Patterns
+
+```python
+# Single input/output
+"question -> answer"
+"document -> summary"
+"code -> explanation"
+
+# Multiple inputs
+"question, context -> answer"
+"title, content, author -> summary"
+"problem, constraints -> solution"
+
+# Multiple outputs
+"text -> sentiment, confidence"
+"document -> summary, keywords, category"
+"question -> reasoning, answer, sources"
+
+# With type hints
+"question: str -> answer: str"
+"items: list[str] -> count: int"
+"data: dict -> analysis: str, score: float"
+```
+
+### Advanced String Patterns
+
+```python
+from typing import List, Dict, Literal
+
+# Complex types in strings
+complex_sig = dspy.Signature(
+    "documents: list[str], query: str -> relevant_docs: list[str], scores: list[float]",
+    custom_types={"list": List, "float": float}
+)
+
+# With instructions
+classification_sig = dspy.Signature(
+    "text -> category: str, confidence: float",
+    "Classify text into categories: positive, negative, neutral. Provide confidence 0-1."
+)
+
+# Dynamic signature creation
+def create_task_signature(inputs: List[str], outputs: List[str]) -> dspy.Signature:
+    input_str = ", ".join(inputs)
+    output_str = ", ".join(outputs)
+    return dspy.Signature(f"{input_str} -> {output_str}")
+
+# Use dynamic signatures
+dynamic_sig = create_task_signature(["question", "context"], ["answer", "confidence"])
+```
+
+## Class Signatures - Maximum Control
+
+### Rich Type Definitions
+
+```python
+from typing import Literal, List, Dict, Optional, Union
+from datetime import datetime
+import dspy
+
+class ContentAnalysisSignature(dspy.Signature):
+    """Analyze content for sentiment, topics, and key metrics."""
+
+    # Input fields with constraints
+    content: str = dspy.InputField(
+        desc="Text content to analyze",
+        min_length=10,
+        max_length=10000
+    )
+    language: Literal["en", "es", "fr", "de"] = dspy.InputField(
+        desc="Content language code",
+        default="en"
+    )
+
+    # Complex output types
+    sentiment: Literal["positive", "negative", "neutral"] = dspy.OutputField(
+        desc="Overall sentiment classification"
+    )
+    confidence_score: float = dspy.OutputField(
+        desc="Confidence in sentiment analysis",
+        ge=0.0, le=1.0  # Pydantic constraints
+    )
+    topics: List[str] = dspy.OutputField(
+        desc="Main topics discussed",
+        max_length=5
+    )
+    key_phrases: Dict[str, float] = dspy.OutputField(
+        desc="Important phrases with relevance scores"
+    )
+    summary: str = dspy.OutputField(
+        desc="Brief content summary",
+        max_length=200
+    )
+
+# Automatic type validation and conversion
+analyzer = dspy.Predict(ContentAnalysisSignature)
+result = analyzer(
+    content="I love this new product! It works amazingly well.",
+    language="en"
+)
+
+# All outputs are properly typed
+assert isinstance(result.topics, list)
+assert 0 <= result.confidence_score <= 1
+assert result.sentiment in ["positive", "negative", "neutral"]
+```
+
+### Custom Field Formatting
+
+```python
+class StructuredExtractionSignature(dspy.Signature):
+    """Extract structured information from unstructured text."""
+
+    text: str = dspy.InputField(desc="Raw text to process")
+
+    # Custom prefixes and formatting
+    entities: List[Dict[str, str]] = dspy.OutputField(
+        desc="Named entities found in text",
+        prefix="Entities:",
+        format="JSON array of {name, type, context}"
+    )
+
+    relationships: List[str] = dspy.OutputField(
+        desc="Relationships between entities",
+        prefix="Relationships:",
+        format="List of 'Entity1 -> Relationship -> Entity2' statements"
+    )
+
+    structured_data: Dict = dspy.OutputField(
+        desc="Key-value pairs of extracted data",
+        prefix="Data:",
+        format="JSON object with extracted key-value pairs"
+    )
+
+# Custom formatting guides the LM output structure
+extractor = dspy.Predict(StructuredExtractionSignature)
+```
+
+## Advanced Type Features
+
+### Union Types & Optionals
+
+```python
+from typing import Union, Optional
+
+class FlexibleSignature(dspy.Signature):
+    """Handle multiple input/output types flexibly."""
+
+    # Union types for flexible inputs
+    query: Union[str, Dict[str, str]] = dspy.InputField(
+        desc="Search query as string or structured dict"
+    )
+
+    # Optional fields
+    context: Optional[List[str]] = dspy.InputField(
+        desc="Optional context passages",
+        default=None
+    )
+
+    # Union outputs
+    result: Union[str, List[str], Dict] = dspy.OutputField(
+        desc="Result in various formats based on query type"
+    )
+```
+
+### Custom Types & Validators
+
+```python
+from pydantic import validator, Field
+from enum import Enum
+
+class Priority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+class TaskManagementSignature(dspy.Signature):
+    """Analyze and categorize tasks with priorities."""
+
+    task_description: str = dspy.InputField(desc="Task to analyze")
+
+    category: Literal["bug", "feature", "documentation", "test"] = dspy.OutputField()
+    priority: Priority = dspy.OutputField(desc="Task priority level")
+    estimated_hours: int = dspy.OutputField(
+        desc="Estimated completion time in hours",
+        ge=1, le=100
+    )
+    dependencies: List[str] = dspy.OutputField(
+        desc="List of dependent tasks or requirements"
+    )
+
+# Custom types are automatically handled
+task_analyzer = dspy.Predict(TaskManagementSignature)
+result = task_analyzer(task_description="Fix the login bug causing crashes")
+assert isinstance(result.priority, Priority)
+```
+
+## Speed Tips
+
+### Signature Design Patterns
+
+```python
+# Start simple, evolve complexity
+basic_sig = "text -> category"  # MVP
+enhanced_sig = "text -> category: str, confidence: float"  # Add confidence
+full_sig = "text, context -> category: Literal['A','B','C'], confidence: float, reasoning: str"
+
+# Reuse signature components
+base_fields = {
+    "text": (str, dspy.InputField(desc="Input text")),
+    "confidence": (float, dspy.OutputField(desc="Confidence score", ge=0, le=1))
+}
+
+# Create variations
+sentiment_sig = dspy.Signature({
+    **base_fields,
+    "sentiment": (Literal["pos", "neg", "neu"], dspy.OutputField())
+})
+
+topic_sig = dspy.Signature({
+    **base_fields,
+    "topics": (List[str], dspy.OutputField(desc="Main topics"))
+})
+```
+
+### Performance Optimizations
+
+```python
+# Minimal signatures for speed
+fast_sig = "question -> answer"  # Fastest
+
+# Rich signatures for quality
+quality_sig = dspy.Signature("""
+question: str, context: list[str] ->
+reasoning: str, answer: str, confidence: float, sources: list[str]
+""", "Answer questions with detailed reasoning and source attribution")
+
+# Choose based on requirements
+def get_signature(require_reasoning=False):
+    return quality_sig if require_reasoning else fast_sig
+```
+
+## Common Pitfalls
+
+### Type Mismatches
+
+```python
+# ❌ DON'T: Inconsistent types
+class BadSignature(dspy.Signature):
+    items: List[str] = dspy.InputField()
+    count: str = dspy.OutputField()  # Should be int!
+
+# ✅ DO: Consistent, logical types
+class GoodSignature(dspy.Signature):
+    items: List[str] = dspy.InputField()
+    count: int = dspy.OutputField()
+```
+
+### Over-Engineering
+
+```python
+# ❌ DON'T: Complex signatures for simple tasks
+class OverkillSignature(dspy.Signature):
+    """Answer yes/no questions with full analysis."""
+    question: str = dspy.InputField(desc="Question", min_length=5)
+    reasoning: str = dspy.OutputField(desc="Detailed reasoning")
+    answer: Literal["yes", "no"] = dspy.OutputField()
+    confidence: float = dspy.OutputField(ge=0, le=1)
+    sources: List[str] = dspy.OutputField()
+
+# ✅ DO: Simple signature for simple tasks
+simple_sig = "question -> answer: bool"
+```
+
+## Best Practices Summary
+
+- **Start with strings**: Use string signatures for rapid prototyping
+- **Evolve to classes**: Add class signatures when you need rich types
+- **Type everything**: Use Literal, List[], Dict for better results
+- **Add descriptions**: Good descriptions improve LM performance
+- **Use constraints**: Leverage Pydantic validation (ge, le, min_length)
+- **Design for reuse**: Create signature templates for common patterns
+- **Keep it semantic**: Focus on what, not how
+- **Test type safety**: Validate outputs match expected types
+
+## References
+
+- [Signature API Documentation](/docs/api/signatures/Signature.md)
+- [InputField/OutputField Reference](/docs/api/signatures/InputField.md)
+- [Type System Guide](/docs/learn/programming/signatures.md)
+- [Pydantic Field Constraints](https://docs.pydantic.dev/latest/concepts/fields/)

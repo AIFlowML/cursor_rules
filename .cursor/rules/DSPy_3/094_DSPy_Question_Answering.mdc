@@ -1,0 +1,934 @@
+---
+description: Complete Question Answering System - Multi-hop QA with complex reasoning and optimization
+alwaysApply: false
+---
+
+> You are an expert in building complete DSPy 3.0.1 question answering systems with multi-hop reasoning for production deployment.
+
+## Complete Question Answering Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Question      │    │   Query         │    │   Multi-hop     │
+│   Processing    │───▶│   Planning      │───▶│   Retrieval     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Evidence      │    │   Reasoning     │    │   Answer        │
+│   Aggregation   │───▶│   & Inference   │───▶│   Generation    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Answer        │    │   Optimization  │    │   Evaluation    │
+│   Verification  │◀───│   & Training    │◀───│   & Metrics     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant QA Templates
+
+### Quick Start Question Answering
+```python
+import dspy
+
+# Configure DSPy
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+# Simple QA with retrieval
+class SimpleQA(dspy.Module):
+    def __init__(self, retriever):
+        self.retriever = retriever
+        self.answer = dspy.ChainOfThought('context, question -> answer')
+
+    def forward(self, question):
+        context = self.retriever(question).passages
+        return self.answer(context=context, question=question)
+
+# Use with any retriever
+# qa_system = SimpleQA(retriever=your_retriever)
+# result = qa_system(question="What is machine learning?")
+```
+
+### Production Multi-hop QA System
+```python
+import dspy
+import time
+import logging
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass
+from collections import defaultdict
+import json
+
+@dataclass
+class HopResult:
+    """Result from a single reasoning hop"""
+    query: str
+    retrieved_passages: List[str]
+    reasoning: str
+    intermediate_answer: Optional[str] = None
+    confidence: float = 0.0
+
+@dataclass 
+class QAResult:
+    """Complete QA result with multi-hop reasoning"""
+    question: str
+    final_answer: str
+    hops: List[HopResult]
+    processing_time: float
+    confidence: float
+    supporting_evidence: List[str]
+
+class ProductionMultiHopQA(dspy.Module):
+    """Production-ready multi-hop question answering system"""
+    
+    def __init__(self, 
+                 retriever,
+                 max_hops: int = 4,
+                 passages_per_hop: int = 5,
+                 model_name: str = "openai/gpt-4o-mini"):
+        
+        self.retriever = retriever
+        self.max_hops = max_hops
+        self.passages_per_hop = passages_per_hop
+        self.model_name = model_name
+        
+        # Initialize reasoning modules
+        self._create_modules()
+        
+        # Tracking and logging
+        self.query_count = 0
+        self.hop_statistics = defaultdict(int)
+        self.setup_logging()
+    
+    def setup_logging(self):
+        """Configure logging for production monitoring"""
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+    
+    def _create_modules(self):
+        """Create specialized modules for multi-hop reasoning"""
+        
+        # Query generation for each hop
+        self.query_generator = dspy.ChainOfThought(
+            "question, previous_context -> search_query: str"
+        )
+        
+        # Reasoning with accumulated context
+        self.reasoner = dspy.ChainOfThought(
+            "question, context, previous_reasoning -> reasoning: str, needs_more_info: bool"
+        )
+        
+        # Final answer generation
+        self.answer_generator = dspy.ChainOfThought(
+            "question, all_context, reasoning_chain -> final_answer: str, confidence: float"
+        )
+        
+        # Answer verification
+        self.verifier = dspy.ChainOfThought(
+            "question, answer, evidence -> is_supported: bool, explanation: str"
+        )
+    
+    def forward(self, question: str) -> QAResult:
+        """Process question through multi-hop reasoning"""
+        self.query_count += 1
+        start_time = time.time()
+        
+        self.logger.info(f"Processing QA #{self.query_count}: {question[:100]}...")
+        
+        try:
+            # Multi-hop reasoning process
+            hops = []
+            all_context = []
+            reasoning_chain = []
+            
+            current_query = question
+            
+            for hop_num in range(self.max_hops):
+                self.logger.info(f"Starting hop {hop_num + 1}")
+                
+                # Generate search query for this hop
+                if hop_num == 0:
+                    search_query = question  # First hop uses original question
+                else:
+                    query_result = self.query_generator(
+                        question=question,
+                        previous_context=all_context[-self.passages_per_hop:]
+                    )
+                    search_query = query_result.search_query
+                
+                # Retrieve passages for this hop
+                retrieved = self.retriever(search_query)
+                passages = retrieved.passages[:self.passages_per_hop]
+                
+                # Reason with current context
+                current_context = all_context + passages
+                reasoning_result = self.reasoner(
+                    question=question,
+                    context=current_context,
+                    previous_reasoning=reasoning_chain
+                )
+                
+                # Store hop result
+                hop_result = HopResult(
+                    query=search_query,
+                    retrieved_passages=passages,
+                    reasoning=reasoning_result.reasoning,
+                    confidence=0.8  # Can be improved with better confidence estimation
+                )
+                hops.append(hop_result)
+                
+                # Update accumulated context and reasoning
+                all_context.extend(passages)
+                reasoning_chain.append(reasoning_result.reasoning)
+                
+                # Check if we need more information
+                needs_more = getattr(reasoning_result, 'needs_more_info', False)
+                self.hop_statistics[f"hop_{hop_num + 1}"] += 1
+                
+                if not needs_more:
+                    self.logger.info(f"Reasoning complete after {hop_num + 1} hops")
+                    break
+            
+            # Generate final answer
+            answer_result = self.answer_generator(
+                question=question,
+                all_context=all_context,
+                reasoning_chain=reasoning_chain
+            )
+            
+            final_answer = answer_result.final_answer
+            confidence = getattr(answer_result, 'confidence', 0.7)
+            
+            # Verify answer quality
+            verification = self.verifier(
+                question=question,
+                answer=final_answer,
+                evidence=all_context[:10]  # Use top evidence
+            )
+            
+            # Adjust confidence based on verification
+            if hasattr(verification, 'is_supported') and not verification.is_supported:
+                confidence *= 0.5  # Reduce confidence for unsupported answers
+            
+            processing_time = time.time() - start_time
+            
+            result = QAResult(
+                question=question,
+                final_answer=final_answer,
+                hops=hops,
+                processing_time=processing_time,
+                confidence=confidence,
+                supporting_evidence=all_context[:5]  # Top 5 supporting passages
+            )
+            
+            self.logger.info(f"QA completed in {processing_time:.2f}s with {len(hops)} hops")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"QA processing failed: {str(e)}")
+            # Return default result
+            return QAResult(
+                question=question,
+                final_answer="I couldn't process this question due to an error.",
+                hops=[],
+                processing_time=time.time() - start_time,
+                confidence=0.0,
+                supporting_evidence=[]
+            )
+    
+    def batch_qa(self, questions: List[str]) -> List[QAResult]:
+        """Process multiple questions efficiently"""
+        return [self.forward(question) for question in questions]
+    
+    def get_system_stats(self) -> Dict[str, Any]:
+        """Get system performance statistics"""
+        return {
+            "total_queries": self.query_count,
+            "hop_distribution": dict(self.hop_statistics),
+            "avg_hops": sum(self.hop_statistics.values()) / len(self.hop_statistics) if self.hop_statistics else 0,
+            "max_hops": self.max_hops,
+            "passages_per_hop": self.passages_per_hop
+        }
+
+# Specialized QA systems for different domains
+class ScientificQA(ProductionMultiHopQA):
+    """Question answering specialized for scientific queries"""
+    
+    def __init__(self, retriever, **kwargs):
+        super().__init__(retriever, **kwargs)
+        
+        # Override modules with scientific focus
+        self.reasoner = dspy.ChainOfThought("""
+        Analyze scientific information step by step. Consider:
+        - Scientific accuracy and evidence quality
+        - Methodological considerations
+        - Uncertainty and limitations
+        
+        question, context, previous_reasoning -> reasoning: str, needs_more_info: bool, certainty_level: str
+        """)
+        
+        self.answer_generator = dspy.ChainOfThought("""
+        Generate a scientifically accurate answer. Include:
+        - Clear statement of findings
+        - Supporting evidence
+        - Limitations and uncertainties
+        - Confidence level
+        
+        question, all_context, reasoning_chain -> final_answer: str, confidence: float, certainty_explanation: str
+        """)
+
+class FactualQA(ProductionMultiHopQA):
+    """Question answering specialized for factual queries"""
+    
+    def __init__(self, retriever, **kwargs):
+        super().__init__(retriever, **kwargs)
+        
+        # Override with fact-checking focus
+        self.verifier = dspy.ChainOfThought("""
+        Verify factual accuracy by checking:
+        - Source credibility and recency
+        - Cross-reference with multiple sources
+        - Logical consistency
+        - Completeness of evidence
+        
+        question, answer, evidence -> is_supported: bool, explanation: str, fact_check_score: float
+        """)
+
+class ConversationalQA(ProductionMultiHopQA):
+    """Question answering with conversation context"""
+    
+    def __init__(self, retriever, **kwargs):
+        super().__init__(retriever, **kwargs)
+        self.conversation_history = []
+    
+    def forward_with_history(self, question: str, history: List[Dict] = None) -> QAResult:
+        """Process question with conversation history"""
+        if history:
+            self.conversation_history = history
+        
+        # Modify question processing to include history
+        contextualized_question = self._contextualize_question(question)
+        result = self.forward(contextualized_question)
+        
+        # Update conversation history
+        self.conversation_history.append({
+            "question": question,
+            "answer": result.final_answer,
+            "timestamp": time.time()
+        })
+        
+        return result
+    
+    def _contextualize_question(self, question: str) -> str:
+        """Add conversation context to question"""
+        if not self.conversation_history:
+            return question
+        
+        # Create context from recent history
+        recent_context = self.conversation_history[-3:]  # Last 3 exchanges
+        context_str = "\n".join([
+            f"Q: {item['question']}\nA: {item['answer']}"
+            for item in recent_context
+        ])
+        
+        return f"Given this conversation history:\n{context_str}\n\nNew question: {question}"
+```
+
+## Advanced QA Patterns
+
+### Complex Reasoning QA
+```python
+class ReasoningQA(dspy.Module):
+    """QA system with explicit reasoning patterns"""
+    
+    def __init__(self, retriever):
+        self.retriever = retriever
+        
+        # Reasoning pattern detection
+        self.pattern_detector = dspy.ChainOfThought(
+            "question -> reasoning_type: str, complexity: str"
+        )
+        
+        # Specialized reasoners for different patterns
+        self.reasoners = {
+            "comparison": dspy.ChainOfThought(
+                "question, context -> comparison_analysis: str, conclusion: str"
+            ),
+            "causal": dspy.ChainOfThought(
+                "question, context -> cause_effect_analysis: str, conclusion: str"
+            ),
+            "temporal": dspy.ChainOfThought(
+                "question, context -> timeline_analysis: str, conclusion: str"
+            ),
+            "analytical": dspy.ChainOfThought(
+                "question, context -> step_by_step_analysis: str, conclusion: str"
+            )
+        }
+        
+        # Default reasoner
+        self.default_reasoner = dspy.ChainOfThought(
+            "question, context -> reasoning: str, answer: str"
+        )
+    
+    def forward(self, question: str):
+        """Process question with pattern-specific reasoning"""
+        
+        # Detect reasoning pattern
+        pattern_result = self.pattern_detector(question=question)
+        reasoning_type = getattr(pattern_result, 'reasoning_type', 'analytical').lower()
+        
+        # Retrieve context
+        context = self.retriever(question).passages
+        
+        # Use appropriate reasoner
+        if reasoning_type in self.reasoners:
+            reasoner = self.reasoners[reasoning_type]
+            result = reasoner(question=question, context=context)
+            
+            # Extract conclusion as answer
+            answer = getattr(result, 'conclusion', getattr(result, 'answer', 'No conclusion reached'))
+            reasoning = getattr(result, f'{reasoning_type}_analysis', 
+                              getattr(result, 'reasoning', 'No reasoning provided'))
+        else:
+            # Use default reasoner
+            result = self.default_reasoner(question=question, context=context)
+            answer = result.answer
+            reasoning = result.reasoning
+        
+        return dspy.Prediction(
+            answer=answer,
+            reasoning=reasoning,
+            reasoning_type=reasoning_type,
+            context=context
+        )
+
+# Multi-document QA with evidence synthesis
+class MultiDocumentQA(dspy.Module):
+    """QA system that synthesizes information across multiple documents"""
+    
+    def __init__(self, retriever, max_documents: int = 10):
+        self.retriever = retriever
+        self.max_documents = max_documents
+        
+        # Document analysis
+        self.doc_analyzer = dspy.ChainOfThought(
+            "question, document -> relevance_score: float, key_points: List[str]"
+        )
+        
+        # Evidence synthesis
+        self.synthesizer = dspy.ChainOfThought(
+            "question, evidence_from_docs -> synthesized_answer: str, supporting_docs: List[str]"
+        )
+        
+        # Conflict resolution
+        self.conflict_resolver = dspy.ChainOfThought(
+            "question, conflicting_info -> resolved_answer: str, explanation: str"
+        )
+    
+    def forward(self, question: str):
+        """Process question across multiple documents"""
+        
+        # Retrieve diverse set of documents
+        retrieved = self.retriever(question)
+        documents = retrieved.passages[:self.max_documents]
+        
+        # Analyze each document
+        doc_analyses = []
+        for i, doc in enumerate(documents):
+            try:
+                analysis = self.doc_analyzer(question=question, document=doc)
+                doc_analyses.append({
+                    "doc_index": i,
+                    "document": doc,
+                    "relevance": getattr(analysis, 'relevance_score', 0.5),
+                    "key_points": getattr(analysis, 'key_points', [])
+                })
+            except Exception as e:
+                print(f"Error analyzing document {i}: {e}")
+        
+        # Sort by relevance
+        doc_analyses.sort(key=lambda x: x['relevance'], reverse=True)
+        
+        # Extract evidence from top documents
+        evidence = []
+        for analysis in doc_analyses[:5]:  # Top 5 most relevant
+            evidence.extend(analysis['key_points'])
+        
+        # Synthesize answer
+        synthesis_result = self.synthesizer(
+            question=question,
+            evidence_from_docs=evidence
+        )
+        
+        # Check for conflicts and resolve if needed
+        if self._has_conflicting_evidence(evidence):
+            conflict_resolution = self.conflict_resolver(
+                question=question,
+                conflicting_info=evidence
+            )
+            final_answer = conflict_resolution.resolved_answer
+            explanation = conflict_resolution.explanation
+        else:
+            final_answer = synthesis_result.synthesized_answer
+            explanation = "No conflicts detected in evidence"
+        
+        return dspy.Prediction(
+            answer=final_answer,
+            evidence=evidence[:5],  # Top evidence
+            supporting_documents=[analysis["document"][:100] + "..." for analysis in doc_analyses[:3]],
+            conflict_resolution=explanation,
+            document_count=len(documents)
+        )
+    
+    def _has_conflicting_evidence(self, evidence: List[str]) -> bool:
+        """Simple heuristic to detect conflicting evidence"""
+        conflict_keywords = ["however", "but", "contrary", "opposite", "disagree"]
+        evidence_text = " ".join(evidence).lower()
+        return any(keyword in evidence_text for keyword in conflict_keywords)
+```
+
+## Optimization and Evaluation
+
+### QA System Optimization
+```python
+import random
+from dspy.evaluate import answer_exact_match
+
+class QAOptimizer:
+    """Comprehensive QA system optimization"""
+    
+    def __init__(self, qa_system, evaluation_dataset):
+        self.qa_system = qa_system
+        self.evaluation_dataset = evaluation_dataset
+        
+        # Optimization history
+        self.optimization_history = []
+    
+    def create_qa_metric(self, metric_type: str = "semantic_similarity"):
+        """Create appropriate evaluation metric for QA"""
+        
+        if metric_type == "exact_match":
+            def exact_match_metric(example, prediction, trace=None):
+                return example.answer.strip().lower() == prediction.answer.strip().lower()
+            return exact_match_metric
+        
+        elif metric_type == "semantic_similarity":
+            # Use DSPy's semantic evaluation
+            def semantic_metric(example, prediction, trace=None):
+                try:
+                    # Simple semantic similarity (can be improved)
+                    expected_words = set(example.answer.lower().split())
+                    predicted_words = set(prediction.answer.lower().split())
+                    
+                    if not expected_words and not predicted_words:
+                        return 1.0
+                    if not expected_words or not predicted_words:
+                        return 0.0
+                    
+                    intersection = expected_words.intersection(predicted_words)
+                    union = expected_words.union(predicted_words)
+                    
+                    return len(intersection) / len(union) if union else 0.0
+                except:
+                    return 0.0
+            
+            return semantic_metric
+        
+        elif metric_type == "answer_presence":
+            def presence_metric(example, prediction, trace=None):
+                """Check if key information from expected answer is present"""
+                expected = example.answer.lower()
+                predicted = prediction.answer.lower()
+                
+                # Extract key phrases (simple heuristic)
+                import re
+                expected_phrases = re.findall(r'\b\w{4,}\b', expected)
+                
+                if not expected_phrases:
+                    return 1.0 if not predicted else 0.0
+                
+                matches = sum(1 for phrase in expected_phrases if phrase in predicted)
+                return matches / len(expected_phrases)
+            
+            return presence_metric
+        
+        else:
+            # Default to simple overlap
+            return lambda x, y, trace=None: len(set(x.answer.split()) & set(y.answer.split())) > 0
+    
+    def optimize_with_bootstrap(self, max_examples: int = 50):
+        """Optimize using bootstrap few-shot"""
+        
+        metric = self.create_qa_metric("semantic_similarity")
+        
+        # Prepare training data
+        trainset = self.evaluation_dataset[:max_examples]
+        
+        # Bootstrap optimization
+        optimizer = dspy.BootstrapFewShot(metric=metric)
+        optimized_qa = optimizer.compile(
+            self.qa_system,
+            trainset=trainset,
+            max_bootstrapped_demos=4
+        )
+        
+        # Record optimization
+        self.optimization_history.append({
+            "method": "bootstrap",
+            "examples_used": len(trainset),
+            "timestamp": time.time()
+        })
+        
+        return optimized_qa
+    
+    def optimize_with_mipro(self, max_examples: int = 100):
+        """Optimize using MIPROv2"""
+        
+        metric = self.create_qa_metric("answer_presence")
+        
+        # Prepare training data
+        trainset = self.evaluation_dataset[:max_examples]
+        
+        # MIPROv2 optimization
+        optimizer = dspy.MIPROv2(
+            metric=metric, 
+            auto="medium", 
+            num_threads=16
+        )
+        
+        optimized_qa = optimizer.compile(
+            self.qa_system,
+            trainset=trainset,
+            max_bootstrapped_demos=4,
+            max_labeled_demos=4
+        )
+        
+        # Record optimization
+        self.optimization_history.append({
+            "method": "mipro",
+            "examples_used": len(trainset),
+            "timestamp": time.time()
+        })
+        
+        return optimized_qa
+    
+    def comprehensive_evaluation(self, qa_system, test_examples: int = 100):
+        """Comprehensive evaluation of QA system"""
+        
+        test_data = self.evaluation_dataset[-test_examples:]
+        
+        metrics = {}
+        
+        # Test different metric types
+        for metric_name in ["exact_match", "semantic_similarity", "answer_presence"]:
+            metric_fn = self.create_qa_metric(metric_name)
+            
+            evaluator = dspy.Evaluate(
+                devset=test_data,
+                metric=metric_fn,
+                display_progress=True,
+                display_table=5 if metric_name == "semantic_similarity" else 0
+            )
+            
+            score = evaluator(qa_system)
+            metrics[metric_name] = score
+        
+        return metrics
+    
+    def benchmark_response_times(self, qa_system, num_questions: int = 20):
+        """Benchmark response times"""
+        
+        questions = [ex.question for ex in self.evaluation_dataset[:num_questions]]
+        times = []
+        
+        for question in questions:
+            start_time = time.time()
+            try:
+                qa_system(question=question)
+                response_time = time.time() - start_time
+                times.append(response_time)
+            except Exception as e:
+                print(f"Error processing question: {e}")
+        
+        if times:
+            return {
+                "avg_response_time": sum(times) / len(times),
+                "min_response_time": min(times),
+                "max_response_time": max(times),
+                "total_questions": len(times)
+            }
+        else:
+            return {"error": "No successful responses"}
+
+# Example usage with HotpotQA-style dataset
+def create_multihop_dataset():
+    """Create sample multi-hop QA dataset"""
+    
+    examples = [
+        dspy.Example(
+            question="What nationality is the director of the movie that won the Academy Award for Best Picture in 2020?",
+            answer="South Korean"
+        ).with_inputs("question"),
+        
+        dspy.Example(
+            question="Which company founded by the creator of Tesla was established first?",
+            answer="PayPal"  # Actually X.com which became PayPal
+        ).with_inputs("question"),
+        
+        # Add more examples...
+    ]
+    
+    return examples
+```
+
+## Production Deployment
+
+### QA API Service
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+import uvicorn
+from typing import List, Optional, Dict
+
+class QARequest(BaseModel):
+    question: str
+    max_hops: Optional[int] = 4
+    include_reasoning: bool = False
+    include_evidence: bool = False
+
+class QAResponse(BaseModel):
+    answer: str
+    confidence: float
+    processing_time: float
+    hops_used: Optional[int] = None
+    reasoning: Optional[List[str]] = None
+    evidence: Optional[List[str]] = None
+
+app = FastAPI(title="DSPy QA API", version="1.0.0")
+
+# Global QA system
+qa_system = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize QA system on startup"""
+    global qa_system
+    
+    # Initialize retriever (example with dummy data)
+    corpus = ["Sample document content..."]  # Replace with your corpus
+    embedder = dspy.Embedder('openai/text-embedding-3-small')
+    retriever = dspy.retrievers.Embeddings(embedder=embedder, corpus=corpus, k=5)
+    
+    # Initialize QA system
+    qa_system = ProductionMultiHopQA(retriever=retriever)
+    
+    # Load optimized model if available
+    # qa_system.load("path/to/optimized_qa.json")
+
+@app.post("/qa", response_model=QAResponse)
+async def answer_question(request: QARequest):
+    """Answer a single question"""
+    if qa_system is None:
+        raise HTTPException(status_code=503, detail="QA system not initialized")
+    
+    try:
+        # Set max hops if specified
+        original_max_hops = qa_system.max_hops
+        if request.max_hops:
+            qa_system.max_hops = request.max_hops
+        
+        # Process question
+        result = qa_system.forward(request.question)
+        
+        # Restore original max hops
+        qa_system.max_hops = original_max_hops
+        
+        # Build response
+        response = QAResponse(
+            answer=result.final_answer,
+            confidence=result.confidence,
+            processing_time=result.processing_time,
+            hops_used=len(result.hops)
+        )
+        
+        if request.include_reasoning:
+            response.reasoning = [hop.reasoning for hop in result.hops]
+        
+        if request.include_evidence:
+            response.evidence = result.supporting_evidence
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"QA processing failed: {str(e)}")
+
+@app.post("/qa/batch")
+async def answer_questions_batch(questions: List[str]):
+    """Answer multiple questions"""
+    if qa_system is None:
+        raise HTTPException(status_code=503, detail="QA system not initialized")
+    
+    try:
+        results = qa_system.batch_qa(questions)
+        
+        return {
+            "results": [
+                {
+                    "question": result.question,
+                    "answer": result.final_answer,
+                    "confidence": result.confidence,
+                    "processing_time": result.processing_time
+                }
+                for result in results
+            ],
+            "total_processed": len(results)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch QA failed: {str(e)}")
+
+@app.get("/stats")
+async def get_stats():
+    """Get QA system statistics"""
+    if qa_system is None:
+        return {"error": "QA system not initialized"}
+    
+    return qa_system.get_system_stats()
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy" if qa_system is not None else "unhealthy",
+        "qa_system_loaded": qa_system is not None
+    }
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Streaming QA Responses
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+import json
+
+class StreamingQA(ProductionMultiHopQA):
+    """QA system with streaming responses"""
+    
+    async def stream_forward(self, question: str):
+        """Stream reasoning process and final answer"""
+        
+        yield f"data: {json.dumps({'type': 'start', 'question': question})}\n\n"
+        
+        try:
+            hops = []
+            all_context = []
+            reasoning_chain = []
+            
+            for hop_num in range(self.max_hops):
+                yield f"data: {json.dumps({'type': 'hop_start', 'hop': hop_num + 1})}\n\n"
+                
+                # Generate query
+                if hop_num == 0:
+                    search_query = question
+                else:
+                    query_result = self.query_generator(
+                        question=question,
+                        previous_context=all_context[-self.passages_per_hop:]
+                    )
+                    search_query = query_result.search_query
+                
+                yield f"data: {json.dumps({'type': 'query', 'query': search_query})}\n\n"
+                
+                # Retrieve and reason
+                retrieved = self.retriever(search_query)
+                passages = retrieved.passages[:self.passages_per_hop]
+                
+                current_context = all_context + passages
+                reasoning_result = self.reasoner(
+                    question=question,
+                    context=current_context,
+                    previous_reasoning=reasoning_chain
+                )
+                
+                yield f"data: {json.dumps({'type': 'reasoning', 'reasoning': reasoning_result.reasoning})}\n\n"
+                
+                all_context.extend(passages)
+                reasoning_chain.append(reasoning_result.reasoning)
+                
+                needs_more = getattr(reasoning_result, 'needs_more_info', False)
+                if not needs_more:
+                    break
+            
+            # Generate final answer
+            yield f"data: {json.dumps({'type': 'generating_answer'})}\n\n"
+            
+            answer_result = self.answer_generator(
+                question=question,
+                all_context=all_context,
+                reasoning_chain=reasoning_chain
+            )
+            
+            final_answer = answer_result.final_answer
+            confidence = getattr(answer_result, 'confidence', 0.7)
+            
+            yield f"data: {json.dumps({'type': 'final_answer', 'answer': final_answer, 'confidence': confidence})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+@app.get("/qa/stream")
+async def stream_qa(question: str):
+    """Stream QA processing"""
+    streaming_qa = StreamingQA(retriever=qa_system.retriever)
+    
+    return StreamingResponse(
+        streaming_qa.stream_forward(question),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+```
+
+## Speed Tips
+- **Retrieval Optimization**: Use efficient retrieval methods (hybrid search, caching)
+- **Early Stopping**: Stop reasoning when confidence is high enough
+- **Batch Processing**: Process multiple questions together when possible
+- **Context Management**: Limit context size to essential information
+- **Model Selection**: Use smaller models for simpler questions
+- **Caching**: Cache frequent question-answer pairs
+- **Parallel Hops**: Run some reasoning hops in parallel when possible
+- **Hardware Acceleration**: Use GPUs for large model inference
+
+## Common Pitfalls
+- **Context Length**: Monitor total context length across multiple hops
+- **Reasoning Loops**: Detect and prevent circular reasoning patterns
+- **Answer Quality**: Balance between speed and answer comprehensiveness
+- **Evidence Conflicts**: Handle contradictory information gracefully
+- **Hop Optimization**: Avoid unnecessary hops that don't improve answers
+- **Memory Usage**: Manage memory with long reasoning chains
+- **Error Propagation**: Handle errors in early hops gracefully
+- **Evaluation Metrics**: Use appropriate metrics for your specific QA domain
+
+## Best Practices Summary
+- **Modular Design**: Separate retrieval, reasoning, and answer generation
+- **Comprehensive Evaluation**: Use multiple evaluation metrics and datasets
+- **Optimization Pipeline**: Leverage DSPy's optimization tools effectively
+- **Error Handling**: Implement robust error handling throughout the pipeline
+- **Performance Monitoring**: Track reasoning quality and response times
+- **Scalable Architecture**: Design for horizontal scaling and load balancing
+- **Evidence Quality**: Prioritize high-quality, relevant evidence sources
+- **Continuous Learning**: Update and retrain models with new data
+
+## References
+- [DSPy Multi-hop Tutorial](https://github.com/stanfordnlp/dspy/blob/main/docs/tutorials/multihop_search/index.ipynb)
+- [HotpotQA Dataset](https://hotpotqa.github.io/)
+- [MIPROv2 Optimizer](https://dspy.ai/api/optimizers/MIPROv2)
+- [ChainOfThought Module](https://dspy.ai/api/modules/ChainOfThought)
+- [Embeddings Retriever](https://dspy.ai/api/tools/Embeddings)

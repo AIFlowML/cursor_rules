@@ -1,0 +1,1000 @@
+---
+description: MLflow Integration - Complete MLflow integration for DSPy applications with experiment tracking, model registry, and production deployment
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 MLflow integration for comprehensive experiment tracking and production deployment.
+
+## MLflow Integration Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   DSPy Client   │ => │  MLflow Server  │ => │ Model Registry  │
+│   Application   │    │   (Tracking)    │    │   (Versions)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                    MLflow Components                           │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│  Experiment     │   Model Store   │     Deployment             │
+│  Tracking       │   (Artifacts)   │     (Production)           │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│   Traces UI     │   Metrics       │     Model Serving          │
+│   (Debug)       │   (Monitor)     │     (Inference)            │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│              DSPy Production Pipeline                          │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Optimization  │   Evaluation    │     A/B Testing            │
+│   Tracking      │   Metrics       │     (Champion/Challenger)  │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant MLflow Integration Patterns
+
+### Quick Start
+
+```python
+# quick_mlflow.py - Minimal MLflow integration with DSPy
+import dspy
+import mlflow
+import mlflow.dspy
+from typing import Dict, Any
+import os
+
+# Setup MLflow tracking
+def setup_mlflow(tracking_uri: str = "sqlite:///mlflow.db", experiment_name: str = "dspy_quickstart"):
+    """Initialize MLflow for DSPy tracking"""
+    mlflow.set_tracking_uri(tracking_uri)
+
+    try:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        experiment_id = experiment.experiment_id
+    except:
+        experiment_id = mlflow.create_experiment(experiment_name)
+
+    mlflow.set_experiment(experiment_name)
+
+    # Enable DSPy autologging
+    mlflow.dspy.autolog()
+
+    print(f"MLflow tracking: {tracking_uri}")
+    print(f"Experiment: {experiment_name} (ID: {experiment_id})")
+
+    return experiment_id
+
+class MLflowDSPyProgram:
+    """DSPy program with automatic MLflow tracking"""
+
+    def __init__(self, model_name: str = "openai/gpt-4o-mini"):
+        # Setup MLflow
+        self.experiment_id = setup_mlflow()
+
+        # Configure DSPy
+        self.lm = dspy.LM(model_name, max_tokens=2000)
+        dspy.configure(lm=self.lm)
+
+        # Create program
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    def predict_with_tracking(self, question: str) -> Dict[str, Any]:
+        """Make prediction with automatic MLflow tracking"""
+
+        with mlflow.start_run(run_name=f"prediction_{hash(question) % 1000}"):
+            # Log input
+            mlflow.log_param("question_length", len(question))
+            mlflow.log_param("model", self.lm.model)
+
+            # Make prediction
+            result = self.program(question=question)
+
+            # Log output
+            mlflow.log_param("answer_length", len(result.answer))
+            if hasattr(result, 'reasoning'):
+                mlflow.log_param("reasoning_length", len(result.reasoning))
+
+            # Log custom metrics
+            mlflow.log_metric("prediction_confidence", 0.8)  # Could calculate actual confidence
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "run_id": mlflow.active_run().info.run_id
+            }
+
+    def log_model(self, model_name: str = "dspy_model"):
+        """Log DSPy program to MLflow model registry"""
+
+        with mlflow.start_run(run_name="model_logging"):
+            # Log the program
+            mlflow.dspy.log_model(
+                dspy_model=self.program,
+                artifact_path=model_name,
+                input_example={"question": "What is machine learning?"},
+                task="llm/v1/chat"  # OpenAI-compatible format
+            )
+
+            print(f"Model logged to MLflow: {model_name}")
+            return mlflow.active_run().info.run_id
+
+# Usage example
+program = MLflowDSPyProgram()
+
+# Make tracked predictions
+result = program.predict_with_tracking("What are the benefits of MLflow?")
+print(f"Answer: {result['answer']}")
+
+# Log model for deployment
+model_run_id = program.log_model("production_model")
+print(f"Model logged with run ID: {model_run_id}")
+```
+
+### Enterprise MLflow Integration
+
+```python
+# enterprise_mlflow.py - Comprehensive MLflow integration for production
+import dspy
+import mlflow
+import mlflow.dspy
+from mlflow.models import ModelSignature
+from mlflow.types import Schema, ColSpec
+import numpy as np
+import pandas as pd
+from typing import Dict, Any, List, Optional, Union
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+import yaml
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class EnterpriseMLflowManager:
+    """Enterprise-grade MLflow integration for DSPy applications"""
+
+    def __init__(self,
+                 tracking_uri: str = None,
+                 registry_uri: str = None,
+                 experiment_name: str = "dspy_production"):
+
+        # Configure MLflow
+        self.tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+        self.registry_uri = registry_uri or os.getenv("MLFLOW_REGISTRY_URI", self.tracking_uri)
+
+        mlflow.set_tracking_uri(self.tracking_uri)
+        mlflow.set_registry_uri(self.registry_uri)
+
+        # Setup experiment
+        self.experiment_name = experiment_name
+        self.experiment = self._get_or_create_experiment(experiment_name)
+
+        # Enable comprehensive autologging
+        mlflow.dspy.autolog(
+            log_traces=True,
+            log_datasets=True,
+            disable=False
+        )
+
+        logger.info(f"MLflow initialized - Tracking: {self.tracking_uri}")
+        logger.info(f"Experiment: {experiment_name}")
+
+    def _get_or_create_experiment(self, name: str):
+        """Get or create MLflow experiment"""
+        try:
+            experiment = mlflow.get_experiment_by_name(name)
+        except:
+            experiment_id = mlflow.create_experiment(
+                name,
+                tags={
+                    "framework": "dspy",
+                    "version": dspy.__version__,
+                    "created": datetime.now().isoformat()
+                }
+            )
+            experiment = mlflow.get_experiment(experiment_id)
+
+        mlflow.set_experiment(name)
+        return experiment
+
+    def track_optimization(self,
+                          program: dspy.Module,
+                          optimizer: Any,
+                          trainset: List[dspy.Example],
+                          valset: List[dspy.Example] = None,
+                          metric: callable = None,
+                          run_name: str = None) -> str:
+        """Track DSPy optimization process comprehensively"""
+
+        with mlflow.start_run(run_name=run_name or f"optimization_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+            run_id = mlflow.active_run().info.run_id
+
+            # Log optimization parameters
+            mlflow.log_param("optimizer_type", type(optimizer).__name__)
+            mlflow.log_param("trainset_size", len(trainset))
+            mlflow.log_param("valset_size", len(valset) if valset else 0)
+            mlflow.log_param("program_type", type(program).__name__)
+
+            # Log dataset statistics
+            self._log_dataset_stats(trainset, "train")
+            if valset:
+                self._log_dataset_stats(valset, "validation")
+
+            # Log program structure
+            self._log_program_structure(program)
+
+            # Track optimization process
+            logger.info("Starting optimization tracking...")
+
+            try:
+                # Run optimization
+                optimized_program = optimizer.compile(program, trainset=trainset, valset=valset)
+
+                # Evaluate if metric provided
+                if metric and valset:
+                    score = self._evaluate_program(optimized_program, valset, metric)
+                    mlflow.log_metric("validation_score", score)
+
+                # Log optimized program
+                model_info = mlflow.dspy.log_model(
+                    dspy_model=optimized_program,
+                    artifact_path="optimized_model",
+                    input_example=self._create_input_example(trainset[0]),
+                    task="llm/v1/chat"
+                )
+
+                # Log optimization artifacts
+                self._log_optimization_artifacts(optimizer, optimized_program)
+
+                # Success metrics
+                mlflow.log_metric("optimization_success", 1)
+                mlflow.set_tag("status", "success")
+
+                logger.info(f"Optimization tracked successfully: {run_id}")
+                return run_id
+
+            except Exception as e:
+                mlflow.log_metric("optimization_success", 0)
+                mlflow.set_tag("status", "failed")
+                mlflow.set_tag("error", str(e))
+                logger.error(f"Optimization failed: {e}")
+                raise e
+
+    def track_evaluation(self,
+                        program: dspy.Module,
+                        testset: List[dspy.Example],
+                        metrics: Dict[str, callable],
+                        run_name: str = None) -> Dict[str, float]:
+        """Track comprehensive evaluation of DSPy program"""
+
+        with mlflow.start_run(run_name=run_name or f"evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+
+            # Log evaluation setup
+            mlflow.log_param("testset_size", len(testset))
+            mlflow.log_param("num_metrics", len(metrics))
+            mlflow.log_param("program_type", type(program).__name__)
+
+            results = {}
+
+            for metric_name, metric_func in metrics.items():
+                try:
+                    score = self._evaluate_program(program, testset, metric_func)
+                    results[metric_name] = score
+                    mlflow.log_metric(metric_name, score)
+                    logger.info(f"Metric {metric_name}: {score:.4f}")
+
+                except Exception as e:
+                    logger.error(f"Failed to evaluate {metric_name}: {e}")
+                    mlflow.log_metric(f"{metric_name}_error", 1)
+
+            # Log aggregate metrics
+            if results:
+                mlflow.log_metric("avg_score", np.mean(list(results.values())))
+                mlflow.log_metric("num_successful_metrics", len(results))
+
+            # Log evaluation artifacts
+            self._save_evaluation_results(results, testset)
+
+            return results
+
+    def register_model(self,
+                      run_id: str,
+                      model_name: str,
+                      stage: str = "Staging",
+                      description: str = None) -> str:
+        """Register model in MLflow Model Registry"""
+
+        try:
+            model_uri = f"runs:/{run_id}/optimized_model"
+
+            model_version = mlflow.register_model(
+                model_uri=model_uri,
+                name=model_name,
+                tags={
+                    "framework": "dspy",
+                    "registered_at": datetime.now().isoformat()
+                }
+            )
+
+            # Update model version stage
+            if stage != "None":
+                mlflow.tracking.MlflowClient().transition_model_version_stage(
+                    name=model_name,
+                    version=model_version.version,
+                    stage=stage,
+                    archive_existing_versions=False
+                )
+
+            # Update description
+            if description:
+                mlflow.tracking.MlflowClient().update_model_version(
+                    name=model_name,
+                    version=model_version.version,
+                    description=description
+                )
+
+            logger.info(f"Model registered: {model_name} v{model_version.version} ({stage})")
+            return f"{model_name}/{model_version.version}"
+
+        except Exception as e:
+            logger.error(f"Failed to register model: {e}")
+            raise e
+
+    def deploy_model(self,
+                    model_name: str,
+                    stage: str = "Production",
+                    deployment_target: str = "local") -> Dict[str, Any]:
+        """Deploy model from registry"""
+
+        try:
+            model_uri = f"models:/{model_name}/{stage}"
+
+            # Load model
+            loaded_model = mlflow.dspy.load_model(model_uri)
+
+            deployment_info = {
+                "model_name": model_name,
+                "stage": stage,
+                "model_uri": model_uri,
+                "deployment_target": deployment_target,
+                "deployed_at": datetime.now().isoformat()
+            }
+
+            # Create deployment run
+            with mlflow.start_run(run_name=f"deployment_{model_name}_{stage}"):
+                mlflow.log_params(deployment_info)
+                mlflow.set_tag("deployment", "true")
+
+                # Log deployment artifacts
+                deployment_config = {
+                    "model_uri": model_uri,
+                    "serving_config": {
+                        "max_tokens": 4000,
+                        "temperature": 0.1,
+                        "timeout": 30
+                    }
+                }
+
+                mlflow.log_dict(deployment_config, "deployment_config.json")
+
+            logger.info(f"Model deployed: {model_name} ({stage})")
+            return deployment_info
+
+        except Exception as e:
+            logger.error(f"Deployment failed: {e}")
+            raise e
+
+    def compare_models(self,
+                      model_runs: List[str],
+                      comparison_metric: str = "validation_score") -> pd.DataFrame:
+        """Compare multiple model runs"""
+
+        client = mlflow.tracking.MlflowClient()
+
+        comparison_data = []
+
+        for run_id in model_runs:
+            try:
+                run = client.get_run(run_id)
+
+                row = {
+                    "run_id": run_id,
+                    "run_name": run.data.tags.get("mlflow.runName", "unknown"),
+                    "status": run.info.status,
+                    "start_time": run.info.start_time,
+                    "end_time": run.info.end_time
+                }
+
+                # Add metrics
+                for metric_key, metric_value in run.data.metrics.items():
+                    row[f"metric_{metric_key}"] = metric_value
+
+                # Add parameters
+                for param_key, param_value in run.data.params.items():
+                    row[f"param_{param_key}"] = param_value
+
+                comparison_data.append(row)
+
+            except Exception as e:
+                logger.error(f"Failed to get run {run_id}: {e}")
+
+        df = pd.DataFrame(comparison_data)
+
+        # Sort by comparison metric if available
+        metric_col = f"metric_{comparison_metric}"
+        if metric_col in df.columns:
+            df = df.sort_values(metric_col, ascending=False)
+
+        return df
+
+    def _log_dataset_stats(self, dataset: List[dspy.Example], prefix: str):
+        """Log dataset statistics"""
+
+        input_lengths = []
+        output_lengths = []
+
+        for example in dataset[:100]:  # Sample for stats
+            if hasattr(example, 'question'):
+                input_lengths.append(len(str(example.question)))
+            if hasattr(example, 'answer'):
+                output_lengths.append(len(str(example.answer)))
+
+        if input_lengths:
+            mlflow.log_metric(f"{prefix}_avg_input_length", np.mean(input_lengths))
+            mlflow.log_metric(f"{prefix}_max_input_length", np.max(input_lengths))
+
+        if output_lengths:
+            mlflow.log_metric(f"{prefix}_avg_output_length", np.mean(output_lengths))
+            mlflow.log_metric(f"{prefix}_max_output_length", np.max(output_lengths))
+
+    def _log_program_structure(self, program: dspy.Module):
+        """Log program structure information"""
+
+        structure_info = {
+            "program_class": type(program).__name__,
+            "attributes": []
+        }
+
+        # Analyze program attributes
+        for attr_name in dir(program):
+            if not attr_name.startswith('_'):
+                attr = getattr(program, attr_name)
+                if isinstance(attr, dspy.Module):
+                    structure_info["attributes"].append({
+                        "name": attr_name,
+                        "type": type(attr).__name__
+                    })
+
+        mlflow.log_dict(structure_info, "program_structure.json")
+
+    def _evaluate_program(self,
+                         program: dspy.Module,
+                         testset: List[dspy.Example],
+                         metric: callable) -> float:
+        """Evaluate program on testset with metric"""
+
+        evaluator = dspy.Evaluate(
+            devset=testset,
+            metric=metric,
+            num_threads=4,
+            display_progress=True
+        )
+
+        return evaluator(program)
+
+    def _create_input_example(self, example: dspy.Example) -> Dict[str, Any]:
+        """Create input example for model logging"""
+
+        if hasattr(example, 'question'):
+            return {"question": example.question}
+        elif hasattr(example, 'inputs'):
+            return example.inputs
+        else:
+            return {"input": str(example)[:100]}
+
+    def _log_optimization_artifacts(self, optimizer: Any, optimized_program: dspy.Module):
+        """Log optimization-specific artifacts"""
+
+        # Save optimizer configuration
+        optimizer_config = {
+            "type": type(optimizer).__name__,
+            "config": getattr(optimizer, 'config', {})
+        }
+
+        mlflow.log_dict(optimizer_config, "optimizer_config.json")
+
+        # Save program prompts if available
+        if hasattr(optimized_program, 'get_prompts'):
+            try:
+                prompts = optimized_program.get_prompts()
+                mlflow.log_dict({"prompts": prompts}, "optimized_prompts.json")
+            except:
+                pass
+
+    def _save_evaluation_results(self, results: Dict[str, float], testset: List[dspy.Example]):
+        """Save detailed evaluation results"""
+
+        # Create evaluation report
+        report = {
+            "results": results,
+            "testset_size": len(testset),
+            "timestamp": datetime.now().isoformat(),
+            "summary": {
+                "best_metric": max(results.items(), key=lambda x: x[1])[0] if results else None,
+                "worst_metric": min(results.items(), key=lambda x: x[1])[0] if results else None,
+                "avg_score": np.mean(list(results.values())) if results else 0
+            }
+        }
+
+        mlflow.log_dict(report, "evaluation_report.json")
+
+# Production usage example
+def production_workflow():
+    """Example production workflow with MLflow tracking"""
+
+    # Initialize MLflow manager
+    mlflow_manager = EnterpriseMLflowManager(
+        tracking_uri="http://mlflow-server:5000",
+        experiment_name="production_dspy"
+    )
+
+    # Create DSPy program
+    lm = dspy.LM("openai/gpt-4o-mini")
+    dspy.configure(lm=lm)
+
+    program = dspy.ChainOfThought("question -> answer")
+
+    # Create sample data
+    trainset = [
+        dspy.Example(question="What is AI?", answer="Artificial Intelligence is..."),
+        dspy.Example(question="Explain ML?", answer="Machine Learning is...")
+    ]
+
+    valset = [
+        dspy.Example(question="Define AI?", answer="AI stands for...")
+    ]
+
+    # Track optimization
+    optimizer = dspy.MIPROv2(metric=dspy.evaluate.answer_exact_match)
+    run_id = mlflow_manager.track_optimization(
+        program=program,
+        optimizer=optimizer,
+        trainset=trainset,
+        valset=valset,
+        run_name="production_optimization"
+    )
+
+    # Register model
+    model_version = mlflow_manager.register_model(
+        run_id=run_id,
+        model_name="dspy_production_model",
+        stage="Staging",
+        description="Production DSPy model v1.0"
+    )
+
+    # Deploy model
+    deployment_info = mlflow_manager.deploy_model(
+        model_name="dspy_production_model",
+        stage="Production"
+    )
+
+    print(f"Model deployed: {deployment_info}")
+
+# Usage
+if __name__ == "__main__":
+    production_workflow()
+```
+
+## Core MLflow Integration Patterns
+
+### Basic Experiment Tracking
+
+```python
+# Basic tracking patterns for DSPy experiments
+import dspy
+import mlflow
+import mlflow.dspy
+
+def track_basic_experiment():
+    """Basic experiment tracking pattern"""
+
+    # Setup
+    mlflow.set_tracking_uri("sqlite:///experiments.db")
+    mlflow.set_experiment("dspy_basic")
+    mlflow.dspy.autolog()
+
+    # Configure DSPy
+    lm = dspy.LM("openai/gpt-4o-mini")
+    dspy.configure(lm=lm)
+
+    with mlflow.start_run(run_name="basic_chain_of_thought"):
+        # Log hyperparameters
+        mlflow.log_param("model", "gpt-4o-mini")
+        mlflow.log_param("max_tokens", 2000)
+        mlflow.log_param("temperature", 0.1)
+
+        # Create and use program
+        program = dspy.ChainOfThought("question -> answer")
+        result = program(question="What is the capital of France?")
+
+        # Log results
+        mlflow.log_metric("answer_length", len(result.answer))
+        mlflow.log_text(result.answer, "sample_answer.txt")
+
+        # Log model
+        mlflow.dspy.log_model(
+            dspy_model=program,
+            artifact_path="basic_model"
+        )
+
+track_basic_experiment()
+```
+
+### Advanced Model Registry Integration
+
+```python
+# Advanced model registry patterns
+import dspy
+import mlflow
+from mlflow.tracking import MlflowClient
+
+class ModelRegistryManager:
+    """Manage DSPy models in MLflow Model Registry"""
+
+    def __init__(self):
+        self.client = MlflowClient()
+
+    def promote_model(self,
+                     model_name: str,
+                     from_stage: str,
+                     to_stage: str,
+                     validation_metric_threshold: float = None):
+        """Promote model between stages with validation"""
+
+        try:
+            # Get current model in from_stage
+            model_version = self.client.get_latest_versions(
+                name=model_name,
+                stages=[from_stage]
+            )[0]
+
+            # Optional validation check
+            if validation_metric_threshold:
+                run = self.client.get_run(model_version.run_id)
+                validation_score = run.data.metrics.get("validation_score", 0)
+
+                if validation_score < validation_metric_threshold:
+                    raise ValueError(f"Validation score {validation_score} below threshold {validation_metric_threshold}")
+
+            # Promote model
+            self.client.transition_model_version_stage(
+                name=model_name,
+                version=model_version.version,
+                stage=to_stage,
+                archive_existing_versions=True
+            )
+
+            # Log promotion
+            with mlflow.start_run(run_name=f"promotion_{from_stage}_to_{to_stage}"):
+                mlflow.log_param("model_name", model_name)
+                mlflow.log_param("model_version", model_version.version)
+                mlflow.log_param("from_stage", from_stage)
+                mlflow.log_param("to_stage", to_stage)
+                mlflow.set_tag("promotion", "success")
+
+            logger.info(f"Model {model_name} v{model_version.version} promoted to {to_stage}")
+            return model_version.version
+
+        except Exception as e:
+            logger.error(f"Model promotion failed: {e}")
+            raise e
+
+    def compare_model_stages(self, model_name: str) -> Dict[str, Any]:
+        """Compare models across different stages"""
+
+        stages = ["Staging", "Production"]
+        comparison = {}
+
+        for stage in stages:
+            try:
+                versions = self.client.get_latest_versions(model_name, stages=[stage])
+                if versions:
+                    version = versions[0]
+                    run = self.client.get_run(version.run_id)
+
+                    comparison[stage] = {
+                        "version": version.version,
+                        "run_id": version.run_id,
+                        "metrics": run.data.metrics,
+                        "created_at": version.creation_timestamp
+                    }
+            except:
+                comparison[stage] = {"status": "not_found"}
+
+        return comparison
+
+    def rollback_model(self, model_name: str, target_version: str):
+        """Rollback production model to specific version"""
+
+        try:
+            # Transition target version to Production
+            self.client.transition_model_version_stage(
+                name=model_name,
+                version=target_version,
+                stage="Production",
+                archive_existing_versions=True
+            )
+
+            # Log rollback
+            with mlflow.start_run(run_name=f"rollback_to_v{target_version}"):
+                mlflow.log_param("model_name", model_name)
+                mlflow.log_param("target_version", target_version)
+                mlflow.set_tag("rollback", "true")
+
+            logger.info(f"Model {model_name} rolled back to version {target_version}")
+
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}")
+            raise e
+
+# Usage
+registry_manager = ModelRegistryManager()
+```
+
+### A/B Testing Integration
+
+```python
+# A/B testing with MLflow for DSPy models
+import dspy
+import mlflow
+import random
+from typing import Dict, List, Any
+
+class DSPyABTest:
+    """A/B testing framework for DSPy models with MLflow tracking"""
+
+    def __init__(self,
+                 experiment_name: str,
+                 model_a_uri: str,
+                 model_b_uri: str,
+                 traffic_split: float = 0.5):
+
+        self.experiment_name = experiment_name
+        self.traffic_split = traffic_split
+
+        # Load models
+        self.model_a = mlflow.dspy.load_model(model_a_uri)
+        self.model_b = mlflow.dspy.load_model(model_b_uri)
+
+        # Setup tracking
+        mlflow.set_experiment(experiment_name)
+
+        # Initialize statistics
+        self.stats = {
+            "model_a": {"requests": 0, "successes": 0, "total_latency": 0},
+            "model_b": {"requests": 0, "successes": 0, "total_latency": 0}
+        }
+
+    def predict(self, question: str, user_id: str = None) -> Dict[str, Any]:
+        """Make prediction with A/B testing"""
+
+        # Determine which model to use
+        use_model_a = random.random() < self.traffic_split
+        model_name = "model_a" if use_model_a else "model_b"
+        model = self.model_a if use_model_a else self.model_b
+
+        start_time = time.time()
+
+        try:
+            # Make prediction
+            result = model(question=question)
+
+            # Track success
+            latency = time.time() - start_time
+            self.stats[model_name]["requests"] += 1
+            self.stats[model_name]["successes"] += 1
+            self.stats[model_name]["total_latency"] += latency
+
+            # Log to MLflow
+            with mlflow.start_run(run_name=f"ab_prediction_{model_name}"):
+                mlflow.log_param("model_variant", model_name)
+                mlflow.log_param("user_id", user_id)
+                mlflow.log_metric("latency", latency)
+                mlflow.log_metric("success", 1)
+                mlflow.log_param("question_length", len(question))
+                mlflow.log_param("answer_length", len(result.answer))
+
+            return {
+                "answer": result.answer,
+                "model_variant": model_name,
+                "latency": latency,
+                "status": "success"
+            }
+
+        except Exception as e:
+            # Track failure
+            self.stats[model_name]["requests"] += 1
+
+            with mlflow.start_run(run_name=f"ab_error_{model_name}"):
+                mlflow.log_param("model_variant", model_name)
+                mlflow.log_param("user_id", user_id)
+                mlflow.log_metric("success", 0)
+                mlflow.set_tag("error", str(e))
+
+            return {
+                "error": str(e),
+                "model_variant": model_name,
+                "status": "error"
+            }
+
+    def get_experiment_results(self) -> Dict[str, Any]:
+        """Get A/B test results"""
+
+        results = {}
+
+        for model_name, stats in self.stats.items():
+            if stats["requests"] > 0:
+                results[model_name] = {
+                    "requests": stats["requests"],
+                    "success_rate": stats["successes"] / stats["requests"],
+                    "avg_latency": stats["total_latency"] / stats["successes"] if stats["successes"] > 0 else 0,
+                    "error_rate": (stats["requests"] - stats["successes"]) / stats["requests"]
+                }
+            else:
+                results[model_name] = {"requests": 0}
+
+        # Log experiment summary
+        with mlflow.start_run(run_name="ab_test_summary"):
+            for model_name, metrics in results.items():
+                for metric_name, value in metrics.items():
+                    mlflow.log_metric(f"{model_name}_{metric_name}", value)
+
+        return results
+
+# Usage
+ab_test = DSPyABTest(
+    experiment_name="production_ab_test",
+    model_a_uri="models:/dspy_model/1",
+    model_b_uri="models:/dspy_model/2",
+    traffic_split=0.5
+)
+
+# Run some predictions
+for i in range(100):
+    result = ab_test.predict(f"Test question {i}", user_id=f"user_{i}")
+
+# Get results
+results = ab_test.get_experiment_results()
+print(results)
+```
+
+## Performance Optimization
+
+### Batch Tracking
+
+```python
+# Efficient batch tracking for high-throughput scenarios
+import dspy
+import mlflow
+from typing import List, Dict, Any
+import asyncio
+
+class BatchMLflowTracker:
+    """Efficient batch tracking for production workloads"""
+
+    def __init__(self, batch_size: int = 100):
+        self.batch_size = batch_size
+        self.pending_logs = []
+        self.batch_count = 0
+
+    def add_prediction_log(self,
+                          question: str,
+                          answer: str,
+                          model_variant: str,
+                          latency: float,
+                          success: bool):
+        """Add prediction to batch queue"""
+
+        self.pending_logs.append({
+            "question_length": len(question),
+            "answer_length": len(answer),
+            "model_variant": model_variant,
+            "latency": latency,
+            "success": 1 if success else 0
+        })
+
+        # Flush if batch is full
+        if len(self.pending_logs) >= self.batch_size:
+            self.flush_batch()
+
+    def flush_batch(self):
+        """Flush pending logs to MLflow"""
+
+        if not self.pending_logs:
+            return
+
+        self.batch_count += 1
+
+        with mlflow.start_run(run_name=f"batch_{self.batch_count}"):
+            # Aggregate metrics
+            total_requests = len(self.pending_logs)
+            successful_requests = sum(log["success"] for log in self.pending_logs)
+            total_latency = sum(log["latency"] for log in self.pending_logs)
+
+            # Log batch metrics
+            mlflow.log_metric("batch_size", total_requests)
+            mlflow.log_metric("success_rate", successful_requests / total_requests)
+            mlflow.log_metric("avg_latency", total_latency / total_requests)
+
+            # Log model variant distribution
+            variants = {}
+            for log in self.pending_logs:
+                variant = log["model_variant"]
+                variants[variant] = variants.get(variant, 0) + 1
+
+            for variant, count in variants.items():
+                mlflow.log_metric(f"{variant}_requests", count)
+
+        # Clear batch
+        self.pending_logs.clear()
+
+    def __del__(self):
+        """Flush remaining logs on cleanup"""
+        self.flush_batch()
+
+# Usage in production
+tracker = BatchMLflowTracker(batch_size=50)
+
+# In your prediction loop
+for request in requests:
+    result = model.predict(request.question)
+    tracker.add_prediction_log(
+        question=request.question,
+        answer=result.answer,
+        model_variant="model_a",
+        latency=result.latency,
+        success=result.success
+    )
+```
+
+## Speed Tips
+
+- Use `mlflow.dspy.autolog()` for automatic tracking of DSPy operations
+- Implement batch logging for high-throughput production systems to reduce MLflow overhead
+- Cache model loading from registry to avoid repeated downloads
+- Use MLflow's async logging capabilities for better performance
+- Set up dedicated MLflow tracking servers for production workloads
+- Use MLflow's REST API directly for custom integrations and better performance
+
+## Common Pitfalls
+
+- Not configuring MLflow tracking URI leading to local-only experiments
+- Missing proper error handling for MLflow operations in production
+- Logging too much data causing performance issues and storage bloat
+- Not using model registry stages properly leading to deployment confusion
+- Overlooking MLflow authentication and access control for production
+- Not implementing proper cleanup of old experiments and model versions
+
+## Best Practices Summary
+
+- Always use remote MLflow tracking servers for production deployments
+- Implement proper model versioning and stage management workflows
+- Use MLflow's model registry for production model governance
+- Set up automated model validation before promoting to production stage
+- Implement A/B testing frameworks for safe model deployment
+- Use structured experiment naming and tagging conventions
+- Monitor MLflow storage usage and implement retention policies
+
+## References
+
+- [MLflow DSPy Integration](https://mlflow.org/docs/latest/llms/dspy/index.html)
+- [MLflow Model Registry](https://mlflow.org/docs/latest/model-registry.html)
+- [MLflow Tracking API](https://mlflow.org/docs/latest/tracking.html)
+- [DSPy Deployment with MLflow](https://dspy-docs.vercel.app/tutorials/deployment/)
+- [MLflow Production Best Practices](https://mlflow.org/docs/latest/tracking/server.html)

@@ -1,0 +1,1191 @@
+---
+description: DSPy 3.0.1 Parallel Module - Master concurrent execution for high-throughput processing and batch operations
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's Parallel module. Master concurrent execution patterns for efficient batch processing, multi-threading optimization, and error-resilient parallel operations.
+
+## Parallel Execution Architecture
+
+```
+Prepare Batches → Configure Threading → Execute Parallel → Handle Errors → Collect Results
+      ↓                   ↓                  ↓              ↓               ↓
+Module/Example      Thread Pool         Concurrent      Error Control   Aggregated Output
+Pairs Setup         Settings            Processing      Recovery        Performance Boost
+      ↓                   ↓                  ↓              ↓               ↓
+Input Validation    Resource Manage     Safe Execution  Fault Tolerance Production Ready
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Parallel Processing
+
+```python
+import dspy
+
+# Configure LM
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+dspy.configure(lm=lm)
+
+# Create a module to process in parallel
+qa_module = dspy.ChainOfThought("question -> answer")
+
+# Prepare data for parallel processing
+questions = [
+    "What is the capital of France?",
+    "How does photosynthesis work?",
+    "What is machine learning?",
+    "Explain quantum computing.",
+    "What causes climate change?"
+]
+
+# Create module-example pairs for parallel execution
+exec_pairs = [(qa_module, {"question": q}) for q in questions]
+
+# Create parallel processor
+parallel_processor = dspy.Parallel(
+    num_threads=3,          # Use 3 threads
+    max_errors=2,           # Allow up to 2 errors before stopping
+    disable_progress_bar=False  # Show progress
+)
+
+# Execute in parallel
+results = parallel_processor(exec_pairs)
+
+# Process results
+for i, result in enumerate(results):
+    if result is not None:
+        print(f"Q{i+1}: {questions[i]}")
+        print(f"A{i+1}: {result.answer}\n")
+    else:
+        print(f"Q{i+1}: Failed to process\n")
+```
+
+### Production Ready - Advanced Batch Processing System
+
+```python
+import dspy
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+import logging
+
+@dataclass
+class ProcessingResult:
+    """Structured result for batch processing."""
+    input_id: str
+    success: bool
+    result: Any = None
+    error: Optional[str] = None
+    processing_time: Optional[float] = None
+
+class BatchProcessingSystem(dspy.Module):
+    def __init__(self, 
+                 processing_modules: Dict[str, dspy.Module],
+                 default_parallel_config: Dict[str, Any] = None):
+        super().__init__()
+        self.modules = processing_modules
+        self.default_config = default_parallel_config or {
+            "num_threads": 4,
+            "max_errors": 5,
+            "disable_progress_bar": False,
+            "return_failed_examples": True,
+            "provide_traceback": True
+        }
+        
+        # Create parallel processor
+        self.parallel_processor = dspy.Parallel(**self.default_config)
+        
+        # Performance monitoring
+        self.processing_stats = {
+            "total_processed": 0,
+            "successful": 0,
+            "failed": 0,
+            "avg_processing_time": 0.0
+        }
+    
+    def process_batch(self, 
+                     batch_data: List[Dict[str, Any]], 
+                     module_name: str,
+                     batch_id: str = "default") -> List[ProcessingResult]:
+        """Process a batch of data with specified module."""
+        
+        if module_name not in self.modules:
+            raise ValueError(f"Module '{module_name}' not found. Available: {list(self.modules.keys())}")
+        
+        module = self.modules[module_name]
+        
+        # Prepare execution pairs with metadata
+        exec_pairs = []
+        for i, data in enumerate(batch_data):
+            # Add metadata for tracking
+            enhanced_data = {
+                **data,
+                "_batch_id": batch_id,
+                "_item_id": f"{batch_id}_{i}",
+                "_module_name": module_name
+            }
+            exec_pairs.append((module, enhanced_data))
+        
+        import time
+        start_time = time.time()
+        
+        # Execute parallel processing
+        results, failed_examples, exceptions = self.parallel_processor(exec_pairs)
+        
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        # Structure results
+        structured_results = []
+        for i, (data, result) in enumerate(zip(batch_data, results)):
+            if result is not None:
+                structured_results.append(ProcessingResult(
+                    input_id=f"{batch_id}_{i}",
+                    success=True,
+                    result=result,
+                    processing_time=processing_time / len(batch_data)
+                ))
+                self.processing_stats["successful"] += 1
+            else:
+                error_msg = str(exceptions[i]) if i < len(exceptions) else "Unknown error"
+                structured_results.append(ProcessingResult(
+                    input_id=f"{batch_id}_{i}",
+                    success=False,
+                    error=error_msg,
+                    processing_time=processing_time / len(batch_data)
+                ))
+                self.processing_stats["failed"] += 1
+        
+        # Update statistics
+        self.processing_stats["total_processed"] += len(batch_data)
+        if self.processing_stats["total_processed"] > 0:
+            success_rate = self.processing_stats["successful"] / self.processing_stats["total_processed"]
+            self.processing_stats["avg_processing_time"] = processing_time / len(batch_data)
+        
+        return structured_results
+    
+    def process_multiple_batches(self, 
+                               batches: Dict[str, List[Dict[str, Any]]], 
+                               module_assignments: Dict[str, str]) -> Dict[str, List[ProcessingResult]]:
+        """Process multiple batches with different modules."""
+        
+        all_results = {}
+        
+        for batch_id, batch_data in batches.items():
+            module_name = module_assignments.get(batch_id)
+            if module_name:
+                try:
+                    batch_results = self.process_batch(batch_data, module_name, batch_id)
+                    all_results[batch_id] = batch_results
+                except Exception as e:
+                    logging.error(f"Failed to process batch {batch_id}: {str(e)}")
+                    all_results[batch_id] = [
+                        ProcessingResult(
+                            input_id=f"{batch_id}_{i}",
+                            success=False,
+                            error=f"Batch processing failed: {str(e)}"
+                        ) for i in range(len(batch_data))
+                    ]
+        
+        return all_results
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """Get comprehensive performance statistics."""
+        return {
+            "processing_stats": self.processing_stats.copy(),
+            "success_rate": (self.processing_stats["successful"] / 
+                           max(self.processing_stats["total_processed"], 1)),
+            "error_rate": (self.processing_stats["failed"] / 
+                         max(self.processing_stats["total_processed"], 1)),
+            "parallel_config": self.default_config
+        }
+
+# Example usage
+if __name__ == "__main__":
+    # Define processing modules
+    modules = {
+        "qa": dspy.ChainOfThought("question -> answer"),
+        "sentiment": dspy.ChainOfThought("text -> sentiment, confidence"),
+        "summarization": dspy.ChainOfThought("document -> summary, key_points"),
+        "classification": dspy.ChainOfThought("text, categories -> category, reasoning")
+    }
+    
+    # Create batch processing system
+    batch_processor = BatchProcessingSystem(
+        processing_modules=modules,
+        default_parallel_config={
+            "num_threads": 6,
+            "max_errors": 10,
+            "disable_progress_bar": False,
+            "return_failed_examples": True
+        }
+    )
+    
+    # Prepare batch data
+    qa_batch = [
+        {"question": "What is artificial intelligence?"},
+        {"question": "How do neural networks work?"},
+        {"question": "What is the future of AI?"}
+    ]
+    
+    sentiment_batch = [
+        {"text": "This product is amazing! I love it."},
+        {"text": "Terrible service, very disappointed."},
+        {"text": "It's okay, nothing special."}
+    ]
+    
+    # Process batches
+    batches = {
+        "qa_batch": qa_batch,
+        "sentiment_batch": sentiment_batch
+    }
+    
+    module_assignments = {
+        "qa_batch": "qa",
+        "sentiment_batch": "sentiment"
+    }
+    
+    results = batch_processor.process_multiple_batches(batches, module_assignments)
+    
+    # Display results
+    for batch_id, batch_results in results.items():
+        print(f"\n=== {batch_id.upper()} RESULTS ===")
+        for result in batch_results:
+            if result.success:
+                print(f"✓ {result.input_id}: Success")
+                print(f"  Result: {result.result}")
+            else:
+                print(f"✗ {result.input_id}: Failed - {result.error}")
+    
+    # Performance report
+    report = batch_processor.get_performance_report()
+    print(f"\n=== PERFORMANCE REPORT ===")
+    print(f"Success Rate: {report['success_rate']:.2%}")
+    print(f"Total Processed: {report['processing_stats']['total_processed']}")
+```
+
+## Core Parallel Processing Patterns
+
+### Thread Pool Configuration
+
+```python
+# Basic thread pool configurations for different scenarios
+class ParallelConfigurations:
+    @staticmethod
+    def cpu_intensive():
+        """Configuration for CPU-intensive tasks."""
+        import os
+        return dspy.Parallel(
+            num_threads=max(1, os.cpu_count() - 1),  # Leave one CPU free
+            max_errors=5,
+            provide_traceback=True,
+            disable_progress_bar=False
+        )
+    
+    @staticmethod
+    def io_intensive():
+        """Configuration for I/O-intensive tasks (API calls)."""
+        return dspy.Parallel(
+            num_threads=20,  # More threads for I/O waiting
+            max_errors=10,
+            provide_traceback=False,  # Faster without traceback
+            disable_progress_bar=False
+        )
+    
+    @staticmethod
+    def memory_constrained():
+        """Configuration for memory-constrained environments."""
+        return dspy.Parallel(
+            num_threads=2,   # Fewer threads to reduce memory usage
+            max_errors=3,
+            provide_traceback=False,
+            disable_progress_bar=True
+        )
+    
+    @staticmethod
+    def development():
+        """Configuration for development and debugging."""
+        return dspy.Parallel(
+            num_threads=1,   # Single thread for easier debugging
+            max_errors=1,    # Fail fast
+            provide_traceback=True,
+            disable_progress_bar=True
+        )
+    
+    @staticmethod
+    def production():
+        """Configuration for production environments."""
+        return dspy.Parallel(
+            num_threads=8,
+            max_errors=50,   # Higher tolerance in production
+            provide_traceback=False,  # Performance optimization
+            disable_progress_bar=True,  # No UI in production
+            return_failed_examples=True  # Track failures
+        )
+
+# Usage examples
+def process_with_environment(data, module, environment="production"):
+    config_map = {
+        "cpu_intensive": ParallelConfigurations.cpu_intensive(),
+        "io_intensive": ParallelConfigurations.io_intensive(),
+        "memory_constrained": ParallelConfigurations.memory_constrained(),
+        "development": ParallelConfigurations.development(),
+        "production": ParallelConfigurations.production()
+    }
+    
+    processor = config_map.get(environment, ParallelConfigurations.production())
+    exec_pairs = [(module, item) for item in data]
+    return processor(exec_pairs)
+```
+
+### Error Handling and Recovery
+
+```python
+class RobustParallelProcessor(dspy.Module):
+    def __init__(self, module, retry_config=None):
+        super().__init__()
+        self.module = module
+        self.retry_config = retry_config or {
+            "max_retries": 3,
+            "retry_delay": 1.0,
+            "exponential_backoff": True
+        }
+        
+        # Parallel processor with failure tracking
+        self.parallel_processor = dspy.Parallel(
+            num_threads=4,
+            max_errors=float('inf'),  # Handle errors manually
+            return_failed_examples=True,
+            provide_traceback=True
+        )
+    
+    def process_with_retry(self, data_batch):
+        """Process data with automatic retry for failed items."""
+        import time
+        import random
+        
+        current_batch = data_batch.copy()
+        all_results = [None] * len(data_batch)
+        original_indices = list(range(len(data_batch)))
+        
+        for attempt in range(self.retry_config["max_retries"] + 1):
+            if not current_batch:
+                break
+            
+            print(f"Attempt {attempt + 1}: Processing {len(current_batch)} items")
+            
+            # Prepare execution pairs
+            exec_pairs = [(self.module, item) for item in current_batch]
+            
+            # Execute parallel processing
+            results, failed_examples, exceptions = self.parallel_processor(exec_pairs)
+            
+            # Process results and identify failures
+            new_batch = []
+            new_indices = []
+            
+            for i, (result, original_idx) in enumerate(zip(results, original_indices)):
+                if result is not None:
+                    # Success - store result
+                    all_results[original_idx] = result
+                else:
+                    # Failure - prepare for retry if attempts remaining
+                    if attempt < self.retry_config["max_retries"]:
+                        new_batch.append(current_batch[i])
+                        new_indices.append(original_idx)
+                    else:
+                        # Final failure
+                        all_results[original_idx] = {
+                            "error": f"Failed after {self.retry_config['max_retries']} retries",
+                            "exception": str(exceptions[i]) if i < len(exceptions) else "Unknown error"
+                        }
+            
+            # Update for next iteration
+            current_batch = new_batch
+            original_indices = new_indices
+            
+            # Wait before retry (with exponential backoff if configured)
+            if current_batch and attempt < self.retry_config["max_retries"]:
+                delay = self.retry_config["retry_delay"]
+                if self.retry_config.get("exponential_backoff", False):
+                    delay *= (2 ** attempt)
+                
+                # Add jitter to prevent thundering herd
+                jitter = random.uniform(0.5, 1.5)
+                time.sleep(delay * jitter)
+        
+        return all_results
+    
+    def get_success_rate(self, results):
+        """Calculate success rate from results."""
+        successful = sum(1 for r in results if r is not None and not isinstance(r, dict) or not r.get("error"))
+        return successful / len(results) if results else 0.0
+
+# Usage example
+def process_with_robust_handling():
+    # Create a module that might fail sometimes
+    qa_module = dspy.ChainOfThought("question -> answer")
+    
+    # Create robust processor
+    robust_processor = RobustParallelProcessor(
+        module=qa_module,
+        retry_config={
+            "max_retries": 2,
+            "retry_delay": 0.5,
+            "exponential_backoff": True
+        }
+    )
+    
+    # Sample data that might cause some failures
+    questions = [
+        {"question": "What is AI?"},
+        {"question": "How does ML work?"},
+        {"question": ""},  # Empty question might cause issues
+        {"question": "What is deep learning?"},
+        {"question": None}  # None value might cause issues
+    ]
+    
+    # Process with retry
+    results = robust_processor.process_with_retry(questions)
+    success_rate = robust_processor.get_success_rate(results)
+    
+    print(f"Processing completed with {success_rate:.2%} success rate")
+    return results
+```
+
+### Dynamic Load Balancing
+
+```python
+class AdaptiveParallelProcessor(dspy.Module):
+    def __init__(self, module, initial_threads=4):
+        super().__init__()
+        self.module = module
+        self.current_threads = initial_threads
+        self.performance_history = []
+        self.adaptation_threshold = 5  # Adapt after 5 measurements
+        
+        self.parallel_processor = None
+        self._update_processor()
+    
+    def _update_processor(self):
+        """Update parallel processor with current thread count."""
+        self.parallel_processor = dspy.Parallel(
+            num_threads=self.current_threads,
+            max_errors=10,
+            return_failed_examples=True,
+            disable_progress_bar=True
+        )
+    
+    def _calculate_throughput(self, batch_size, processing_time):
+        """Calculate items per second throughput."""
+        return batch_size / max(processing_time, 0.001)  # Avoid division by zero
+    
+    def _adapt_thread_count(self):
+        """Adapt thread count based on performance history."""
+        if len(self.performance_history) < self.adaptation_threshold:
+            return
+        
+        # Get recent performance metrics
+        recent_metrics = self.performance_history[-self.adaptation_threshold:]
+        avg_throughput = sum(m["throughput"] for m in recent_metrics) / len(recent_metrics)
+        avg_success_rate = sum(m["success_rate"] for m in recent_metrics) / len(recent_metrics)
+        
+        # Adaptation logic
+        if avg_success_rate < 0.8:  # Too many failures
+            # Reduce threads to decrease load
+            self.current_threads = max(1, self.current_threads - 1)
+            print(f"Reducing threads to {self.current_threads} due to low success rate ({avg_success_rate:.2%})")
+        elif avg_success_rate > 0.95 and len(self.performance_history) >= 2:
+            # High success rate - try increasing throughput
+            last_throughput = self.performance_history[-1]["throughput"]
+            prev_throughput = self.performance_history[-2]["throughput"]
+            
+            if last_throughput >= prev_throughput * 0.9:  # Throughput stable/increasing
+                self.current_threads = min(16, self.current_threads + 1)  # Cap at 16 threads
+                print(f"Increasing threads to {self.current_threads} due to good performance")
+        
+        self._update_processor()
+    
+    def process_adaptive(self, data_batch):
+        """Process data with adaptive thread management."""
+        import time
+        
+        start_time = time.time()
+        
+        # Prepare execution pairs
+        exec_pairs = [(self.module, item) for item in data_batch]
+        
+        # Execute parallel processing
+        results, failed_examples, exceptions = self.parallel_processor(exec_pairs)
+        
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        # Calculate metrics
+        successful_count = sum(1 for r in results if r is not None)
+        success_rate = successful_count / len(results) if results else 0.0
+        throughput = self._calculate_throughput(len(data_batch), processing_time)
+        
+        # Record performance
+        performance_metric = {
+            "timestamp": time.time(),
+            "batch_size": len(data_batch),
+            "processing_time": processing_time,
+            "throughput": throughput,
+            "success_rate": success_rate,
+            "thread_count": self.current_threads
+        }
+        
+        self.performance_history.append(performance_metric)
+        
+        # Adapt thread count for next iteration
+        self._adapt_thread_count()
+        
+        return results, performance_metric
+    
+    def get_performance_summary(self):
+        """Get summary of performance across all batches."""
+        if not self.performance_history:
+            return {"message": "No performance data available"}
+        
+        total_items = sum(m["batch_size"] for m in self.performance_history)
+        total_time = sum(m["processing_time"] for m in self.performance_history)
+        avg_throughput = sum(m["throughput"] for m in self.performance_history) / len(self.performance_history)
+        avg_success_rate = sum(m["success_rate"] for m in self.performance_history) / len(self.performance_history)
+        
+        return {
+            "total_batches": len(self.performance_history),
+            "total_items_processed": total_items,
+            "total_processing_time": total_time,
+            "average_throughput": avg_throughput,
+            "average_success_rate": avg_success_rate,
+            "current_thread_count": self.current_threads,
+            "thread_count_range": (
+                min(m["thread_count"] for m in self.performance_history),
+                max(m["thread_count"] for m in self.performance_history)
+            )
+        }
+
+# Usage example
+adaptive_processor = AdaptiveParallelProcessor(
+    module=dspy.ChainOfThought("question -> answer"),
+    initial_threads=2
+)
+
+# Process multiple batches to see adaptation
+test_batches = [
+    [{"question": f"Question {i}"} for i in range(10)],
+    [{"question": f"Question {i}"} for i in range(20)],
+    [{"question": f"Question {i}"} for i in range(15)],
+    [{"question": f"Question {i}"} for i in range(25)]
+]
+
+for i, batch in enumerate(test_batches):
+    print(f"\nProcessing batch {i+1}...")
+    results, metrics = adaptive_processor.process_adaptive(batch)
+    print(f"Batch {i+1}: {metrics['throughput']:.2f} items/sec, "
+          f"{metrics['success_rate']:.2%} success rate, "
+          f"{metrics['thread_count']} threads")
+
+# Final performance summary
+summary = adaptive_processor.get_performance_summary()
+print(f"\n=== ADAPTIVE PROCESSING SUMMARY ===")
+print(f"Total items: {summary['total_items_processed']}")
+print(f"Average throughput: {summary['average_throughput']:.2f} items/sec")
+print(f"Average success rate: {summary['average_success_rate']:.2%}")
+print(f"Thread count adapted from {summary['thread_count_range'][0]} to {summary['thread_count_range'][1]}")
+```
+
+## Advanced Parallel Patterns
+
+### Pipeline Processing
+
+```python
+class ParallelPipeline(dspy.Module):
+    def __init__(self, pipeline_stages: List[dspy.Module], stage_configs: List[Dict] = None):
+        super().__init__()
+        self.stages = pipeline_stages
+        self.stage_configs = stage_configs or [{}] * len(pipeline_stages)
+        
+        # Create parallel processors for each stage
+        self.stage_processors = []
+        for i, config in enumerate(self.stage_configs):
+            processor = dspy.Parallel(
+                num_threads=config.get("num_threads", 4),
+                max_errors=config.get("max_errors", 5),
+                return_failed_examples=True,
+                **{k: v for k, v in config.items() if k not in ["num_threads", "max_errors"]}
+            )
+            self.stage_processors.append(processor)
+    
+    def process_pipeline(self, initial_data):
+        """Process data through multiple stages in sequence, each stage in parallel."""
+        current_data = initial_data
+        stage_results = []
+        
+        for stage_idx, (stage_module, processor) in enumerate(zip(self.stages, self.stage_processors)):
+            print(f"Processing stage {stage_idx + 1}/{len(self.stages)}...")
+            
+            # Prepare execution pairs for current stage
+            if stage_idx == 0:
+                # First stage: process initial data
+                exec_pairs = [(stage_module, item) for item in current_data]
+            else:
+                # Subsequent stages: process results from previous stage
+                exec_pairs = [(stage_module, result) for result in current_data if result is not None]
+            
+            # Execute stage in parallel
+            results, failed_examples, exceptions = processor(exec_pairs)
+            
+            # Filter successful results for next stage
+            successful_results = [r for r in results if r is not None]
+            
+            stage_results.append({
+                "stage": stage_idx + 1,
+                "input_count": len(exec_pairs),
+                "success_count": len(successful_results),
+                "failure_count": len(exec_pairs) - len(successful_results),
+                "results": results
+            })
+            
+            # Update current data for next stage
+            current_data = successful_results
+            
+            # Stop if no successful results
+            if not current_data:
+                print(f"Pipeline stopped at stage {stage_idx + 1}: No successful results")
+                break
+        
+        return {
+            "final_results": current_data,
+            "stage_details": stage_results,
+            "pipeline_success_rate": len(current_data) / len(initial_data) if initial_data else 0.0
+        }
+
+# Example: Document processing pipeline
+def create_document_pipeline():
+    # Stage 1: Extract text from documents
+    text_extractor = dspy.ChainOfThought("document_path -> extracted_text, metadata")
+    
+    # Stage 2: Summarize extracted text
+    summarizer = dspy.ChainOfThought("extracted_text -> summary, key_points")
+    
+    # Stage 3: Classify document content
+    classifier = dspy.ChainOfThought("summary, key_points -> category, confidence")
+    
+    # Create pipeline with different threading configs for each stage
+    pipeline = ParallelPipeline(
+        pipeline_stages=[text_extractor, summarizer, classifier],
+        stage_configs=[
+            {"num_threads": 2, "max_errors": 3},   # I/O intensive
+            {"num_threads": 4, "max_errors": 5},   # CPU intensive
+            {"num_threads": 6, "max_errors": 2}    # Light processing
+        ]
+    )
+    
+    return pipeline
+```
+
+### Resource-Aware Processing
+
+```python
+class ResourceAwareProcessor(dspy.Module):
+    def __init__(self, module, resource_limits=None):
+        super().__init__()
+        self.module = module
+        self.resource_limits = resource_limits or {
+            "max_memory_mb": 1000,
+            "max_cpu_percent": 80,
+            "max_concurrent_requests": 10
+        }
+        
+        self.current_resources = {
+            "memory_mb": 0,
+            "cpu_percent": 0,
+            "concurrent_requests": 0
+        }
+        
+        # Start with conservative settings
+        self.parallel_processor = dspy.Parallel(
+            num_threads=2,
+            max_errors=5,
+            return_failed_examples=True
+        )
+    
+    def _check_resource_usage(self):
+        """Check current resource usage (simplified monitoring)."""
+        import psutil
+        import os
+        
+        # Get current process
+        process = psutil.Process(os.getpid())
+        
+        # Update resource tracking
+        self.current_resources["memory_mb"] = process.memory_info().rss / 1024 / 1024
+        self.current_resources["cpu_percent"] = process.cpu_percent()
+        
+        return self.current_resources
+    
+    def _can_process_batch(self, batch_size):
+        """Check if we can process a batch given current resources."""
+        current = self._check_resource_usage()
+        
+        # Estimate resource needs (simplified heuristic)
+        estimated_memory = current["memory_mb"] + (batch_size * 10)  # 10MB per item estimate
+        estimated_requests = current["concurrent_requests"] + batch_size
+        
+        can_process = (
+            estimated_memory <= self.resource_limits["max_memory_mb"] and
+            current["cpu_percent"] <= self.resource_limits["max_cpu_percent"] and
+            estimated_requests <= self.resource_limits["max_concurrent_requests"]
+        )
+        
+        return can_process, {
+            "estimated_memory": estimated_memory,
+            "estimated_requests": estimated_requests,
+            "current_resources": current
+        }
+    
+    def _split_batch(self, data, max_batch_size):
+        """Split data into smaller batches."""
+        batches = []
+        for i in range(0, len(data), max_batch_size):
+            batches.append(data[i:i + max_batch_size])
+        return batches
+    
+    def process_with_resource_awareness(self, data):
+        """Process data while respecting resource limits."""
+        all_results = []
+        processing_info = []
+        
+        # Check if we can process the full batch
+        can_process, resource_info = self._can_process_batch(len(data))
+        
+        if can_process:
+            # Process full batch
+            exec_pairs = [(self.module, item) for item in data]
+            results, failed_examples, exceptions = self.parallel_processor(exec_pairs)
+            all_results.extend(results)
+            
+            processing_info.append({
+                "batch_size": len(data),
+                "resource_info": resource_info,
+                "processed_as_single_batch": True
+            })
+        else:
+            # Split into smaller batches
+            max_batch_size = max(1, self.resource_limits["max_concurrent_requests"] // 2)
+            batches = self._split_batch(data, max_batch_size)
+            
+            print(f"Splitting into {len(batches)} smaller batches due to resource constraints")
+            
+            for i, batch in enumerate(batches):
+                # Wait if resources are still constrained
+                attempts = 0
+                while not self._can_process_batch(len(batch))[0] and attempts < 5:
+                    print(f"Waiting for resources to free up... (attempt {attempts + 1})")
+                    import time
+                    time.sleep(2)
+                    attempts += 1
+                
+                # Process batch
+                exec_pairs = [(self.module, item) for item in batch]
+                results, failed_examples, exceptions = self.parallel_processor(exec_pairs)
+                all_results.extend(results)
+                
+                # Record processing info
+                _, resource_info = self._can_process_batch(len(batch))
+                processing_info.append({
+                    "batch_number": i + 1,
+                    "batch_size": len(batch),
+                    "resource_info": resource_info,
+                    "processed_as_single_batch": False
+                })
+        
+        return {
+            "results": all_results,
+            "processing_info": processing_info,
+            "resource_usage_summary": self._check_resource_usage()
+        }
+
+# Usage example
+resource_aware = ResourceAwareProcessor(
+    module=dspy.ChainOfThought("question -> answer"),
+    resource_limits={
+        "max_memory_mb": 500,   # Conservative memory limit
+        "max_cpu_percent": 70,
+        "max_concurrent_requests": 5
+    }
+)
+
+# Large dataset that might exceed resource limits
+large_dataset = [{"question": f"Question {i}"} for i in range(50)]
+
+result = resource_aware.process_with_resource_awareness(large_dataset)
+print(f"Processed {len(result['results'])} items across {len(result['processing_info'])} batches")
+```
+
+## Performance Optimization Strategies
+
+### Batch Size Optimization
+
+```python
+class BatchSizeOptimizer:
+    def __init__(self, module, initial_batch_size=10):
+        self.module = module
+        self.current_batch_size = initial_batch_size
+        self.performance_history = []
+        self.optimization_rounds = 0
+        
+    def find_optimal_batch_size(self, test_data, max_rounds=5):
+        """Find optimal batch size through performance testing."""
+        import time
+        import random
+        
+        batch_sizes_to_test = [5, 10, 15, 20, 25, 30]
+        results = {}
+        
+        for batch_size in batch_sizes_to_test:
+            print(f"Testing batch size: {batch_size}")
+            
+            # Create test batch
+            test_batch = random.sample(test_data, min(batch_size * 3, len(test_data)))
+            batches = [test_batch[i:i + batch_size] for i in range(0, len(test_batch), batch_size)]
+            
+            # Time the processing
+            start_time = time.time()
+            total_items = 0
+            total_successful = 0
+            
+            parallel_processor = dspy.Parallel(
+                num_threads=4,
+                max_errors=10,
+                return_failed_examples=True,
+                disable_progress_bar=True
+            )
+            
+            for batch in batches:
+                exec_pairs = [(self.module, item) for item in batch]
+                batch_results, failed_examples, exceptions = parallel_processor(exec_pairs)
+                
+                total_items += len(batch)
+                total_successful += sum(1 for r in batch_results if r is not None)
+            
+            end_time = time.time()
+            
+            # Calculate metrics
+            processing_time = end_time - start_time
+            throughput = total_items / processing_time if processing_time > 0 else 0
+            success_rate = total_successful / total_items if total_items > 0 else 0
+            
+            results[batch_size] = {
+                "throughput": throughput,
+                "success_rate": success_rate,
+                "processing_time": processing_time,
+                "total_items": total_items
+            }
+            
+            print(f"  Throughput: {throughput:.2f} items/sec")
+            print(f"  Success rate: {success_rate:.2%}")
+        
+        # Find optimal batch size (balance throughput and success rate)
+        best_batch_size = max(results.keys(), 
+                            key=lambda bs: results[bs]["throughput"] * results[bs]["success_rate"])
+        
+        self.current_batch_size = best_batch_size
+        self.performance_history.append(results)
+        
+        print(f"\nOptimal batch size: {best_batch_size}")
+        print(f"Expected throughput: {results[best_batch_size]['throughput']:.2f} items/sec")
+        print(f"Expected success rate: {results[best_batch_size]['success_rate']:.2%}")
+        
+        return best_batch_size, results
+
+# Usage
+optimizer = BatchSizeOptimizer(
+    module=dspy.ChainOfThought("question -> answer")
+)
+
+test_questions = [{"question": f"Test question {i}"} for i in range(100)]
+optimal_batch_size, performance_data = optimizer.find_optimal_batch_size(test_questions)
+```
+
+### Memory-Efficient Processing
+
+```python
+class MemoryEfficientProcessor:
+    def __init__(self, module, memory_threshold_mb=100):
+        self.module = module
+        self.memory_threshold = memory_threshold_mb
+        
+    def process_with_memory_management(self, data, chunk_size=None):
+        """Process data in memory-efficient chunks."""
+        import psutil
+        import os
+        import gc
+        
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss / 1024 / 1024
+        
+        # Auto-determine chunk size if not provided
+        if chunk_size is None:
+            chunk_size = max(5, self.memory_threshold // 10)  # Conservative estimate
+        
+        all_results = []
+        memory_usage = []
+        
+        # Process in chunks
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            
+            # Check memory before processing
+            current_memory = process.memory_info().rss / 1024 / 1024
+            memory_usage.append({
+                "chunk": i // chunk_size + 1,
+                "memory_before_mb": current_memory,
+                "memory_increase_mb": current_memory - initial_memory
+            })
+            
+            # Process chunk
+            parallel_processor = dspy.Parallel(
+                num_threads=2,  # Conservative for memory management
+                max_errors=5,
+                disable_progress_bar=True
+            )
+            
+            exec_pairs = [(self.module, item) for item in chunk]
+            results, failed_examples, exceptions = parallel_processor(exec_pairs)
+            all_results.extend(results)
+            
+            # Force garbage collection after each chunk
+            gc.collect()
+            
+            # Check memory after processing
+            after_memory = process.memory_info().rss / 1024 / 1024
+            memory_usage[-1]["memory_after_mb"] = after_memory
+            
+            # Warn if memory usage is getting high
+            if after_memory > initial_memory + self.memory_threshold:
+                print(f"Warning: Memory usage increased by {after_memory - initial_memory:.1f}MB")
+        
+        return {
+            "results": all_results,
+            "memory_usage": memory_usage,
+            "peak_memory_mb": max(m["memory_after_mb"] for m in memory_usage),
+            "total_memory_increase_mb": max(m["memory_after_mb"] for m in memory_usage) - initial_memory
+        }
+
+# Usage
+memory_efficient = MemoryEfficientProcessor(
+    module=dspy.ChainOfThought("question -> answer"),
+    memory_threshold_mb=50
+)
+
+large_dataset = [{"question": f"Question {i}"} for i in range(200)]
+result = memory_efficient.process_with_memory_management(large_dataset, chunk_size=20)
+
+print(f"Peak memory usage: {result['peak_memory_mb']:.1f}MB")
+print(f"Total memory increase: {result['total_memory_increase_mb']:.1f}MB")
+```
+
+## Speed Tips
+
+### Parallel Configuration Optimization
+
+```python
+# Quick parallel processing for different scenarios
+class QuickParallelConfigs:
+    @staticmethod
+    def fast_processing(data, module):
+        """Optimized for speed - minimal error handling."""
+        processor = dspy.Parallel(
+            num_threads=8,
+            max_errors=len(data),  # Don't stop on errors
+            provide_traceback=False,
+            disable_progress_bar=True
+        )
+        exec_pairs = [(module, item) for item in data]
+        return processor(exec_pairs)
+    
+    @staticmethod
+    def reliable_processing(data, module):
+        """Optimized for reliability - thorough error handling."""
+        processor = dspy.Parallel(
+            num_threads=4,
+            max_errors=5,
+            provide_traceback=True,
+            return_failed_examples=True
+        )
+        exec_pairs = [(module, item) for item in data]
+        return processor(exec_pairs)
+    
+    @staticmethod
+    def memory_efficient(data, module, chunk_size=10):
+        """Process in memory-efficient chunks."""
+        processor = dspy.Parallel(
+            num_threads=2,
+            max_errors=3,
+            disable_progress_bar=True
+        )
+        
+        all_results = []
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            exec_pairs = [(module, item) for item in chunk]
+            results = processor(exec_pairs)
+            all_results.extend(results)
+        
+        return all_results
+
+# Caching for repeated processing
+from functools import lru_cache
+
+class CachedParallelProcessor:
+    def __init__(self, module):
+        self.module = module
+        self.processor = dspy.Parallel(num_threads=4, max_errors=10)
+    
+    @lru_cache(maxsize=1000)
+    def _process_item_cached(self, item_key):
+        """Cache results for identical inputs."""
+        # In practice, implement proper serialization
+        return self.module(**eval(item_key))  # Simplified - use proper serialization
+    
+    def process_with_cache(self, data):
+        """Process with caching for performance."""
+        results = []
+        cache_hits = 0
+        
+        for item in data:
+            item_key = str(sorted(item.items()))  # Simplified cache key
+            try:
+                result = self._process_item_cached(item_key)
+                results.append(result)
+                cache_hits += 1
+            except:
+                # Fallback to direct processing
+                result = self.module(**item)
+                results.append(result)
+        
+        print(f"Cache hit rate: {cache_hits / len(data):.2%}")
+        return results
+```
+
+## Common Pitfalls
+
+### Incorrect Data Format
+
+```python
+# ❌ DON'T: Use inconsistent data formats
+bad_data = [
+    {"question": "What is AI?"},
+    ["What is ML?"],  # Wrong format!
+    ("What is DL?",),  # Tuple format
+    "What is NLP?"    # String instead of dict
+]
+
+# ✅ DO: Use consistent data format
+good_data = [
+    {"question": "What is AI?"},
+    {"question": "What is ML?"},
+    {"question": "What is DL?"},
+    {"question": "What is NLP?"}
+]
+
+# Validation helper
+def validate_data_format(data, expected_type=dict):
+    """Validate data format before parallel processing."""
+    valid_data = []
+    invalid_indices = []
+    
+    for i, item in enumerate(data):
+        if isinstance(item, expected_type):
+            valid_data.append(item)
+        else:
+            invalid_indices.append(i)
+            # Try to convert or provide default
+            if expected_type == dict and isinstance(item, str):
+                valid_data.append({"text": item})  # Convert string to dict
+            else:
+                valid_data.append({"error": f"Invalid format at index {i}"})
+    
+    if invalid_indices:
+        print(f"Warning: {len(invalid_indices)} items had invalid format and were converted")
+    
+    return valid_data
+```
+
+### Resource Exhaustion
+
+```python
+# ❌ DON'T: Use too many threads without considering resources
+def bad_parallel_usage(data):
+    processor = dspy.Parallel(
+        num_threads=100,  # Too many threads!
+        max_errors=0      # No error tolerance!
+    )
+    # This will likely exhaust system resources
+
+# ✅ DO: Use appropriate thread counts and error handling
+def good_parallel_usage(data):
+    import os
+    max_threads = min(os.cpu_count() * 2, 16)  # Reasonable limit
+    
+    processor = dspy.Parallel(
+        num_threads=max_threads,
+        max_errors=max(5, len(data) // 10),  # Allow some errors
+        provide_traceback=False  # Reduce memory usage
+    )
+    return processor
+```
+
+### Ignoring Failed Results
+
+```python
+# ❌ DON'T: Ignore failed results without analysis
+def bad_result_handling(results):
+    # Just filter out None results without understanding why they failed
+    return [r for r in results if r is not None]
+
+# ✅ DO: Analyze and handle failures appropriately
+def good_result_handling(results, failed_examples, exceptions):
+    successful = []
+    failed_analysis = []
+    
+    for i, result in enumerate(results):
+        if result is not None:
+            successful.append(result)
+        else:
+            error_info = {
+                "index": i,
+                "failed_example": failed_examples[i] if i < len(failed_examples) else None,
+                "exception": str(exceptions[i]) if i < len(exceptions) else "Unknown error"
+            }
+            failed_analysis.append(error_info)
+    
+    # Log failure patterns
+    if failed_analysis:
+        print(f"Processing failed for {len(failed_analysis)} items:")
+        for failure in failed_analysis[:5]:  # Show first 5 failures
+            print(f"  Index {failure['index']}: {failure['exception']}")
+    
+    return successful, failed_analysis
+```
+
+## Best Practices Summary
+
+- **Thread management**: Use appropriate thread counts based on workload type (CPU vs I/O intensive)
+- **Error handling**: Implement robust error handling with retries and failure analysis
+- **Resource awareness**: Monitor memory and CPU usage, especially for large batches
+- **Data validation**: Ensure consistent data formats before parallel processing
+- **Performance monitoring**: Track throughput, success rates, and resource usage
+- **Graceful degradation**: Handle failures gracefully without stopping entire batch
+- **Memory management**: Use chunking for large datasets to prevent memory exhaustion
+- **Configuration tuning**: Optimize thread counts and error thresholds for your use case
+
+## References
+
+- [Parallel Module API Documentation](/docs/api/modules/Parallel.md)
+- [ParallelExecutor Utilities](/docs/api/utils/ParallelExecutor.md)
+- [Concurrent Processing Guide](/docs/guides/parallel_processing.md)
+- [Performance Optimization Tutorial](/docs/tutorials/performance_optimization/)

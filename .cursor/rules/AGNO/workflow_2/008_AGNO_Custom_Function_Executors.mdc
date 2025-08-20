@@ -1,0 +1,958 @@
+---
+description: "AGNO custom function executors for advanced workflow logic, data processing, and multi-step orchestration"
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 custom function executors. You create sophisticated workflow functions that handle complex logic, data transformation, multi-agent orchestration, and advanced workflow patterns beyond basic agent/team execution.
+
+## Custom Function Executor Patterns
+
+```
+┌──────────────────────┐    ┌────────────────────┐    ┌─────────────────────┐
+│  Function Definition │───▶│ Complex Processing │───▶│  Workflow Integration│
+│                      │    │                    │    │                     │
+│ • StepInput/Output   │    │ • Data Transform   │    │ • Step Assignment   │
+│ • Error Handling     │    │ • Multi-Agent      │    │ • Result Handling   │
+│ • Metadata Support   │    │ • External APIs    │    │ • Context Flow      │
+│ • Async Support      │    │ • Advanced Logic   │    │ • Performance Track │
+└──────────────────────┘    └────────────────────┘    └─────────────────────┘
+```
+
+## Instant Function Patterns
+
+### Quick Start - Basic Custom Function
+
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+
+# Define agents for use in custom function
+analyzer = Agent(
+    name="Data Analyzer",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Analyze and process data with custom logic"
+)
+
+def basic_analysis_function(step_input: StepInput) -> StepOutput:
+    """Basic custom function with enhanced processing"""
+
+    # Extract input data
+    message = step_input.message
+    previous_content = step_input.previous_step_content
+
+    # Custom preprocessing
+    enhanced_prompt = f"""
+    ANALYSIS REQUEST:
+
+    Primary Task: {message}
+    Context: {previous_content[:200] if previous_content else "No previous context"}
+
+    Processing Requirements:
+    1. Analyze the core request
+    2. Apply domain expertise
+    3. Provide structured output
+    4. Include confidence metrics
+    """
+
+    try:
+        # Execute with agent
+        response = analyzer.run(enhanced_prompt)
+
+        # Custom postprocessing
+        enhanced_result = f"""
+        # Custom Analysis Results
+
+        **Analysis Mode**: Enhanced Custom Function
+        **Input Processing**: ✓ Context-aware
+
+        ## Core Analysis
+        {response.content}
+
+        ## Function Metadata
+        - Processing Type: Custom Logic
+        - Context Integration: {"Yes" if previous_content else "No"}
+        - Function Status: Success
+        """
+
+        return StepOutput(
+            content=enhanced_result,
+            response=response,
+            metadata={"function_type": "basic_analysis", "context_used": bool(previous_content)}
+        )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Analysis function failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+# Use in workflow
+analysis_step = Step(
+    name="Custom Analysis",
+    executor=basic_analysis_function
+)
+
+workflow = Workflow(
+    name="Custom Function Workflow",
+    steps=[analysis_step]
+)
+
+workflow.run("Analyze market trends for AI startups")
+```
+
+### Production Ready - Advanced Multi-Agent Orchestrator
+
+````python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.workflow.v2.step import Step, StepInput, StepOutput
+from agno.workflow.v2.workflow import Workflow
+from agno.storage.sqlite import SqliteStorage
+from typing import Dict, List, Any
+import json
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Define specialized agents
+market_researcher = Agent(
+    name="Market Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    role="Conduct comprehensive market research and competitive analysis",
+    instructions=[
+        "Focus on quantitative market data and trends",
+        "Identify key market players and competitive landscape",
+        "Analyze market size, growth rates, and opportunities"
+    ]
+)
+
+technical_analyst = Agent(
+    name="Technical Analysis Expert",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Analyze technical aspects and implementation details",
+    instructions=[
+        "Evaluate technical feasibility and complexity",
+        "Identify technical risks and opportunities",
+        "Assess technology stack and architecture decisions"
+    ]
+)
+
+business_strategist = Agent(
+    name="Business Strategy Consultant",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Develop business strategy and recommendations",
+    instructions=[
+        "Create strategic business recommendations",
+        "Analyze business model and revenue opportunities",
+        "Develop go-to-market and scaling strategies"
+    ]
+)
+
+risk_analyst = Agent(
+    name="Risk Assessment Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Identify and analyze business and technical risks",
+    instructions=[
+        "Conduct comprehensive risk assessment",
+        "Identify mitigation strategies",
+        "Analyze regulatory and compliance requirements"
+    ]
+)
+
+def advanced_multi_agent_orchestrator(step_input: StepInput) -> StepOutput:
+    """Advanced custom function with sophisticated multi-agent orchestration"""
+
+    try:
+        logger.info(f"Starting advanced orchestration for: {step_input.message}")
+        start_time = time.time()
+
+        # Phase 1: Parallel Analysis Execution
+        analysis_tasks = {
+            "market_analysis": (market_researcher, "market research and competitive landscape"),
+            "technical_analysis": (technical_analyst, "technical feasibility and architecture"),
+            "business_strategy": (business_strategist, "business strategy and opportunities"),
+            "risk_assessment": (risk_analyst, "risk analysis and mitigation strategies")
+        }
+
+        analysis_results = {}
+        execution_metrics = {}
+
+        # Execute analyses in parallel for performance
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_analysis = {}
+
+            for analysis_type, (agent, focus_area) in analysis_tasks.items():
+                enhanced_prompt = f"""
+                SPECIALIZED ANALYSIS REQUEST:
+
+                Core Topic: {step_input.message}
+                Analysis Focus: {focus_area}
+                Previous Context: {step_input.previous_step_content[:300] if step_input.previous_step_content else "No previous context"}
+
+                Deliverable Requirements:
+                1. Provide structured analysis in your area of expertise
+                2. Include specific data points and insights
+                3. Identify key opportunities and challenges
+                4. Provide actionable recommendations
+                5. Rate confidence level (1-10) for your analysis
+
+                Format as structured analysis with clear sections.
+                """
+
+                future = executor.submit(agent.run, enhanced_prompt)
+                future_to_analysis[future] = (analysis_type, agent.name)
+
+            # Collect results as they complete
+            for future in as_completed(future_to_analysis):
+                analysis_type, agent_name = future_to_analysis[future]
+                try:
+                    result = future.result(timeout=120)  # 2 minute timeout per agent
+                    analysis_results[analysis_type] = result.content
+                    execution_metrics[analysis_type] = {
+                        "agent": agent_name,
+                        "status": "success",
+                        "response_length": len(result.content)
+                    }
+                    logger.info(f"Completed {analysis_type} analysis")
+                except Exception as e:
+                    logger.error(f"{analysis_type} analysis failed: {e}")
+                    analysis_results[analysis_type] = f"Analysis failed: {str(e)}"
+                    execution_metrics[analysis_type] = {
+                        "agent": agent_name,
+                        "status": "failed",
+                        "error": str(e)
+                    }
+
+        # Phase 2: Synthesis and Strategic Integration
+        synthesis_agent = Agent(
+            name="Strategic Synthesis Expert",
+            model=OpenAIChat(id="gpt-4o"),
+            role="Synthesize multi-dimensional analysis into strategic insights"
+        )
+
+        synthesis_prompt = f"""
+        STRATEGIC SYNTHESIS REQUEST:
+
+        Core Topic: {step_input.message}
+
+        Analysis Results to Synthesize:
+
+        ## Market Analysis
+        {analysis_results.get('market_analysis', 'Not available')}
+
+        ## Technical Analysis
+        {analysis_results.get('technical_analysis', 'Not available')}
+
+        ## Business Strategy
+        {analysis_results.get('business_strategy', 'Not available')}
+
+        ## Risk Assessment
+        {analysis_results.get('risk_assessment', 'Not available')}
+
+        Synthesis Requirements:
+        1. Create unified strategic insights combining all analyses
+        2. Identify key themes and patterns across analyses
+        3. Prioritize recommendations based on impact and feasibility
+        4. Create actionable strategic roadmap
+        5. Highlight critical success factors and risk mitigation priorities
+
+        Deliverable: Comprehensive strategic synthesis with clear action items.
+        """
+
+        synthesis_result = synthesis_agent.run(synthesis_prompt)
+
+        # Phase 3: Generate Comprehensive Output
+        execution_time = time.time() - start_time
+        successful_analyses = sum(1 for metrics in execution_metrics.values() if metrics["status"] == "success")
+
+        comprehensive_output = f"""
+        # Advanced Multi-Agent Analysis Results
+
+        **Orchestration Summary**
+        - Analysis Topic: {step_input.message}
+        - Agents Coordinated: {len(analysis_tasks)}
+        - Successful Analyses: {successful_analyses}/{len(analysis_tasks)}
+        - Total Execution Time: {execution_time:.2f} seconds
+        - Parallel Processing: ✓ Enabled
+
+        ## Strategic Synthesis
+        {synthesis_result.content}
+
+        ## Detailed Analysis Results
+
+        ### Market Analysis
+        **Agent**: {execution_metrics.get('market_analysis', {}).get('agent', 'N/A')}
+        **Status**: {execution_metrics.get('market_analysis', {}).get('status', 'unknown')}
+
+        {analysis_results.get('market_analysis', 'Not available')}
+
+        ### Technical Analysis
+        **Agent**: {execution_metrics.get('technical_analysis', {}).get('agent', 'N/A')}
+        **Status**: {execution_metrics.get('technical_analysis', {}).get('status', 'unknown')}
+
+        {analysis_results.get('technical_analysis', 'Not available')}
+
+        ### Business Strategy
+        **Agent**: {execution_metrics.get('business_strategy', {}).get('agent', 'N/A')}
+        **Status**: {execution_metrics.get('business_strategy', {}).get('status', 'unknown')}
+
+        {analysis_results.get('business_strategy', 'Not available')}
+
+        ### Risk Assessment
+        **Agent**: {execution_metrics.get('risk_assessment', {}).get('agent', 'N/A')}
+        **Status**: {execution_metrics.get('risk_assessment', {}).get('status', 'unknown')}
+
+        {analysis_results.get('risk_assessment', 'Not available')}
+
+        ## Orchestration Performance Metrics
+        - Parallel Execution: {len(analysis_tasks)} concurrent agents
+        - Success Rate: {successful_analyses/len(analysis_tasks)*100:.1f}%
+        - Average Response Length: {sum(m.get('response_length', 0) for m in execution_metrics.values() if 'response_length' in m) / successful_analyses if successful_analyses > 0 else 0:.0f} characters
+        - Processing Efficiency: {len(analysis_tasks)/execution_time:.2f} agents/second
+        """
+
+        return StepOutput(
+            content=comprehensive_output,
+            response=synthesis_result,
+            success=successful_analyses > 0,
+            metadata={
+                "orchestration_type": "multi_agent_parallel",
+                "agents_coordinated": len(analysis_tasks),
+                "successful_analyses": successful_analyses,
+                "execution_time": execution_time,
+                "parallel_processing": True,
+                "analysis_types": list(analysis_tasks.keys())
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Advanced orchestration failed: {e}")
+        return StepOutput(
+            content=f"Advanced orchestration failed: {str(e)}",
+            success=False,
+            error=str(e),
+            metadata={"error_type": "orchestration_failure"}
+        )
+
+def data_transformation_function(step_input: StepInput) -> StepOutput:
+    """Custom function for complex data transformation and processing"""
+
+    try:
+        logger.info("Starting data transformation function")
+
+        # Extract and validate input
+        raw_data = step_input.message
+        previous_data = step_input.previous_step_content
+
+        # Data transformation logic
+        transformation_steps = []
+        processed_data = {}
+
+        # Step 1: Data extraction and parsing
+        if previous_data:
+            try:
+                # Attempt to parse structured data
+                if previous_data.startswith('{') or previous_data.startswith('['):
+                    structured_data = json.loads(previous_data)
+                    processed_data['structured'] = structured_data
+                    transformation_steps.append("JSON parsing successful")
+                else:
+                    # Process as text data
+                    processed_data['text'] = previous_data
+                    processed_data['word_count'] = len(previous_data.split())
+                    processed_data['char_count'] = len(previous_data)
+                    transformation_steps.append("Text processing completed")
+            except json.JSONDecodeError:
+                processed_data['text'] = previous_data
+                transformation_steps.append("Fallback to text processing")
+
+        # Step 2: Data enrichment
+        enrichment_agent = Agent(
+            name="Data Enrichment Specialist",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            role="Enrich and structure data for better analysis"
+        )
+
+        enrichment_prompt = f"""
+        DATA ENRICHMENT REQUEST:
+
+        Raw Input: {raw_data}
+        Processed Data Summary: {json.dumps(processed_data, indent=2)[:500]}...
+
+        Enrichment Tasks:
+        1. Extract key entities and concepts
+        2. Identify data patterns and structures
+        3. Generate metadata and classifications
+        4. Create data quality assessment
+        5. Suggest additional data points needed
+
+        Return structured enrichment results.
+        """
+
+        enrichment_result = enrichment_agent.run(enrichment_prompt)
+        transformation_steps.append("Data enrichment completed")
+
+        # Step 3: Generate transformation report
+        transformation_report = f"""
+        # Data Transformation Results
+
+        **Transformation Pipeline**
+        - Input Processing: ✓ Completed
+        - Data Parsing: ✓ {transformation_steps[0] if transformation_steps else "N/A"}
+        - Data Enrichment: ✓ Enhanced with AI analysis
+        - Quality Assessment: ✓ Included
+
+        ## Original Input
+        ```
+        {raw_data[:200]}...
+        ```
+
+        ## Processed Data Summary
+        - Type: {'Structured' if 'structured' in processed_data else 'Text'}
+        - Size: {processed_data.get('char_count', len(str(processed_data)))} characters
+        - Word Count: {processed_data.get('word_count', 'N/A')}
+
+        ## Data Enrichment Analysis
+        {enrichment_result.content}
+
+        ## Transformation Metadata
+        - Processing Steps: {len(transformation_steps)}
+        - Transformation Type: {"Advanced" if len(transformation_steps) > 2 else "Basic"}
+        - Data Quality: High
+        - Enrichment Status: Complete
+
+        ## Transformed Output
+        {json.dumps(processed_data, indent=2)}
+        """
+
+        return StepOutput(
+            content=transformation_report,
+            response=enrichment_result,
+            metadata={
+                "transformation_type": "data_processing",
+                "processing_steps": len(transformation_steps),
+                "data_type": "structured" if "structured" in processed_data else "text",
+                "enrichment_applied": True
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Data transformation failed: {e}")
+        return StepOutput(
+            content=f"Data transformation failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
+
+# Define workflow steps using custom functions
+orchestration_step = Step(
+    name="Multi-Agent Orchestration",
+    executor=advanced_multi_agent_orchestrator,
+    description="Advanced parallel multi-agent analysis with synthesis"
+)
+
+transformation_step = Step(
+    name="Data Transformation",
+    executor=data_transformation_function,
+    description="Complex data processing and enrichment"
+)
+
+# Create production workflow
+advanced_workflow = Workflow(
+    name="Advanced Custom Function Pipeline",
+    description="Sophisticated workflow using advanced custom function executors",
+    storage=SqliteStorage(
+        table_name="advanced_functions",
+        db_file="advanced_workflow.db",
+        mode="workflow_v2"
+    ),
+    steps=[orchestration_step, transformation_step]
+)
+
+# Execute with full monitoring
+if __name__ == "__main__":
+    try:
+        logger.info("Starting advanced custom function workflow")
+
+        result = advanced_workflow.run(
+            message="Analyze the market opportunity for AI-powered customer service automation in enterprise SaaS",
+            stream=False
+        )
+
+        print("Advanced workflow completed successfully")
+        logger.info("Workflow execution completed")
+
+    except Exception as e:
+        logger.error(f"Workflow execution failed: {e}")
+        print(f"Workflow failed: {e}")
+````
+
+## Advanced Custom Function Patterns
+
+### Async Function Executors
+
+```python
+import asyncio
+from typing import List
+
+async def async_multi_processing_function(step_input: StepInput) -> StepOutput:
+    """Async custom function for concurrent processing"""
+
+    async def process_with_agent(agent: Agent, prompt: str) -> str:
+        """Async agent processing"""
+        # Note: This example assumes async agent support
+        # Actual implementation depends on AGNO's async capabilities
+        try:
+            result = await agent.arun(prompt)  # Hypothetical async method
+            return result.content
+        except Exception as e:
+            return f"Async processing failed: {e}"
+
+    # Define processing tasks
+    agents_and_prompts = [
+        (agent1, f"Process aspect 1: {step_input.message}"),
+        (agent2, f"Process aspect 2: {step_input.message}"),
+        (agent3, f"Process aspect 3: {step_input.message}")
+    ]
+
+    # Execute all tasks concurrently
+    try:
+        results = await asyncio.gather(*[
+            process_with_agent(agent, prompt)
+            for agent, prompt in agents_and_prompts
+        ])
+
+        combined_result = f"""
+        # Async Multi-Processing Results
+
+        ## Concurrent Processing Summary
+        - Tasks Executed: {len(agents_and_prompts)}
+        - Processing Mode: Fully Async
+
+        ## Results
+        {chr(10).join([f"### Result {i+1}{chr(10)}{result}" for i, result in enumerate(results)])}
+        """
+
+        return StepOutput(
+            content=combined_result,
+            metadata={
+                "async_processing": True,
+                "concurrent_tasks": len(agents_and_prompts),
+                "processing_mode": "async_gather"
+            }
+        )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Async processing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+```
+
+### External API Integration Functions
+
+```python
+import requests
+from typing import Optional
+
+def external_api_integration_function(step_input: StepInput) -> StepOutput:
+    """Custom function integrating external APIs with workflow logic"""
+
+    def call_external_api(endpoint: str, params: dict) -> Optional[dict]:
+        """Safe external API call with error handling"""
+        try:
+            response = requests.get(endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"External API call failed: {e}")
+            return None
+
+    try:
+        # Phase 1: Extract data requirements
+        topic = step_input.message
+        context = step_input.previous_step_content
+
+        # Phase 2: Call external APIs (example endpoints)
+        api_results = {}
+
+        # Example: Market data API
+        market_data = call_external_api(
+            "https://api.example-market.com/data",
+            {"query": topic, "limit": 10}
+        )
+        if market_data:
+            api_results["market_data"] = market_data
+
+        # Example: News API
+        news_data = call_external_api(
+            "https://api.example-news.com/search",
+            {"q": topic, "sortBy": "relevancy", "pageSize": 5}
+        )
+        if news_data:
+            api_results["news_data"] = news_data
+
+        # Phase 3: Process API results with AI agent
+        if api_results:
+            api_processor = Agent(
+                name="API Data Processor",
+                model=OpenAIChat(id="gpt-4o-mini"),
+                role="Process and analyze external API data"
+            )
+
+            processing_prompt = f"""
+            API DATA ANALYSIS:
+
+            Topic: {topic}
+            Context: {context[:200] if context else "No context"}
+
+            External Data Sources:
+            {json.dumps(api_results, indent=2)[:1000]}...
+
+            Analysis Requirements:
+            1. Synthesize insights from external data
+            2. Identify key trends and patterns
+            3. Correlate with provided context
+            4. Generate actionable recommendations
+
+            Provide structured analysis of the external data.
+            """
+
+            processed_result = api_processor.run(processing_prompt)
+
+            comprehensive_output = f"""
+            # External API Integration Results
+
+            **API Integration Summary**
+            - APIs Called: {len(api_results)}
+            - Data Sources: {', '.join(api_results.keys())}
+            - Integration Status: Success
+
+            ## Processed Analysis
+            {processed_result.content}
+
+            ## Raw API Data Summary
+            {json.dumps({k: f"{len(str(v))} characters" for k, v in api_results.items()}, indent=2)}
+            """
+
+            return StepOutput(
+                content=comprehensive_output,
+                response=processed_result,
+                metadata={
+                    "external_apis": list(api_results.keys()),
+                    "api_integration": True,
+                    "data_sources": len(api_results)
+                }
+            )
+        else:
+            return StepOutput(
+                content="External API integration failed - no data retrieved",
+                success=False,
+                error="All API calls failed"
+            )
+
+    except Exception as e:
+        return StepOutput(
+            content=f"External API integration failed: {e}",
+            success=False,
+            error=str(e)
+        )
+```
+
+### Conditional Logic Functions
+
+```python
+def conditional_processing_function(step_input: StepInput) -> StepOutput:
+    """Custom function with complex conditional logic and routing"""
+
+    try:
+        message = step_input.message.lower()
+        previous_content = step_input.previous_step_content or ""
+
+        # Determine processing path based on input analysis
+        processing_path = "default"
+
+        if "urgent" in message or "critical" in message:
+            processing_path = "priority"
+        elif "analysis" in message or "research" in message:
+            processing_path = "analytical"
+        elif "creative" in message or "content" in message:
+            processing_path = "creative"
+        elif len(previous_content) > 1000:
+            processing_path = "synthesis"
+
+        # Route to appropriate processing logic
+        if processing_path == "priority":
+            return process_priority_request(step_input)
+        elif processing_path == "analytical":
+            return process_analytical_request(step_input)
+        elif processing_path == "creative":
+            return process_creative_request(step_input)
+        elif processing_path == "synthesis":
+            return process_synthesis_request(step_input)
+        else:
+            return process_default_request(step_input)
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Conditional processing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+def process_priority_request(step_input: StepInput) -> StepOutput:
+    """Handle priority/urgent requests with expedited processing"""
+    priority_agent = Agent(
+        name="Priority Response Specialist",
+        model=OpenAIChat(id="gpt-4o"),  # Use best model for urgent requests
+        role="Handle urgent requests with priority processing"
+    )
+
+    response = priority_agent.run(f"URGENT REQUEST: {step_input.message}")
+
+    return StepOutput(
+        content=f"# PRIORITY RESPONSE\n\n{response.content}",
+        response=response,
+        metadata={"processing_path": "priority", "urgency_level": "high"}
+    )
+
+def process_analytical_request(step_input: StepInput) -> StepOutput:
+    """Handle analytical requests with structured analysis"""
+    analyst = Agent(
+        name="Senior Analyst",
+        model=OpenAIChat(id="gpt-4o"),
+        role="Conduct thorough analytical processing"
+    )
+
+    analytical_prompt = f"""
+    ANALYTICAL PROCESSING REQUEST:
+
+    Topic: {step_input.message}
+    Context: {step_input.previous_step_content[:500] if step_input.previous_step_content else "No context"}
+
+    Analysis Framework:
+    1. Problem Definition
+    2. Data Analysis
+    3. Pattern Identification
+    4. Insights Generation
+    5. Recommendations
+
+    Provide comprehensive analytical response.
+    """
+
+    response = analyst.run(analytical_prompt)
+
+    return StepOutput(
+        content=f"# ANALYTICAL PROCESSING RESULTS\n\n{response.content}",
+        response=response,
+        metadata={"processing_path": "analytical", "analysis_depth": "comprehensive"}
+    )
+```
+
+## Performance Optimization Patterns
+
+### Caching and Memoization
+
+```python
+from functools import lru_cache
+from typing import Tuple
+
+class CustomFunctionCache:
+    """Caching system for custom functions"""
+
+    def __init__(self):
+        self.cache = {}
+
+    def get_cache_key(self, step_input: StepInput) -> str:
+        """Generate cache key from step input"""
+        content_hash = hash(step_input.message + (step_input.previous_step_content or ""))
+        return f"custom_function_{content_hash}"
+
+    def get_cached_result(self, cache_key: str) -> Optional[StepOutput]:
+        """Retrieve cached result if available"""
+        if cache_key in self.cache:
+            cached_result = self.cache[cache_key]
+            # Add cache metadata
+            cached_result.metadata = cached_result.metadata or {}
+            cached_result.metadata["cache_hit"] = True
+            return cached_result
+        return None
+
+    def cache_result(self, cache_key: str, result: StepOutput) -> None:
+        """Cache result for future use"""
+        result.metadata = result.metadata or {}
+        result.metadata["cached"] = True
+        self.cache[cache_key] = result
+
+# Global cache instance
+function_cache = CustomFunctionCache()
+
+def cached_processing_function(step_input: StepInput) -> StepOutput:
+    """Custom function with intelligent caching"""
+
+    # Check cache first
+    cache_key = function_cache.get_cache_key(step_input)
+    cached_result = function_cache.get_cached_result(cache_key)
+
+    if cached_result:
+        logger.info(f"Cache hit for key: {cache_key}")
+        return cached_result
+
+    # Process normally if not cached
+    try:
+        result = expensive_processing_logic(step_input)
+
+        # Cache the result
+        function_cache.cache_result(cache_key, result)
+        logger.info(f"Result cached with key: {cache_key}")
+
+        return result
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Cached processing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+```
+
+## Speed Tips
+
+### Function Optimization Strategies
+
+- **Parallel Processing**: Use ThreadPoolExecutor for concurrent agent execution
+- **Caching**: Implement intelligent caching for expensive operations
+- **Context Management**: Limit context size and focus on relevant information
+- **Async Operations**: Use async patterns for I/O-bound operations
+- **Error Boundaries**: Isolate failures to prevent cascade errors
+- **Result Streaming**: Return partial results for long-running functions
+
+### Common Function Patterns
+
+```python
+# Pattern 1: Multi-agent coordinator
+def multi_agent_coordinator(step_input: StepInput) -> StepOutput:
+    # Coordinate multiple agents with custom logic
+    pass
+
+# Pattern 2: Data transformer
+def data_transformation_pipeline(step_input: StepInput) -> StepOutput:
+    # Complex data processing and transformation
+    pass
+
+# Pattern 3: External integration
+def external_api_orchestrator(step_input: StepInput) -> StepOutput:
+    # Integrate external APIs and services
+    pass
+
+# Pattern 4: Conditional processor
+def smart_routing_function(step_input: StepInput) -> StepOutput:
+    # Route to different processing paths based on input
+    pass
+```
+
+## Common Pitfalls (CRITICAL)
+
+### Function Design Anti-patterns
+
+```python
+# ❌ WRONG - No error handling
+def bad_function(step_input: StepInput) -> StepOutput:
+    result = agent.run(step_input.message)  # No try/catch!
+    return StepOutput(content=result.content)
+
+# ✅ CORRECT - Comprehensive error handling
+def good_function(step_input: StepInput) -> StepOutput:
+    try:
+        result = agent.run(step_input.message)
+        return StepOutput(
+            content=result.content,
+            response=result,
+            metadata={"function_type": "standard"}
+        )
+    except Exception as e:
+        logger.error(f"Function failed: {e}")
+        return StepOutput(
+            content=f"Processing failed: {e}",
+            success=False,
+            error=str(e)
+        )
+
+# ❌ WRONG - Memory leaks with large data
+def memory_leak_function(step_input: StepInput) -> StepOutput:
+    huge_data = []
+    for i in range(1000000):  # Creates massive memory usage
+        huge_data.append(process_item(i))
+    return StepOutput(content=str(huge_data))
+
+# ✅ CORRECT - Memory-efficient processing
+def memory_efficient_function(step_input: StepInput) -> StepOutput:
+    results = []
+    batch_size = 1000
+
+    for batch_start in range(0, total_items, batch_size):
+        batch_results = process_batch(batch_start, batch_size)
+        results.extend(batch_results[:10])  # Keep only top results
+
+    return StepOutput(content=json.dumps(results))
+```
+
+### Context and Input Handling
+
+```python
+# ❌ WRONG - Unsafe input handling
+def unsafe_function(step_input: StepInput) -> StepOutput:
+    exec(step_input.message)  # NEVER DO THIS!
+    return StepOutput(content="Executed")
+
+# ✅ CORRECT - Safe input processing
+def safe_function(step_input: StepInput) -> StepOutput:
+    # Validate and sanitize input
+    if not step_input.message or len(step_input.message) > 10000:
+        return StepOutput(
+            content="Invalid input: message too long or empty",
+            success=False
+        )
+
+    sanitized_input = step_input.message.strip()[:1000]
+    # Process safely...
+
+# ❌ WRONG - Context overflow
+def context_overflow_function(step_input: StepInput) -> StepOutput:
+    massive_context = step_input.previous_step_content * 1000  # Too much!
+    return agent.run(massive_context)
+
+# ✅ CORRECT - Context management
+def context_managed_function(step_input: StepInput) -> StepOutput:
+    # Intelligently manage context size
+    context = step_input.previous_step_content or ""
+    if len(context) > 2000:
+        # Summarize or truncate
+        summary_agent = Agent(name="Context Summarizer", model=OpenAIChat(id="gpt-4o-mini"))
+        context = summary_agent.run(f"Summarize: {context[:1000]}...").content
+
+    focused_prompt = f"Context: {context}\n\nTask: {step_input.message}"
+    return agent.run(focused_prompt)
+```
+
+## Best Practices Summary
+
+- **Error Handling**: Always wrap agent calls in try/catch with proper StepOutput error responses
+- **Input Validation**: Validate and sanitize all inputs before processing
+- **Memory Management**: Use generators and batching for large data processing
+- **Performance**: Implement caching, parallel processing, and async patterns where beneficial
+- **Context Control**: Manage context size intelligently to prevent token overflow
+- **Metadata Usage**: Include rich metadata in StepOutput for workflow tracking and debugging
+- **Logging**: Implement comprehensive logging for debugging and monitoring
+- **Modularity**: Design functions as reusable components with clear responsibilities

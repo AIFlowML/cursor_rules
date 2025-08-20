@@ -1,0 +1,1459 @@
+---
+description: Complete Streamlit Apps - Interactive web applications with DSPy integration and deployment
+alwaysApply: false
+---
+
+> You are an expert in building complete Streamlit applications with DSPy 3.0.1 integration for interactive AI demonstrations and prototypes.
+
+## Complete Streamlit Integration Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   User          │    │   Streamlit     │    │   DSPy Program  │
+│   Interface     │───▶│   Components    │───▶│   Execution     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Input         │    │   State         │    │   Result        │
+│   Validation    │───▶│   Management    │───▶│   Visualization │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Error         │    │   Caching       │    │   Performance   │
+│   Handling      │◀───│   & Storage     │◀───│   Optimization  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant Streamlit Templates
+
+### Quick Start Streamlit App
+
+```python
+import streamlit as st
+import dspy
+
+# Configure DSPy
+@st.cache_resource
+def setup_dspy():
+    lm = dspy.LM('openai/gpt-4o-mini')
+    dspy.configure(lm=lm)
+    return dspy.ChainOfThought('question -> answer')
+
+def main():
+    st.title("DSPy Q&A Demo")
+
+    # Initialize DSPy
+    qa_program = setup_dspy()
+
+    # User input
+    question = st.text_input("Ask a question:")
+
+    if question and st.button("Get Answer"):
+        with st.spinner("Thinking..."):
+            result = qa_program(question=question)
+            st.success(result.answer)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Production Streamlit Application
+
+```python
+import streamlit as st
+import dspy
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from typing import Dict, List, Any, Optional
+import time
+import json
+import uuid
+from datetime import datetime, timedelta
+import logging
+import io
+import base64
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Page configuration
+st.set_page_config(
+    page_title="DSPy AI Assistant",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 5px solid #1f77b4;
+        margin: 0.5rem 0;
+    }
+    .success-message {
+        padding: 1rem;
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 0.5rem;
+        color: #155724;
+    }
+    .error-message {
+        padding: 1rem;
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 0.5rem;
+        color: #721c24;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+class DSPyAppManager:
+    """Manages DSPy programs and application state"""
+
+    def __init__(self):
+        self.programs = {}
+        self.session_history = []
+        self.performance_metrics = {
+            'total_queries': 0,
+            'avg_response_time': 0.0,
+            'success_rate': 1.0,
+            'error_count': 0
+        }
+
+    @st.cache_resource
+    def initialize_programs(_self):
+        """Initialize DSPy programs with caching"""
+        try:
+            # Configure DSPy
+            lm = dspy.LM('openai/gpt-4o-mini')
+            dspy.configure(lm=lm)
+
+            # Create specialized programs
+            _self.programs['qa'] = dspy.ChainOfThought('question -> answer: str, confidence: float')
+            _self.programs['classification'] = dspy.ChainOfThought('text -> category: str, confidence: float')
+            _self.programs['summarization'] = dspy.ChainOfThought('text -> summary: str, key_points: List[str]')
+            _self.programs['sentiment'] = dspy.ChainOfThought('text -> sentiment: str, score: float, reasoning: str')
+
+            logger.info("DSPy programs initialized successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize DSPy programs: {e}")
+            st.error(f"Failed to initialize AI programs: {e}")
+            return False
+
+    def execute_program(self, program_name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute DSPy program with error handling and metrics"""
+
+        if program_name not in self.programs:
+            raise ValueError(f"Program '{program_name}' not found")
+
+        start_time = time.time()
+
+        try:
+            # Execute program
+            result = self.programs[program_name](**inputs)
+
+            # Calculate metrics
+            execution_time = time.time() - start_time
+
+            # Update performance metrics
+            self.performance_metrics['total_queries'] += 1
+
+            # Update average response time
+            old_avg = self.performance_metrics['avg_response_time']
+            total_queries = self.performance_metrics['total_queries']
+            self.performance_metrics['avg_response_time'] = (
+                (old_avg * (total_queries - 1) + execution_time) / total_queries
+            )
+
+            # Log execution
+            logger.info(f"Program '{program_name}' executed in {execution_time:.2f}s")
+
+            # Add to session history
+            self.session_history.append({
+                'timestamp': datetime.now(),
+                'program': program_name,
+                'inputs': inputs,
+                'result': result.__dict__ if hasattr(result, '__dict__') else str(result),
+                'execution_time': execution_time
+            })
+
+            return {
+                'success': True,
+                'result': result,
+                'execution_time': execution_time
+            }
+
+        except Exception as e:
+            execution_time = time.time() - start_time
+            self.performance_metrics['error_count'] += 1
+
+            # Update success rate
+            total_queries = self.performance_metrics['total_queries']
+            errors = self.performance_metrics['error_count']
+            self.performance_metrics['success_rate'] = (total_queries - errors) / total_queries if total_queries > 0 else 1.0
+
+            logger.error(f"Program '{program_name}' failed: {e}")
+
+            return {
+                'success': False,
+                'error': str(e),
+                'execution_time': execution_time
+            }
+
+    def get_session_stats(self) -> Dict[str, Any]:
+        """Get current session statistics"""
+        if not self.session_history:
+            return {
+                'total_interactions': 0,
+                'programs_used': [],
+                'avg_time': 0.0,
+                'session_start': None
+            }
+
+        programs_used = list(set([entry['program'] for entry in self.session_history]))
+        avg_time = sum([entry['execution_time'] for entry in self.session_history]) / len(self.session_history)
+
+        return {
+            'total_interactions': len(self.session_history),
+            'programs_used': programs_used,
+            'avg_time': avg_time,
+            'session_start': self.session_history[0]['timestamp'] if self.session_history else None
+        }
+
+# Initialize app manager
+@st.cache_resource
+def get_app_manager():
+    return DSPyAppManager()
+
+app_manager = get_app_manager()
+
+def main():
+    """Main application function"""
+
+    # Initialize DSPy programs
+    if not app_manager.initialize_programs():
+        st.stop()
+
+    # Sidebar for navigation and settings
+    with st.sidebar:
+        st.markdown("## 🤖 DSPy AI Assistant")
+
+        # Navigation
+        page = st.selectbox(
+            "Choose Application:",
+            ["🏠 Home", "💬 Q&A Assistant", "📊 Text Classification",
+             "📝 Text Summarization", "😊 Sentiment Analysis", "📈 Analytics Dashboard"]
+        )
+
+        st.markdown("---")
+
+        # Settings
+        st.markdown("### ⚙️ Settings")
+        show_debug = st.checkbox("Show Debug Info", value=False)
+        show_confidence = st.checkbox("Show Confidence Scores", value=True)
+
+        st.markdown("---")
+
+        # Session stats
+        stats = app_manager.get_session_stats()
+        st.markdown("### 📊 Session Stats")
+        st.metric("Total Interactions", stats['total_interactions'])
+        if stats['avg_time'] > 0:
+            st.metric("Avg Response Time", f"{stats['avg_time']:.2f}s")
+
+        if stats['programs_used']:
+            st.markdown("**Programs Used:**")
+            for program in stats['programs_used']:
+                st.markdown(f"• {program}")
+
+    # Main content area
+    if page == "🏠 Home":
+        show_home_page()
+    elif page == "💬 Q&A Assistant":
+        show_qa_page(show_confidence, show_debug)
+    elif page == "📊 Text Classification":
+        show_classification_page(show_confidence, show_debug)
+    elif page == "📝 Text Summarization":
+        show_summarization_page(show_confidence, show_debug)
+    elif page == "😊 Sentiment Analysis":
+        show_sentiment_page(show_confidence, show_debug)
+    elif page == "📈 Analytics Dashboard":
+        show_analytics_page()
+
+def show_home_page():
+    """Home page with overview and quick start"""
+
+    st.markdown('<div class="main-header">DSPy AI Assistant</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+    Welcome to the DSPy AI Assistant! This application demonstrates various AI capabilities
+    powered by DSPy's structured programming approach.
+    """)
+
+    # Feature cards
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>💬 Q&A Assistant</h3>
+            <p>Ask questions and get intelligent answers with reasoning.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>📊 Text Classification</h3>
+            <p>Classify text into predefined categories with confidence scores.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>📝 Summarization</h3>
+            <p>Generate concise summaries and extract key points from text.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Quick demo
+    st.markdown("## 🚀 Quick Demo")
+
+    demo_text = st.text_area(
+        "Try a quick sentiment analysis:",
+        value="I love using DSPy for building AI applications! It makes everything so much easier.",
+        height=100
+    )
+
+    if st.button("Analyze Sentiment"):
+        with st.spinner("Analyzing..."):
+            result = app_manager.execute_program(
+                'sentiment',
+                {'text': demo_text}
+            )
+
+            if result['success']:
+                sentiment_result = result['result']
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Sentiment", sentiment_result.sentiment)
+                with col2:
+                    st.metric("Score", f"{sentiment_result.score:.2f}")
+
+                if hasattr(sentiment_result, 'reasoning'):
+                    st.markdown("**Reasoning:**")
+                    st.info(sentiment_result.reasoning)
+            else:
+                st.error(f"Analysis failed: {result['error']}")
+
+def show_qa_page(show_confidence: bool, show_debug: bool):
+    """Q&A Assistant page"""
+
+    st.title("💬 Q&A Assistant")
+    st.markdown("Ask any question and get intelligent answers with reasoning.")
+
+    # Input area
+    question = st.text_area(
+        "Your Question:",
+        placeholder="What is machine learning?",
+        height=100
+    )
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        ask_button = st.button("Ask Question", type="primary")
+
+    with col2:
+        clear_button = st.button("Clear History")
+
+    if clear_button:
+        if 'qa_history' in st.session_state:
+            st.session_state.qa_history = []
+        st.success("History cleared!")
+
+    # Process question
+    if ask_button and question.strip():
+        with st.spinner("Thinking..."):
+            result = app_manager.execute_program('qa', {'question': question})
+
+            if result['success']:
+                qa_result = result['result']
+
+                # Store in session history
+                if 'qa_history' not in st.session_state:
+                    st.session_state.qa_history = []
+
+                st.session_state.qa_history.append({
+                    'question': question,
+                    'answer': qa_result.answer,
+                    'confidence': getattr(qa_result, 'confidence', None),
+                    'timestamp': datetime.now(),
+                    'execution_time': result['execution_time']
+                })
+
+                # Display result
+                st.markdown("### Answer")
+                st.markdown(f"**{qa_result.answer}**")
+
+                if show_confidence and hasattr(qa_result, 'confidence'):
+                    st.progress(qa_result.confidence)
+                    st.caption(f"Confidence: {qa_result.confidence:.2%}")
+
+                if show_debug:
+                    with st.expander("Debug Information"):
+                        st.json({
+                            'execution_time': result['execution_time'],
+                            'raw_result': qa_result.__dict__ if hasattr(qa_result, '__dict__') else str(qa_result)
+                        })
+            else:
+                st.error(f"Failed to get answer: {result['error']}")
+
+    elif ask_button:
+        st.warning("Please enter a question.")
+
+    # Show conversation history
+    if 'qa_history' in st.session_state and st.session_state.qa_history:
+        st.markdown("### Conversation History")
+
+        for i, entry in enumerate(reversed(st.session_state.qa_history[-10:])):  # Show last 10
+            with st.expander(f"Q: {entry['question'][:50]}... ({entry['timestamp'].strftime('%H:%M:%S')})"):
+                st.markdown(f"**Question:** {entry['question']}")
+                st.markdown(f"**Answer:** {entry['answer']}")
+
+                if show_confidence and entry['confidence']:
+                    st.caption(f"Confidence: {entry['confidence']:.2%}")
+
+                if show_debug:
+                    st.caption(f"Response time: {entry['execution_time']:.2f}s")
+
+def show_classification_page(show_confidence: bool, show_debug: bool):
+    """Text Classification page"""
+
+    st.title("📊 Text Classification")
+    st.markdown("Classify text into categories with confidence scores.")
+
+    # Input area
+    text_to_classify = st.text_area(
+        "Text to Classify:",
+        placeholder="Enter text you want to classify...",
+        height=150
+    )
+
+    # Classification settings
+    col1, col2 = st.columns(2)
+
+    with col1:
+        classification_type = st.selectbox(
+            "Classification Type:",
+            ["Sentiment", "Topic", "Intent", "Spam Detection", "Custom"]
+        )
+
+    with col2:
+        if classification_type == "Custom":
+            custom_categories = st.text_input(
+                "Custom Categories (comma-separated):",
+                value="category1, category2, category3"
+            )
+
+    # Process classification
+    if st.button("Classify Text") and text_to_classify.strip():
+        with st.spinner("Classifying..."):
+            result = app_manager.execute_program('classification', {'text': text_to_classify})
+
+            if result['success']:
+                class_result = result['result']
+
+                # Display result
+                st.markdown("### Classification Result")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.metric("Category", class_result.category)
+
+                with col2:
+                    if show_confidence and hasattr(class_result, 'confidence'):
+                        st.metric("Confidence", f"{class_result.confidence:.2%}")
+
+                # Visualization
+                if hasattr(class_result, 'confidence'):
+                    fig = go.Figure(go.Indicator(
+                        mode = "gauge+number",
+                        value = class_result.confidence * 100,
+                        domain = {'x': [0, 1], 'y': [0, 1]},
+                        title = {'text': "Confidence"},
+                        gauge = {
+                            'axis': {'range': [None, 100]},
+                            'bar': {'color': "darkblue"},
+                            'steps': [
+                                {'range': [0, 50], 'color': "lightgray"},
+                                {'range': [50, 80], 'color': "gray"},
+                                {'range': [80, 100], 'color': "lightgreen"}
+                            ],
+                            'threshold': {
+                                'line': {'color': "red", 'width': 4},
+                                'thickness': 0.75,
+                                'value': 90
+                            }
+                        }
+                    ))
+
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                if show_debug:
+                    with st.expander("Debug Information"):
+                        st.json({
+                            'execution_time': result['execution_time'],
+                            'raw_result': class_result.__dict__ if hasattr(class_result, '__dict__') else str(class_result)
+                        })
+            else:
+                st.error(f"Classification failed: {result['error']}")
+
+def show_summarization_page(show_confidence: bool, show_debug: bool):
+    """Text Summarization page"""
+
+    st.title("📝 Text Summarization")
+    st.markdown("Generate concise summaries and extract key points from text.")
+
+    # Input options
+    input_method = st.radio(
+        "Choose input method:",
+        ["Text Input", "File Upload"]
+    )
+
+    text_to_summarize = ""
+
+    if input_method == "Text Input":
+        text_to_summarize = st.text_area(
+            "Text to Summarize:",
+            placeholder="Paste your text here...",
+            height=200
+        )
+    else:
+        uploaded_file = st.file_uploader(
+            "Upload a text file:",
+            type=['txt', 'md']
+        )
+
+        if uploaded_file is not None:
+            text_to_summarize = str(uploaded_file.read(), "utf-8")
+            st.text_area("File content:", text_to_summarize, height=150, disabled=True)
+
+    # Summarization settings
+    col1, col2 = st.columns(2)
+
+    with col1:
+        summary_length = st.selectbox(
+            "Summary Length:",
+            ["Short", "Medium", "Detailed"]
+        )
+
+    with col2:
+        include_key_points = st.checkbox("Include Key Points", value=True)
+
+    # Process summarization
+    if st.button("Generate Summary") and text_to_summarize.strip():
+        with st.spinner("Generating summary..."):
+            result = app_manager.execute_program('summarization', {'text': text_to_summarize})
+
+            if result['success']:
+                summary_result = result['result']
+
+                # Display results
+                st.markdown("### Summary")
+                st.markdown(summary_result.summary)
+
+                if include_key_points and hasattr(summary_result, 'key_points'):
+                    st.markdown("### Key Points")
+                    for i, point in enumerate(summary_result.key_points, 1):
+                        st.markdown(f"{i}. {point}")
+
+                # Statistics
+                original_length = len(text_to_summarize.split())
+                summary_length = len(summary_result.summary.split())
+                compression_ratio = (original_length - summary_length) / original_length * 100
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Original Words", original_length)
+
+                with col2:
+                    st.metric("Summary Words", summary_length)
+
+                with col3:
+                    st.metric("Compression", f"{compression_ratio:.1f}%")
+
+                if show_debug:
+                    with st.expander("Debug Information"):
+                        st.json({
+                            'execution_time': result['execution_time'],
+                            'compression_ratio': compression_ratio,
+                            'raw_result': summary_result.__dict__ if hasattr(summary_result, '__dict__') else str(summary_result)
+                        })
+            else:
+                st.error(f"Summarization failed: {result['error']}")
+
+def show_sentiment_page(show_confidence: bool, show_debug: bool):
+    """Sentiment Analysis page"""
+
+    st.title("😊 Sentiment Analysis")
+    st.markdown("Analyze the sentiment of text with detailed reasoning.")
+
+    # Input area
+    text_to_analyze = st.text_area(
+        "Text to Analyze:",
+        placeholder="Enter text to analyze its sentiment...",
+        height=150
+    )
+
+    # Batch analysis option
+    batch_mode = st.checkbox("Batch Analysis Mode")
+
+    if batch_mode:
+        st.markdown("### Batch Analysis")
+        batch_texts = st.text_area(
+            "Multiple texts (one per line):",
+            placeholder="Text 1\nText 2\nText 3",
+            height=200
+        )
+
+    # Process sentiment analysis
+    if st.button("Analyze Sentiment"):
+        if batch_mode and batch_texts.strip():
+            texts = [text.strip() for text in batch_texts.split('\n') if text.strip()]
+
+            results = []
+            progress_bar = st.progress(0)
+
+            for i, text in enumerate(texts):
+                with st.spinner(f"Analyzing text {i+1}/{len(texts)}..."):
+                    result = app_manager.execute_program('sentiment', {'text': text})
+
+                    if result['success']:
+                        sentiment_result = result['result']
+                        results.append({
+                            'text': text[:50] + "..." if len(text) > 50 else text,
+                            'sentiment': sentiment_result.sentiment,
+                            'score': sentiment_result.score,
+                            'reasoning': getattr(sentiment_result, 'reasoning', 'N/A')
+                        })
+                    else:
+                        results.append({
+                            'text': text[:50] + "..." if len(text) > 50 else text,
+                            'sentiment': 'Error',
+                            'score': 0,
+                            'reasoning': result['error']
+                        })
+
+                progress_bar.progress((i + 1) / len(texts))
+
+            # Display batch results
+            st.markdown("### Batch Results")
+            df = pd.DataFrame(results)
+            st.dataframe(df, use_container_width=True)
+
+            # Visualization
+            sentiment_counts = df['sentiment'].value_counts()
+
+            fig = px.pie(
+                values=sentiment_counts.values,
+                names=sentiment_counts.index,
+                title="Sentiment Distribution"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif text_to_analyze.strip():
+            with st.spinner("Analyzing sentiment..."):
+                result = app_manager.execute_program('sentiment', {'text': text_to_analyze})
+
+                if result['success']:
+                    sentiment_result = result['result']
+
+                    # Display result
+                    st.markdown("### Sentiment Analysis Result")
+
+                    # Sentiment display with emoji
+                    sentiment_emojis = {
+                        'positive': '😊',
+                        'negative': '😞',
+                        'neutral': '😐'
+                    }
+
+                    sentiment_lower = sentiment_result.sentiment.lower()
+                    emoji = sentiment_emojis.get(sentiment_lower, '🤔')
+
+                    st.markdown(f"## {emoji} {sentiment_result.sentiment}")
+
+                    # Score visualization
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.metric("Sentiment Score", f"{sentiment_result.score:.2f}")
+
+                    with col2:
+                        # Color based on sentiment
+                        color = "green" if sentiment_result.score > 0 else "red" if sentiment_result.score < 0 else "gray"
+                        st.markdown(f"<div style='color: {color}; font-size: 24px; text-align: center;'>Score: {sentiment_result.score:.2f}</div>", unsafe_allow_html=True)
+
+                    # Progress bar for score
+                    normalized_score = (sentiment_result.score + 1) / 2  # Convert from [-1,1] to [0,1]
+                    st.progress(normalized_score)
+
+                    # Reasoning
+                    if hasattr(sentiment_result, 'reasoning'):
+                        st.markdown("### Reasoning")
+                        st.info(sentiment_result.reasoning)
+
+                    # Score interpretation
+                    st.markdown("### Score Interpretation")
+                    if sentiment_result.score > 0.5:
+                        st.success("Strongly Positive")
+                    elif sentiment_result.score > 0:
+                        st.info("Slightly Positive")
+                    elif sentiment_result.score == 0:
+                        st.warning("Neutral")
+                    elif sentiment_result.score > -0.5:
+                        st.warning("Slightly Negative")
+                    else:
+                        st.error("Strongly Negative")
+
+                    if show_debug:
+                        with st.expander("Debug Information"):
+                            st.json({
+                                'execution_time': result['execution_time'],
+                                'raw_result': sentiment_result.__dict__ if hasattr(sentiment_result, '__dict__') else str(sentiment_result)
+                            })
+                else:
+                    st.error(f"Sentiment analysis failed: {result['error']}")
+        else:
+            st.warning("Please enter text to analyze.")
+
+def show_analytics_page():
+    """Analytics and metrics dashboard"""
+
+    st.title("📈 Analytics Dashboard")
+    st.markdown("Monitor application performance and usage statistics.")
+
+    # Performance metrics
+    st.markdown("### Performance Metrics")
+
+    metrics = app_manager.performance_metrics
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Total Queries", metrics['total_queries'])
+
+    with col2:
+        st.metric("Avg Response Time", f"{metrics['avg_response_time']:.3f}s")
+
+    with col3:
+        st.metric("Success Rate", f"{metrics['success_rate']:.2%}")
+
+    with col4:
+        st.metric("Error Count", metrics['error_count'])
+
+    # Session history visualization
+    if app_manager.session_history:
+        st.markdown("### Session Activity")
+
+        # Prepare data for visualization
+        history_df = pd.DataFrame([
+            {
+                'timestamp': entry['timestamp'],
+                'program': entry['program'],
+                'execution_time': entry['execution_time']
+            }
+            for entry in app_manager.session_history
+        ])
+
+        # Timeline chart
+        fig = px.scatter(
+            history_df,
+            x='timestamp',
+            y='execution_time',
+            color='program',
+            title="Query Timeline",
+            labels={'execution_time': 'Response Time (s)', 'timestamp': 'Time'}
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Program usage distribution
+        program_counts = history_df['program'].value_counts()
+
+        fig = px.bar(
+            x=program_counts.values,
+            y=program_counts.index,
+            orientation='h',
+            title="Program Usage Distribution",
+            labels={'x': 'Usage Count', 'y': 'Program'}
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Recent activity table
+        st.markdown("### Recent Activity")
+        recent_activity = history_df.tail(10).copy()
+        recent_activity['timestamp'] = recent_activity['timestamp'].dt.strftime('%H:%M:%S')
+        st.dataframe(recent_activity, use_container_width=True)
+
+    else:
+        st.info("No activity data available yet. Use the application to see analytics.")
+
+    # System information
+    with st.expander("System Information"):
+        st.json({
+            'dspy_version': '3.0.1',
+            'streamlit_version': st.__version__,
+            'available_programs': list(app_manager.programs.keys()),
+            'session_start': app_manager.session_history[0]['timestamp'].isoformat() if app_manager.session_history else None
+        })
+
+# Export functionality
+def create_download_link(data, filename):
+    """Create a download link for data"""
+    if isinstance(data, pd.DataFrame):
+        csv = data.to_csv(index=False)
+        b64 = base64.b64encode(csv.encode()).decode()
+    else:
+        json_str = json.dumps(data, indent=2, default=str)
+        b64 = base64.b64encode(json_str.encode()).decode()
+
+    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">Download {filename}</a>'
+    return href
+
+# Add download functionality to sidebar
+with st.sidebar:
+    if st.button("📥 Export Session Data"):
+        if app_manager.session_history:
+            session_df = pd.DataFrame(app_manager.session_history)
+            download_link = create_download_link(session_df, "dspy_session_data.csv")
+            st.markdown(download_link, unsafe_allow_html=True)
+        else:
+            st.warning("No session data to export")
+
+if __name__ == "__main__":
+    main()
+```
+
+## Advanced Streamlit Patterns
+
+### Multi-page Application with Navigation
+
+```python
+import streamlit as st
+from typing import Dict, Any
+import importlib
+
+class StreamlitAppRegistry:
+    """Registry for multi-page Streamlit applications"""
+
+    def __init__(self):
+        self.pages = {}
+        self.current_page = None
+
+    def register_page(self, name: str, title: str, icon: str, page_func, sidebar_func=None):
+        """Register a page in the application"""
+        self.pages[name] = {
+            'title': title,
+            'icon': icon,
+            'page_func': page_func,
+            'sidebar_func': sidebar_func
+        }
+
+    def run(self):
+        """Run the multi-page application"""
+
+        # Sidebar navigation
+        st.sidebar.title("Navigation")
+
+        # Page selector
+        page_options = {f"{page['icon']} {page['title']}": name for name, page in self.pages.items()}
+        selected_page_display = st.sidebar.selectbox("Go to", list(page_options.keys()))
+        selected_page = page_options[selected_page_display]
+
+        self.current_page = selected_page
+
+        # Run page-specific sidebar content
+        if self.pages[selected_page].get('sidebar_func'):
+            st.sidebar.markdown("---")
+            self.pages[selected_page]['sidebar_func']()
+
+        # Run main page content
+        self.pages[selected_page]['page_func']()
+
+# Create app registry
+app_registry = StreamlitAppRegistry()
+
+# Page implementations
+def rag_page():
+    """RAG system page"""
+    st.title("🔍 RAG System")
+
+    # Initialize RAG system
+    @st.cache_resource
+    def setup_rag():
+        # Setup your RAG system here
+        embedder = dspy.Embedder('openai/text-embedding-3-small')
+        # Add your corpus and retriever setup
+        return dspy.ChainOfThought('context, question -> answer')
+
+    rag_system = setup_rag()
+
+    # User interface
+    question = st.text_input("Ask a question:")
+
+    if question and st.button("Search & Answer"):
+        with st.spinner("Searching and generating answer..."):
+            # In a real implementation, you'd retrieve context first
+            result = rag_system(context="", question=question)
+            st.success(result.answer)
+
+def classification_page():
+    """Classification system page"""
+    st.title("📊 Advanced Classification")
+
+    # Multi-class classification with custom categories
+    col1, col2 = st.columns(2)
+
+    with col1:
+        text = st.text_area("Text to classify:")
+
+    with col2:
+        categories = st.text_area(
+            "Categories (one per line):",
+            value="positive\nnegative\nneutral"
+        )
+
+    if st.button("Classify") and text and categories:
+        category_list = [cat.strip() for cat in categories.split('\n') if cat.strip()]
+
+        # Dynamic classification
+        classifier = dspy.ChainOfThought(f'text -> category: str, confidence: float')
+
+        result = classifier(text=text)
+
+        st.metric("Predicted Category", result.category)
+        st.metric("Confidence", f"{result.confidence:.2%}")
+
+def agent_page():
+    """Customer service agent page"""
+    st.title("🤖 AI Agent")
+
+    # Chat interface
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("How can I help you?"):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Generate agent response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                # Initialize agent
+                agent = dspy.ReAct(
+                    "customer_request -> agent_response",
+                    tools=[]  # Add your tools here
+                )
+
+                response = agent(customer_request=prompt)
+                st.markdown(response.agent_response)
+
+                # Add assistant message
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.agent_response
+                })
+
+# Register pages
+app_registry.register_page("rag", "RAG System", "🔍", rag_page)
+app_registry.register_page("classification", "Classification", "📊", classification_page)
+app_registry.register_page("agent", "AI Agent", "🤖", agent_page)
+```
+
+### Real-time Data Processing
+
+```python
+import streamlit as st
+import asyncio
+import threading
+import queue
+import time
+from datetime import datetime
+
+class RealTimeProcessor:
+    """Real-time data processing with DSPy"""
+
+    def __init__(self):
+        self.data_queue = queue.Queue()
+        self.results = []
+        self.is_processing = False
+
+        # DSPy program for processing
+        self.processor = dspy.ChainOfThought('data -> analysis: str, score: float')
+
+    def start_processing(self):
+        """Start real-time processing"""
+        self.is_processing = True
+
+        def process_loop():
+            while self.is_processing:
+                try:
+                    # Get data from queue with timeout
+                    data = self.data_queue.get(timeout=1)
+
+                    # Process with DSPy
+                    result = self.processor(data=data)
+
+                    # Store result
+                    self.results.append({
+                        'timestamp': datetime.now(),
+                        'data': data,
+                        'analysis': result.analysis,
+                        'score': result.score
+                    })
+
+                    # Keep only last 100 results
+                    if len(self.results) > 100:
+                        self.results.pop(0)
+
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    print(f"Processing error: {e}")
+
+        # Start processing thread
+        self.processing_thread = threading.Thread(target=process_loop)
+        self.processing_thread.start()
+
+    def stop_processing(self):
+        """Stop real-time processing"""
+        self.is_processing = False
+        if hasattr(self, 'processing_thread'):
+            self.processing_thread.join()
+
+    def add_data(self, data):
+        """Add data to processing queue"""
+        self.data_queue.put(data)
+
+    def get_recent_results(self, n=10):
+        """Get recent results"""
+        return self.results[-n:] if self.results else []
+
+def realtime_app():
+    """Real-time processing application"""
+    st.title("⚡ Real-time Processing")
+
+    # Initialize processor
+    if 'processor' not in st.session_state:
+        st.session_state.processor = RealTimeProcessor()
+        st.session_state.processor.start_processing()
+
+    processor = st.session_state.processor
+
+    # Control panel
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("Start Processing"):
+            if not processor.is_processing:
+                processor.start_processing()
+                st.success("Processing started!")
+
+    with col2:
+        if st.button("Stop Processing"):
+            processor.stop_processing()
+            st.success("Processing stopped!")
+
+    with col3:
+        st.metric("Queue Size", processor.data_queue.qsize())
+
+    # Data input
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        new_data = st.text_input("Add data to process:")
+
+    with col2:
+        if st.button("Add Data") and new_data:
+            processor.add_data(new_data)
+            st.success("Data added!")
+
+    # Results display
+    st.markdown("### Recent Results")
+
+    # Auto-refresh results
+    results_placeholder = st.empty()
+
+    with results_placeholder.container():
+        recent_results = processor.get_recent_results(5)
+
+        if recent_results:
+            for result in reversed(recent_results):
+                with st.expander(f"{result['timestamp'].strftime('%H:%M:%S')} - {result['data'][:30]}..."):
+                    st.markdown(f"**Analysis:** {result['analysis']}")
+                    st.metric("Score", f"{result['score']:.2f}")
+        else:
+            st.info("No results yet. Add some data to process!")
+
+    # Auto-refresh every 2 seconds
+    time.sleep(2)
+    st.rerun()
+```
+
+## Production Deployment
+
+### Streamlit Cloud Deployment
+
+```python
+# streamlit_app.py - Main application file for Streamlit Cloud
+
+import streamlit as st
+import os
+from pathlib import Path
+
+# Set page config first
+st.set_page_config(
+    page_title="DSPy AI Demo",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Configuration for different environments
+def get_config():
+    """Get configuration based on environment"""
+
+    if 'STREAMLIT_SHARING' in os.environ:
+        # Streamlit Cloud environment
+        return {
+            'api_keys': {
+                'openai': st.secrets["openai_api_key"]
+            },
+            'cache_dir': '/tmp/dspy_cache',
+            'debug': False
+        }
+    else:
+        # Local development
+        return {
+            'api_keys': {
+                'openai': os.getenv('OPENAI_API_KEY', '')
+            },
+            'cache_dir': './cache',
+            'debug': True
+        }
+
+# Initialize configuration
+config = get_config()
+
+# Setup DSPy with configuration
+@st.cache_resource
+def setup_dspy():
+    """Setup DSPy with proper configuration"""
+    import dspy
+
+    # Configure LM
+    lm = dspy.LM('openai/gpt-4o-mini', api_key=config['api_keys']['openai'])
+    dspy.configure(lm=lm)
+
+    # Setup cache directory
+    cache_dir = Path(config['cache_dir'])
+    cache_dir.mkdir(exist_ok=True)
+
+    return True
+
+# Main application
+def main():
+    if not setup_dspy():
+        st.error("Failed to initialize DSPy")
+        return
+
+    st.title("🤖 DSPy AI Demo")
+    st.markdown("Interactive AI applications powered by DSPy")
+
+    # Your application logic here
+    # ...
+
+if __name__ == "__main__":
+    main()
+```
+
+```toml
+# .streamlit/config.toml
+[global]
+dataFrameSerialization = "arrow"
+
+[server]
+runOnSave = true
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+```
+
+### Docker Deployment
+
+```dockerfile
+# Dockerfile for Streamlit app
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Create cache directory
+RUN mkdir -p /app/cache
+
+# Expose Streamlit port
+EXPOSE 8501
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+# Run Streamlit
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+```
+
+```yaml
+# docker-compose.yml
+version: "3.8"
+services:
+  streamlit-app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./cache:/app/cache
+    restart: unless-stopped
+```
+
+### Performance Optimization
+
+```python
+import streamlit as st
+import pandas as pd
+from functools import lru_cache
+import hashlib
+
+class OptimizedStreamlitApp:
+    """Optimized Streamlit application with caching and performance improvements"""
+
+    def __init__(self):
+        self.setup_performance_optimizations()
+
+    def setup_performance_optimizations(self):
+        """Setup various performance optimizations"""
+
+        # Configure Streamlit for better performance
+        st.set_page_config(
+            page_title="DSPy App",
+            layout="wide",
+            initial_sidebar_state="collapsed"  # Saves initial load time
+        )
+
+        # Disable some default Streamlit features for better performance
+        st.markdown("""
+        <style>
+            .css-1d391kg {display: none}  /* Hide Streamlit menu */
+            .css-1v0mbdj {display: none} /* Hide footer */
+        </style>
+        """, unsafe_allow_html=True)
+
+    @st.cache_data(ttl=3600)  # Cache for 1 hour
+    def load_data(_self, file_path: str) -> pd.DataFrame:
+        """Load data with caching"""
+        return pd.read_csv(file_path)
+
+    @st.cache_resource
+    def initialize_models(_self):
+        """Initialize DSPy models with resource caching"""
+        import dspy
+
+        lm = dspy.LM('openai/gpt-4o-mini')
+        dspy.configure(lm=lm)
+
+        return {
+            'qa': dspy.ChainOfThought('question -> answer'),
+            'classifier': dspy.ChainOfThought('text -> category'),
+        }
+
+    def create_cache_key(self, *args):
+        """Create consistent cache key from arguments"""
+        return hashlib.md5(str(args).encode()).hexdigest()
+
+    @lru_cache(maxsize=128)
+    def cached_computation(self, input_text: str, model_type: str):
+        """Cache expensive computations"""
+        models = self.initialize_models()
+
+        if model_type == 'qa':
+            return models['qa'](question=input_text)
+        elif model_type == 'classifier':
+            return models['classifier'](text=input_text)
+
+    def optimized_dataframe_display(self, df: pd.DataFrame):
+        """Optimized way to display large dataframes"""
+
+        # For large dataframes, show only a sample
+        if len(df) > 1000:
+            st.warning(f"Large dataset ({len(df)} rows). Showing first 1000 rows.")
+            st.dataframe(df.head(1000), use_container_width=True)
+
+            # Provide download option for full dataset
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download full dataset",
+                data=csv,
+                file_name="full_dataset.csv",
+                mime="text/csv"
+            )
+        else:
+            st.dataframe(df, use_container_width=True)
+
+    def batch_process_with_progress(self, items: list, process_func, batch_size: int = 10):
+        """Process items in batches with progress bar"""
+
+        results = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i + batch_size]
+
+            # Update progress
+            progress = i / len(items)
+            progress_bar.progress(progress)
+            status_text.text(f"Processing batch {i//batch_size + 1}/{(len(items)-1)//batch_size + 1}")
+
+            # Process batch
+            batch_results = [process_func(item) for item in batch]
+            results.extend(batch_results)
+
+        progress_bar.progress(1.0)
+        status_text.text("Processing complete!")
+
+        return results
+
+# Usage example
+def optimized_main():
+    app = OptimizedStreamlitApp()
+
+    st.title("Optimized DSPy Application")
+
+    # Initialize models once
+    models = app.initialize_models()
+
+    # User input
+    user_input = st.text_input("Enter your question:")
+
+    if user_input:
+        # Use cached computation
+        cache_key = app.create_cache_key(user_input, "qa")
+
+        if f"result_{cache_key}" not in st.session_state:
+            with st.spinner("Processing..."):
+                result = app.cached_computation(user_input, "qa")
+                st.session_state[f"result_{cache_key}"] = result
+        else:
+            st.info("Using cached result")
+
+        result = st.session_state[f"result_{cache_key}"]
+        st.success(result.answer)
+```
+
+## Speed Tips
+
+- **Resource Caching**: Use `@st.cache_resource` for DSPy model initialization
+- **Data Caching**: Use `@st.cache_data` for expensive data operations
+- **Session State**: Store results in `st.session_state` to avoid recomputation
+- **Lazy Loading**: Load DSPy models only when needed
+- **Batch Processing**: Process multiple items together for efficiency
+- **Streaming**: Use `st.empty()` and `st.rerun()` for real-time updates
+- **Pagination**: Display large datasets in pages or samples
+- **Async Operations**: Use threading for long-running operations
+
+## Common Pitfalls
+
+- **Caching Issues**: Be careful with mutable objects in cached functions
+- **Memory Leaks**: Clear large objects from session state when not needed
+- **Rerun Loops**: Avoid infinite reruns with `st.rerun()`
+- **State Management**: Properly initialize and manage session state
+- **Performance**: Monitor app performance with large datasets or models
+- **Error Handling**: Implement proper error handling for user interactions
+- **Mobile Responsiveness**: Test on mobile devices for layout issues
+- **Security**: Don't expose API keys in the UI
+
+## Best Practices Summary
+
+- **Modular Design**: Organize code into reusable components and functions
+- **Caching Strategy**: Cache expensive operations at appropriate levels
+- **Error Handling**: Implement comprehensive error handling and user feedback
+- **Performance Monitoring**: Monitor and optimize app performance
+- **User Experience**: Design intuitive interfaces with clear feedback
+- **State Management**: Properly manage application state across interactions
+- **Documentation**: Provide clear instructions and help text for users
+- **Testing**: Test thoroughly across different browsers and devices
+
+## References
+
+- [Streamlit Documentation](https://docs.streamlit.io/)
+- [Streamlit Cloud Deployment](https://docs.streamlit.io/streamlit-community-cloud)
+- [DSPy Integration Examples](https://github.com/stanfordnlp/dspy/tree/main/examples)
+- [Streamlit Performance Guide](https://docs.streamlit.io/library/advanced-features/caching)
+- [Docker Deployment Guide](https://docs.streamlit.io/knowledge-base/tutorials/deploy/docker)

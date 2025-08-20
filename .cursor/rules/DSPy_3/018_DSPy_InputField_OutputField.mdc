@@ -1,0 +1,619 @@
+---
+description: DSPy 3.0.1 Field Definitions - Master InputField and OutputField for precise signature control
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's field system. Master InputField and OutputField to create precise, well-documented signatures with rich constraints and formatting.
+
+## Field System Architecture
+
+```
+Define Fields → Add Descriptions → Set Constraints → Apply Formatting → Use in Signatures
+      ↓              ↓               ↓               ↓                ↓
+ InputField/       Clear            Validation      Output           Class-based
+ OutputField       Documentation    Rules           Structure        Signatures
+      ↓              ↓               ↓               ↓                ↓
+ Type Safety       User Guidance    Data Quality    LM Guidance      Production Ready
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Field Usage
+
+```python
+import dspy
+from typing import List
+
+# Basic field definitions
+class BasicQA(dspy.Signature):
+    """Simple question answering with field descriptions."""
+
+    question: str = dspy.InputField(desc="User's question")
+    answer: str = dspy.OutputField(desc="Comprehensive answer")
+
+# Use immediately
+qa = dspy.Predict(BasicQA)
+result = qa(question="What is Python?")
+```
+
+### Production Ready - Advanced Field Configuration
+
+```python
+import dspy
+from typing import List, Dict, Literal
+
+class AdvancedAnalysisSignature(dspy.Signature):
+    """Comprehensive content analysis with rich field specifications."""
+
+    # Input fields with detailed configuration
+    content: str = dspy.InputField(
+        desc="Text content to analyze thoroughly",
+        min_length=10,
+        max_length=5000,
+        prefix="Content to analyze:"
+    )
+
+    analysis_type: Literal["sentiment", "topic", "summary", "all"] = dspy.InputField(
+        desc="Type of analysis to perform",
+        default="all",
+        prefix="Analysis type:"
+    )
+
+    target_audience: str = dspy.InputField(
+        desc="Intended audience for the analysis results",
+        default="general",
+        prefix="Target audience:"
+    )
+
+    # Output fields with constraints and formatting
+    sentiment_score: float = dspy.OutputField(
+        desc="Sentiment score from -1 (negative) to 1 (positive)",
+        ge=-1.0,
+        le=1.0,
+        prefix="Sentiment Score:",
+        format="Numeric value between -1.0 and 1.0"
+    )
+
+    key_topics: List[str] = dspy.OutputField(
+        desc="Main topics identified in the content",
+        min_length=1,
+        max_length=5,
+        prefix="Key Topics:",
+        format="Bullet-pointed list of topics"
+    )
+
+    summary: str = dspy.OutputField(
+        desc="Concise summary of the content",
+        min_length=20,
+        max_length=200,
+        prefix="Summary:",
+        format="Clear, concise paragraph"
+    )
+
+    confidence_metrics: Dict[str, float] = dspy.OutputField(
+        desc="Confidence levels for each analysis component",
+        prefix="Confidence Levels:",
+        format="JSON object with component names as keys and confidence scores as values"
+    )
+
+# Use with full validation and formatting
+analyzer = dspy.ChainOfThought(AdvancedAnalysisSignature)
+
+result = analyzer(
+    content="This innovative AI system represents a breakthrough in natural language processing...",
+    analysis_type="all",
+    target_audience="technical researchers"
+)
+
+# All outputs are validated and properly formatted
+assert -1.0 <= result.sentiment_score <= 1.0
+assert isinstance(result.key_topics, list)
+assert 1 <= len(result.key_topics) <= 5
+```
+
+## Core Field Patterns
+
+### InputField Configurations
+
+```python
+# Basic input fields
+basic_input = dspy.InputField(desc="Simple input description")
+
+# Input with constraints
+constrained_input = dspy.InputField(
+    desc="Text with length constraints",
+    min_length=5,
+    max_length=500
+)
+
+# Input with default values
+default_input = dspy.InputField(
+    desc="Input with fallback value",
+    default="default_value"
+)
+
+# Input with custom prefix
+prefixed_input = dspy.InputField(
+    desc="Input with custom prompt prefix",
+    prefix="Please provide:"
+)
+
+# Numeric input with range constraints
+numeric_input = dspy.InputField(
+    desc="Number within specific range",
+    ge=0,    # Greater than or equal to 0
+    le=100   # Less than or equal to 100
+)
+
+# List input with size constraints
+list_input = dspy.InputField(
+    desc="List of items with size limits",
+    min_length=1,
+    max_length=10
+)
+```
+
+### OutputField Configurations
+
+```python
+# Basic output fields
+basic_output = dspy.OutputField(desc="Simple output description")
+
+# Output with formatting instructions
+formatted_output = dspy.OutputField(
+    desc="Structured response",
+    format="Provide answer in JSON format with 'result' and 'confidence' keys"
+)
+
+# Output with validation constraints
+validated_output = dspy.OutputField(
+    desc="Validated numeric output",
+    ge=0.0,
+    le=1.0
+)
+
+# Output with custom prefix
+prefixed_output = dspy.OutputField(
+    desc="Output with custom prefix",
+    prefix="Final Result:"
+)
+
+# Complex structured output
+structured_output = dspy.OutputField(
+    desc="Multi-part structured response",
+    prefix="Analysis Results:",
+    format="Provide results in the following structure:\n1. Main finding\n2. Supporting evidence\n3. Confidence level"
+)
+```
+
+### Type-Specific Field Patterns
+
+```python
+from typing import List, Dict, Optional, Union, Literal
+from datetime import datetime
+
+class ComprehensiveSignature(dspy.Signature):
+    """Showcase all field types and configurations."""
+
+    # String fields
+    text_input: str = dspy.InputField(
+        desc="Text input with validation",
+        min_length=1,
+        max_length=1000
+    )
+
+    # Numeric fields
+    score: float = dspy.OutputField(
+        desc="Numeric score with range",
+        ge=0.0,
+        le=100.0
+    )
+
+    # List fields
+    items: List[str] = dspy.InputField(
+        desc="List of strings",
+        min_length=1,
+        max_length=5
+    )
+
+    categories: List[Literal["A", "B", "C"]] = dspy.OutputField(
+        desc="List of specific categories"
+    )
+
+    # Dictionary fields
+    metadata: Dict[str, str] = dspy.InputField(
+        desc="Key-value metadata pairs"
+    )
+
+    results: Dict[str, float] = dspy.OutputField(
+        desc="Results with numeric values",
+        format="JSON object with string keys and numeric values"
+    )
+
+    # Optional fields
+    optional_context: Optional[str] = dspy.InputField(
+        desc="Optional additional context",
+        default=None
+    )
+
+    # Union types
+    flexible_input: Union[str, List[str]] = dspy.InputField(
+        desc="Can be string or list of strings"
+    )
+
+    # Literal types for controlled vocabulary
+    priority: Literal["low", "medium", "high", "urgent"] = dspy.OutputField(
+        desc="Task priority level"
+    )
+
+    # Boolean fields
+    is_valid: bool = dspy.OutputField(
+        desc="Validation result"
+    )
+```
+
+## Advanced Field Features
+
+### Custom Field Validation
+
+```python
+class ValidatedFields(dspy.Signature):
+    """Fields with advanced validation patterns."""
+
+    # Email-like validation through description
+    email: str = dspy.InputField(
+        desc="Valid email address in format user@domain.com",
+        format="Must contain @ symbol and valid domain"
+    )
+
+    # URL validation
+    website: str = dspy.InputField(
+        desc="Valid website URL starting with http:// or https://",
+        format="Complete URL with protocol"
+    )
+
+    # Phone number formatting
+    phone: str = dspy.InputField(
+        desc="Phone number in international format",
+        format="+[country code][area code][number], e.g., +1-555-123-4567"
+    )
+
+    # Date formatting
+    date_field: str = dspy.OutputField(
+        desc="Date in ISO format",
+        format="YYYY-MM-DD format, e.g., 2024-01-15"
+    )
+
+    # JSON validation
+    json_data: str = dspy.OutputField(
+        desc="Valid JSON string",
+        format="Properly formatted JSON object with escaped quotes"
+    )
+
+    # Custom structured format
+    address: str = dspy.OutputField(
+        desc="Complete mailing address",
+        format="Street Address\nCity, State ZIP Code\nCountry"
+    )
+```
+
+### Dynamic Field Generation
+
+```python
+def create_dynamic_signature(input_fields: List[str], output_fields: List[str], constraints: Dict = None):
+    """Dynamically create signatures with specified fields."""
+    constraints = constraints or {}
+
+    field_dict = {}
+
+    # Add input fields
+    for field_name in input_fields:
+        field_constraints = constraints.get(field_name, {})
+        field_dict[field_name] = (str, dspy.InputField(
+            desc=f"Input field: {field_name}",
+            **field_constraints
+        ))
+
+    # Add output fields
+    for field_name in output_fields:
+        field_constraints = constraints.get(field_name, {})
+        field_dict[field_name] = (str, dspy.OutputField(
+            desc=f"Output field: {field_name}",
+            **field_constraints
+        ))
+
+    return dspy.Signature(field_dict, "Dynamically generated signature")
+
+# Usage
+dynamic_sig = create_dynamic_signature(
+    input_fields=["question", "context"],
+    output_fields=["answer", "confidence"],
+    constraints={
+        "question": {"min_length": 5},
+        "answer": {"min_length": 10, "format": "Complete sentences"},
+        "confidence": {"ge": 0.0, "le": 1.0}
+    }
+)
+
+dynamic_predictor = dspy.Predict(dynamic_sig)
+```
+
+### Field Inheritance and Composition
+
+```python
+# Base field definitions for reuse
+class BaseFields:
+    timestamp = dspy.OutputField(
+        desc="ISO timestamp of processing",
+        format="YYYY-MM-DDTHH:MM:SSZ"
+    )
+
+    confidence = dspy.OutputField(
+        desc="Processing confidence level",
+        ge=0.0,
+        le=1.0,
+        format="Decimal between 0.0 and 1.0"
+    )
+
+    metadata = dspy.OutputField(
+        desc="Additional processing metadata",
+        format="JSON object with processing details"
+    )
+
+class ExtendedAnalysisSignature(dspy.Signature):
+    """Analysis signature with inherited common fields."""
+
+    # Specific fields
+    text: str = dspy.InputField(desc="Text to analyze")
+    analysis_result: str = dspy.OutputField(desc="Analysis findings")
+
+    # Inherited common fields
+    timestamp: str = BaseFields.timestamp
+    confidence: float = BaseFields.confidence
+    metadata: str = BaseFields.metadata
+
+# Field composition for complex signatures
+class CompositeSignature(dspy.Signature):
+    """Signature combining multiple field sets."""
+
+    # Input composition
+    primary_input: str = dspy.InputField(desc="Main input text")
+    secondary_input: str = dspy.InputField(desc="Supporting information")
+
+    # Output composition with different prefixes
+    analysis: str = dspy.OutputField(
+        desc="Primary analysis results",
+        prefix="Analysis:"
+    )
+
+    summary: str = dspy.OutputField(
+        desc="Executive summary",
+        prefix="Summary:",
+        max_length=200
+    )
+
+    recommendations: List[str] = dspy.OutputField(
+        desc="Action recommendations",
+        prefix="Recommendations:",
+        max_length=3,
+        format="Numbered list of specific actions"
+    )
+
+    # Inherited metadata
+    confidence: float = BaseFields.confidence
+    timestamp: str = BaseFields.timestamp
+```
+
+## Field Documentation Patterns
+
+### Self-Documenting Signatures
+
+```python
+class WellDocumentedSignature(dspy.Signature):
+    """
+    Comprehensive content analysis system.
+
+    This signature processes text content and provides multi-dimensional analysis
+    including sentiment, topics, and quality metrics.
+    """
+
+    content: str = dspy.InputField(
+        desc="""
+        Text content to be analyzed. Should be:
+        - At least 50 characters long
+        - Written in clear, grammatically correct language
+        - Focused on a single topic or theme
+        """,
+        min_length=50,
+        max_length=10000,
+        prefix="Content for Analysis:"
+    )
+
+    analysis_depth: Literal["surface", "detailed", "comprehensive"] = dspy.InputField(
+        desc="""
+        Level of analysis detail:
+        - surface: Basic sentiment and topic identification
+        - detailed: Includes reasoning and supporting evidence
+        - comprehensive: Full analysis with confidence metrics and recommendations
+        """,
+        default="detailed",
+        prefix="Analysis Depth:"
+    )
+
+    sentiment_analysis: str = dspy.OutputField(
+        desc="""
+        Sentiment analysis results including:
+        - Overall sentiment (positive/negative/neutral)
+        - Confidence score (0-100%)
+        - Key sentiment indicators found in text
+        - Emotional tone assessment
+        """,
+        prefix="Sentiment Analysis:",
+        format="Structured analysis with sentiment, confidence, indicators, and tone"
+    )
+
+    topic_extraction: List[str] = dspy.OutputField(
+        desc="""
+        Main topics identified in the content:
+        - Maximum 5 topics
+        - Each topic as a clear, specific phrase
+        - Ordered by relevance/prominence
+        - Avoid overly broad or generic topics
+        """,
+        max_length=5,
+        prefix="Key Topics:",
+        format="List of specific topic phrases, ordered by relevance"
+    )
+```
+
+### Field Validation Helpers
+
+```python
+class FieldValidator:
+    """Helper class for field validation patterns."""
+
+    @staticmethod
+    def email_field():
+        return dspy.InputField(
+            desc="Valid email address",
+            format="user@domain.com format required"
+        )
+
+    @staticmethod
+    def url_field():
+        return dspy.InputField(
+            desc="Valid URL",
+            format="Must start with http:// or https://"
+        )
+
+    @staticmethod
+    def phone_field():
+        return dspy.InputField(
+            desc="Phone number",
+            format="International format preferred: +1-555-123-4567"
+        )
+
+    @staticmethod
+    def percentage_field():
+        return dspy.OutputField(
+            desc="Percentage value",
+            ge=0.0,
+            le=100.0,
+            format="Numeric value between 0 and 100"
+        )
+
+    @staticmethod
+    def confidence_field():
+        return dspy.OutputField(
+            desc="Confidence score",
+            ge=0.0,
+            le=1.0,
+            format="Decimal value between 0.0 (no confidence) and 1.0 (full confidence)"
+        )
+
+    @staticmethod
+    def json_field():
+        return dspy.OutputField(
+            desc="JSON formatted data",
+            format="Valid JSON object with proper escaping"
+        )
+
+# Usage
+class ValidatedSignature(dspy.Signature):
+    """Signature using validation helpers."""
+
+    email: str = FieldValidator.email_field()
+    website: str = FieldValidator.url_field()
+    confidence: float = FieldValidator.confidence_field()
+    data: str = FieldValidator.json_field()
+```
+
+## Speed Tips
+
+### Field Optimization Patterns
+
+```python
+# Efficient field definitions
+class OptimizedSignature(dspy.Signature):
+    """Optimized signature for performance."""
+
+    # Use specific types for better performance
+    text: str = dspy.InputField(desc="Input text")
+    score: float = dspy.OutputField(desc="Numeric score", ge=0.0, le=1.0)
+
+    # Avoid overly complex constraints that slow processing
+    result: str = dspy.OutputField(
+        desc="Result text",
+        max_length=500  # Reasonable limit
+    )
+
+# Reusable field definitions
+COMMON_FIELDS = {
+    'confidence': dspy.OutputField(desc="Confidence score", ge=0.0, le=1.0),
+    'timestamp': dspy.OutputField(desc="Processing timestamp"),
+    'metadata': dspy.OutputField(desc="Additional metadata")
+}
+
+class ReusableSignature(dspy.Signature):
+    """Signature using reusable field definitions."""
+
+    input_text: str = dspy.InputField(desc="Text input")
+    analysis: str = dspy.OutputField(desc="Analysis result")
+
+    # Reuse common fields
+    confidence: float = COMMON_FIELDS['confidence']
+    timestamp: str = COMMON_FIELDS['timestamp']
+```
+
+## Common Pitfalls
+
+### Field Configuration Errors
+
+```python
+# ❌ DON'T: Inconsistent types and constraints
+class BadSignature(dspy.Signature):
+    score: str = dspy.OutputField(desc="Score", ge=0.0, le=1.0)  # String with numeric constraints!
+
+# ✅ DO: Match types with constraints
+class GoodSignature(dspy.Signature):
+    score: float = dspy.OutputField(desc="Score", ge=0.0, le=1.0)  # Float with numeric constraints
+```
+
+### Over-Constraining Fields
+
+```python
+# ❌ DON'T: Over-constrain fields unnecessarily
+class OverConstrainedSignature(dspy.Signature):
+    text: str = dspy.InputField(
+        desc="Text",
+        min_length=100,
+        max_length=101,  # Too restrictive!
+        format="Must contain exactly 50 words with no punctuation"  # Too specific!
+    )
+
+# ✅ DO: Use reasonable constraints
+class ReasonableSignature(dspy.Signature):
+    text: str = dspy.InputField(
+        desc="Text input",
+        min_length=10,
+        max_length=1000  # Reasonable range
+    )
+```
+
+## Best Practices Summary
+
+- **Be descriptive**: Write clear, helpful field descriptions
+- **Use appropriate types**: Match field types with expected data
+- **Add reasonable constraints**: Use validation that improves quality without being restrictive
+- **Provide formatting guidance**: Help the LM understand expected output format
+- **Document complex fields**: Explain multi-part or structured field requirements
+- **Reuse common patterns**: Create reusable field definitions for consistency
+- **Validate field logic**: Ensure constraints make sense for the field type
+- **Consider user experience**: Make field requirements clear and achievable
+
+## References
+
+- [InputField API Documentation](/docs/api/signatures/InputField.md)
+- [OutputField API Documentation](/docs/api/signatures/OutputField.md)
+- [Pydantic Field Constraints](https://docs.pydantic.dev/latest/concepts/fields/)
+- [Signature Design Guide](/docs/learn/programming/signatures.md)

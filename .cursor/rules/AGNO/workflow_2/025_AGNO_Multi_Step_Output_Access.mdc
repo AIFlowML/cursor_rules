@@ -1,0 +1,802 @@
+---
+description: AGNO Workflows 2.0 - Master multi-step output access for comprehensive data integration
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 multi-step output access. Master accessing and integrating outputs from multiple previous workflow steps.
+
+## Multi-Step Access Flow
+
+```
+Previous Steps → StepInput Access → Data Extraction → Processing → Integration
+      ↓               ↓               ↓              ↓            ↓
+Step1|Step2|     get_step_content   Specific      Custom      Combined
+Step3 Outputs    get_all_previous   Step Data     Processing   Results
+      ↓               ↓               ↓              ↓            ↓
+Named Step       Access Methods    Targeted      Enhanced     Comprehensive
+Outputs          Available         Retrieval     Analysis     Synthesis
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Multi-Step Access
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Agents for different steps
+researcher = Agent(name="Researcher", model=OpenAIChat(id="gpt-4o-mini"))
+analyst = Agent(name="Analyst", model=OpenAIChat(id="gpt-4o-mini"))
+synthesizer = Agent(name="Synthesizer", model=OpenAIChat(id="gpt-4o-mini"))
+
+# Function that accesses multiple previous steps
+def multi_step_processor(step_input: StepInput) -> StepOutput:
+    """Access outputs from multiple previous steps"""
+    
+    # Access specific steps by name
+    research_data = step_input.get_step_content("research_phase")
+    analysis_data = step_input.get_step_content("analysis_phase")
+    
+    # Access all previous content combined
+    all_previous = step_input.get_all_previous_content()
+    
+    combined_report = f"""
+    ## Multi-Step Integration Report
+    
+    **Research Phase Results**: 
+    {research_data[:200] if research_data else 'No research data'}...
+    
+    **Analysis Phase Results**:
+    {analysis_data[:200] if analysis_data else 'No analysis data'}...
+    
+    **Total Previous Content**: {len(all_previous)} characters processed
+    """
+    
+    return StepOutput(content=combined_report)
+
+# Basic multi-step workflow
+multi_step_workflow = Workflow(
+    name="Multi-Step Access Demo",
+    steps=[
+        Step(name="research_phase", agent=researcher),
+        Step(name="analysis_phase", agent=analyst),
+        Step(name="integration", executor=multi_step_processor)
+    ]
+)
+
+# Execute - integration step can access both previous steps
+multi_step_workflow.print_response("Analyze AI trends in healthcare", markdown=True)
+```
+
+### Production Ready - Comprehensive Multi-Step Integration
+```python
+from agno.workflow.v2 import Workflow, Step, StepOutput, Parallel, Condition
+from agno.workflow.v2.types import StepInput
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Any
+from datetime import datetime
+
+# Structured models for different step outputs
+class ResearchFindings(BaseModel):
+    topic: str
+    key_findings: List[str]
+    sources: List[str]
+    confidence_score: float = Field(ge=0.0, le=1.0)
+
+class TechnicalAnalysis(BaseModel):
+    feasibility_score: float = Field(ge=0.0, le=1.0)
+    implementation_challenges: List[str]
+    technical_recommendations: List[str]
+    risk_factors: List[str]
+
+class MarketAnalysis(BaseModel):
+    market_size: str
+    competitive_landscape: List[str]
+    opportunities: List[str]
+    market_readiness: str
+
+class ComprehensiveReport(BaseModel):
+    executive_summary: str
+    integrated_findings: List[str]
+    cross_functional_insights: List[str]
+    strategic_recommendations: List[str]
+    implementation_roadmap: List[str]
+    risk_mitigation: List[str]
+
+# Specialized agents with structured outputs
+research_specialist = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    response_model=ResearchFindings,
+    role="Comprehensive research with structured outputs",
+    instructions=[
+        "Conduct thorough research using available tools",
+        "Structure findings using ResearchFindings model",
+        "Provide confidence scores based on source quality",
+        "Include diverse, credible sources"
+    ]
+)
+
+technical_analyst = Agent(
+    name="Technical Analysis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=TechnicalAnalysis,
+    role="Technical feasibility and implementation analysis",
+    instructions=[
+        "Analyze technical feasibility and challenges",
+        "Provide implementation recommendations",
+        "Assess risk factors and mitigation strategies",
+        "Structure findings using TechnicalAnalysis model"
+    ]
+)
+
+market_researcher = Agent(
+    name="Market Research Specialist",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=MarketAnalysis,
+    role="Market dynamics and opportunity analysis",
+    instructions=[
+        "Analyze market size, competition, and opportunities",
+        "Assess market readiness and timing factors",
+        "Identify competitive advantages and positioning",
+        "Structure findings using MarketAnalysis model"
+    ]
+)
+
+strategic_synthesizer = Agent(
+    name="Strategic Synthesis Expert",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=ComprehensiveReport,
+    role="Strategic synthesis of multi-functional analysis",
+    instructions=[
+        "Synthesize insights from research, technical, and market analysis",
+        "Generate strategic recommendations based on integrated findings",
+        "Create implementation roadmaps with risk mitigation",
+        "Structure final report using ComprehensiveReport model"
+    ]
+)
+
+# Advanced multi-step integration functions
+def comprehensive_data_integrator(step_input: StepInput) -> StepOutput:
+    """Integrate data from multiple specialized analysis steps"""
+    
+    # Access all named step outputs
+    research_data = step_input.get_step_content("primary_research")
+    technical_data = step_input.get_step_content("technical_analysis")
+    market_data = step_input.get_step_content("market_research")
+    parallel_data = step_input.get_step_content("parallel_analysis")
+    
+    # Access original workflow input
+    original_query = step_input.workflow_message
+    
+    # Process structured data safely
+    research_insights = []
+    technical_insights = []
+    market_insights = []
+    
+    if isinstance(research_data, ResearchFindings):
+        research_insights = research_data.key_findings
+        research_confidence = research_data.confidence_score
+    else:
+        research_insights = ["Research data format not recognized"]
+        research_confidence = 0.0
+    
+    if isinstance(technical_data, TechnicalAnalysis):
+        technical_insights = technical_data.technical_recommendations
+        feasibility = technical_data.feasibility_score
+    else:
+        technical_insights = ["Technical analysis format not recognized"]
+        feasibility = 0.0
+    
+    if isinstance(market_data, MarketAnalysis):
+        market_insights = market_data.opportunities
+        market_size = market_data.market_size
+    else:
+        market_insights = ["Market analysis format not recognized"]
+        market_size = "Unknown"
+    
+    # Handle parallel step outputs (dictionary format)
+    parallel_insights = []
+    if isinstance(parallel_data, dict):
+        for step_name, step_output in parallel_data.items():
+            if hasattr(step_output, 'key_findings'):
+                parallel_insights.extend(step_output.key_findings)
+            else:
+                parallel_insights.append(f"Insights from {step_name}: {str(step_output)[:100]}")
+    
+    # Create comprehensive integration
+    integration_report = f"""
+    ## Comprehensive Multi-Step Data Integration
+    
+    **Original Query**: {original_query}
+    **Integration Timestamp**: {datetime.now().isoformat()}
+    
+    ### Research Intelligence Integration
+    **Research Confidence**: {research_confidence:.2f}
+    **Key Research Findings**: 
+    {chr(10).join(f"- {finding}" for finding in research_insights[:5])}
+    
+    ### Technical Feasibility Integration
+    **Feasibility Score**: {feasibility:.2f}
+    **Technical Recommendations**:
+    {chr(10).join(f"- {rec}" for rec in technical_insights[:5])}
+    
+    ### Market Intelligence Integration
+    **Market Size**: {market_size}
+    **Market Opportunities**:
+    {chr(10).join(f"- {opp}" for opp in market_insights[:5])}
+    
+    ### Parallel Analysis Integration
+    **Additional Insights**:
+    {chr(10).join(f"- {insight}" for insight in parallel_insights[:5])}
+    
+    ### Cross-Functional Synthesis
+    **Integrated Assessment**: 
+    - Research Quality: {"High" if research_confidence > 0.7 else "Medium" if research_confidence > 0.4 else "Low"}
+    - Technical Viability: {"Strong" if feasibility > 0.7 else "Moderate" if feasibility > 0.4 else "Challenging"}
+    - Market Opportunity: {"Significant" if market_size != "Unknown" else "To be determined"}
+    
+    **Strategic Alignment Score**: {(research_confidence + feasibility) / 2:.2f}
+    
+    ### Next Steps Recommendations
+    - Detailed implementation planning required
+    - Risk assessment and mitigation strategies needed
+    - Stakeholder alignment and resource allocation planning
+    """
+    
+    return StepOutput(
+        content=integration_report,
+        success=True
+    )
+
+def historical_analysis_tracker(step_input: StepInput) -> StepOutput:
+    """Track and analyze historical progression of step outputs"""
+    
+    # Get all previous content to analyze progression
+    all_content = step_input.get_all_previous_content()
+    
+    # Access specific steps for detailed analysis
+    step_names = ["primary_research", "technical_analysis", "market_research", "integration_analysis"]
+    step_progression = {}
+    
+    for step_name in step_names:
+        step_content = step_input.get_step_content(step_name)
+        if step_content:
+            step_progression[step_name] = {
+                "content_length": len(str(step_content)),
+                "has_structured_data": hasattr(step_content, '__dict__'),
+                "data_type": type(step_content).__name__,
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    # Analyze progression quality
+    total_length = sum(info["content_length"] for info in step_progression.values())
+    structured_count = sum(1 for info in step_progression.values() if info["has_structured_data"])
+    
+    progression_report = f"""
+    ## Historical Step Progression Analysis
+    
+    ### Workflow Evolution Tracking
+    **Total Steps Analyzed**: {len(step_progression)}
+    **Combined Content Volume**: {total_length} characters
+    **Structured Data Steps**: {structured_count}/{len(step_progression)}
+    
+    ### Step-by-Step Progression
+    {chr(10).join(f"**{step}**: {info['data_type']}, {info['content_length']} chars" for step, info in step_progression.items())}
+    
+    ### Content Quality Evolution
+    - Initial Research Quality: {"✅ Comprehensive" if step_progression.get("primary_research", {}).get("content_length", 0) > 500 else "⚠️ Limited"}
+    - Technical Analysis Depth: {"✅ Detailed" if step_progression.get("technical_analysis", {}).get("content_length", 0) > 300 else "⚠️ Basic"}
+    - Market Research Coverage: {"✅ Thorough" if step_progression.get("market_research", {}).get("content_length", 0) > 300 else "⚠️ Surface"}
+    - Integration Sophistication: {"✅ Advanced" if step_progression.get("integration_analysis", {}).get("content_length", 0) > 800 else "⚠️ Simple"}
+    
+    ### Workflow Health Indicators
+    - **Data Flow Continuity**: {"✅ Excellent" if len(step_progression) >= 3 else "⚠️ Incomplete"}
+    - **Information Density**: {"✅ High" if total_length > 2000 else "⚠️ Low"}
+    - **Structured Processing**: {"✅ Optimal" if structured_count > len(step_progression) * 0.6 else "⚠️ Needs improvement"}
+    
+    ### Complete Workflow Context
+    **All Previous Content Summary**: 
+    {all_content[:500] if all_content else "No content available"}...
+    
+    **Analysis Recommendation**: {"Workflow performing optimally" if total_length > 2000 and structured_count > 2 else "Consider workflow optimization"}
+    """
+    
+    return StepOutput(
+        content=progression_report,
+        success=True
+    )
+
+# Production multi-step workflow
+production_multi_step_workflow = Workflow(
+    name="Advanced Multi-Step Integration Pipeline",
+    description="Comprehensive workflow with extensive multi-step output access",
+    steps=[
+        # Primary research step
+        Step(
+            name="primary_research",
+            description="Comprehensive primary research phase",
+            agent=research_specialist
+        ),
+        
+        # Parallel analysis steps
+        Parallel(
+            Step(
+                name="technical_analysis",
+                description="Technical feasibility and implementation analysis",
+                agent=technical_analyst
+            ),
+            Step(
+                name="market_research",
+                description="Market dynamics and opportunity analysis", 
+                agent=market_researcher
+            ),
+            name="parallel_analysis"
+        ),
+        
+        # Multi-step integration
+        Step(
+            name="integration_analysis",
+            description="Integrate outputs from all previous analysis steps",
+            executor=comprehensive_data_integrator
+        ),
+        
+        # Historical progression analysis
+        Step(
+            name="progression_analysis",
+            description="Analyze historical progression of all workflow steps",
+            executor=historical_analysis_tracker
+        ),
+        
+        # Final strategic synthesis using all previous outputs
+        Step(
+            name="strategic_synthesis",
+            description="Final strategic synthesis incorporating all previous analysis",
+            agent=strategic_synthesizer
+        )
+    ],
+    storage=SqliteStorage(
+        table_name="multi_step_workflows",
+        db_file="tmp/multi_step_workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True,
+    workflow_session_state={"multi_step_tracking": True}
+)
+
+# Execute comprehensive multi-step workflow
+response = production_multi_step_workflow.run(
+    message="Evaluate the feasibility and market potential of implementing AI-powered predictive maintenance in manufacturing, including technical implementation roadmap and market entry strategy",
+    additional_data={
+        "analysis_depth": "comprehensive",
+        "integration_required": True,
+        "historical_tracking": True,
+        "strategic_focus": "implementation_roadmap"
+    }
+)
+
+print(f"Multi-step integration result: {response.content[:500]}...")
+```
+
+## Multi-Step Access Patterns
+
+### Specific Step Content Access
+```python
+def targeted_step_processor(step_input: StepInput) -> StepOutput:
+    """Access specific named steps for targeted processing"""
+    
+    # Access specific steps by exact name
+    initial_research = step_input.get_step_content("initial_research")
+    technical_review = step_input.get_step_content("technical_review")
+    market_analysis = step_input.get_step_content("market_analysis")
+    user_feedback = step_input.get_step_content("user_feedback")
+    
+    # Process each specific input
+    processing_results = {}
+    
+    if initial_research:
+        processing_results["research_summary"] = f"Research: {len(str(initial_research))} chars"
+    
+    if technical_review:
+        processing_results["technical_summary"] = f"Technical: {len(str(technical_review))} chars"
+        
+    if market_analysis:
+        processing_results["market_summary"] = f"Market: {len(str(market_analysis))} chars"
+    
+    if user_feedback:
+        processing_results["feedback_summary"] = f"Feedback: {len(str(user_feedback))} chars"
+    
+    targeted_report = f"""
+    ## Targeted Step Content Analysis
+    
+    **Specific Steps Accessed**: {len(processing_results)}
+    **Processing Results**:
+    {chr(10).join(f"- {key}: {value}" for key, value in processing_results.items())}
+    
+    **Selective Processing Complete**: Focused analysis of key workflow outputs
+    """
+    
+    return StepOutput(content=targeted_report, success=True)
+```
+
+### Parallel Step Output Handling
+```python
+def parallel_step_integrator(step_input: StepInput) -> StepOutput:
+    """Handle outputs from parallel execution steps"""
+    
+    # Access parallel step outputs (comes as dictionary)
+    parallel_outputs = step_input.get_step_content("parallel_research")
+    
+    if not isinstance(parallel_outputs, dict):
+        return StepOutput(
+            content="❌ Expected parallel outputs not found",
+            success=False
+        )
+    
+    # Process each parallel branch
+    parallel_analysis = {}
+    
+    for step_name, step_output in parallel_outputs.items():
+        parallel_analysis[step_name] = {
+            "content_length": len(str(step_output)),
+            "has_structured_data": hasattr(step_output, '__dict__'),
+            "data_type": type(step_output).__name__
+        }
+        
+        # Extract key insights if structured
+        if hasattr(step_output, 'key_findings'):
+            parallel_analysis[step_name]["insights_count"] = len(step_output.key_findings)
+        elif hasattr(step_output, 'key_insights'):
+            parallel_analysis[step_name]["insights_count"] = len(step_output.key_insights)
+    
+    parallel_report = f"""
+    ## Parallel Step Integration Analysis
+    
+    **Parallel Branches Processed**: {len(parallel_outputs)}
+    
+    **Branch Analysis Summary**:
+    {chr(10).join(f"- **{branch}**: {info['data_type']}, {info['content_length']} chars, {info.get('insights_count', 0)} insights" for branch, info in parallel_analysis.items())}
+    
+    **Integration Status**: All parallel branches successfully processed
+    
+    **Combined Parallel Content**:
+    {str(parallel_outputs)[:400]}...
+    """
+    
+    return StepOutput(content=parallel_report, success=True)
+```
+
+### Complete Workflow History Access
+```python
+def workflow_historian(step_input: StepInput) -> StepOutput:
+    """Comprehensive analysis of entire workflow history"""
+    
+    # Get complete workflow history
+    all_previous = step_input.get_all_previous_content()
+    original_message = step_input.workflow_message
+    current_message = step_input.message
+    
+    # Analyze workflow progression
+    content_milestones = []
+    
+    # Try to access known step patterns
+    common_step_names = [
+        "research", "analysis", "technical", "market", "user", 
+        "validation", "synthesis", "review", "optimization"
+    ]
+    
+    step_history = {}
+    for step_name in common_step_names:
+        step_content = step_input.get_step_content(step_name)
+        if step_content:
+            step_history[step_name] = {
+                "present": True,
+                "content_length": len(str(step_content)),
+                "type": type(step_content).__name__
+            }
+            content_milestones.append(f"{step_name}: {len(str(step_content))} chars")
+    
+    # Calculate workflow metrics
+    total_content_length = len(all_previous)
+    step_count = len(step_history)
+    avg_step_length = total_content_length / max(step_count, 1)
+    
+    history_report = f"""
+    ## Comprehensive Workflow History Analysis
+    
+    **Workflow Evolution Overview**
+    - Original Input: {original_message}
+    - Current Processing: {current_message}
+    - Total Content Generated: {total_content_length} characters
+    - Steps Identified: {step_count}
+    - Average Step Output: {avg_step_length:.0f} characters
+    
+    **Content Milestones**:
+    {chr(10).join(f"- {milestone}" for milestone in content_milestones)}
+    
+    **Step Presence Analysis**:
+    {chr(10).join(f"- {step}: {'✅ Present' if info['present'] else '❌ Missing'} ({info['type']})" for step, info in step_history.items())}
+    
+    **Workflow Health Metrics**:
+    - Content Density: {"High" if avg_step_length > 500 else "Medium" if avg_step_length > 200 else "Low"}
+    - Step Coverage: {"Comprehensive" if step_count > 4 else "Moderate" if step_count > 2 else "Basic"}
+    - Processing Quality: {"Advanced" if total_content_length > 3000 else "Standard" if total_content_length > 1500 else "Basic"}
+    
+    **Complete Historical Context**:
+    {all_previous[:600]}...
+    
+    **Historical Analysis Summary**: Workflow demonstrates {"excellent" if total_content_length > 3000 and step_count > 4 else "good" if total_content_length > 1500 else "basic"} multi-step integration capabilities
+    """
+    
+    return StepOutput(content=history_report, success=True)
+```
+
+## Advanced Multi-Step Integration
+
+### Cross-Step Data Correlation
+```python
+def cross_step_correlator(step_input: StepInput) -> StepOutput:
+    """Analyze correlations and relationships across multiple steps"""
+    
+    # Access multiple specific steps
+    research_step = step_input.get_step_content("research")
+    technical_step = step_input.get_step_content("technical")
+    market_step = step_input.get_step_content("market")
+    user_step = step_input.get_step_content("user")
+    
+    # Correlation analysis
+    correlations = {}
+    
+    # Research-Technical correlation
+    if research_step and technical_step:
+        research_str = str(research_step).lower()
+        technical_str = str(technical_step).lower()
+        
+        # Find common themes
+        common_terms = []
+        research_terms = set(research_str.split())
+        technical_terms = set(technical_str.split())
+        
+        # Find overlapping significant terms (length > 4)
+        overlap = research_terms.intersection(technical_terms)
+        common_terms = [term for term in overlap if len(term) > 4]
+        
+        correlations["research_technical"] = {
+            "strength": len(common_terms) / 10,  # Normalize
+            "common_themes": common_terms[:5],
+            "alignment": "High" if len(common_terms) > 10 else "Medium" if len(common_terms) > 5 else "Low"
+        }
+    
+    # Market-User correlation
+    if market_step and user_step:
+        market_str = str(market_step).lower()
+        user_str = str(user_step).lower()
+        
+        user_focused_terms = ["user", "customer", "client", "experience", "needs", "requirements"]
+        market_user_overlap = sum(1 for term in user_focused_terms if term in market_str and term in user_str)
+        
+        correlations["market_user"] = {
+            "user_focus_alignment": market_user_overlap / len(user_focused_terms),
+            "customer_centricity": "High" if market_user_overlap > 3 else "Medium" if market_user_overlap > 1 else "Low"
+        }
+    
+    correlation_report = f"""
+    ## Cross-Step Correlation Analysis
+    
+    **Multi-Step Relationship Assessment**
+    
+    **Research-Technical Alignment**:
+    - Alignment Strength: {correlations.get('research_technical', {}).get('alignment', 'Not Available')}
+    - Common Themes: {', '.join(correlations.get('research_technical', {}).get('common_themes', []))}
+    - Technical Feasibility Correlation: {"Strong" if correlations.get('research_technical', {}).get('strength', 0) > 0.7 else "Moderate"}
+    
+    **Market-User Alignment**:
+    - Customer Focus: {correlations.get('market_user', {}).get('customer_centricity', 'Not Available')}
+    - User-Market Coherence: {"Excellent" if correlations.get('market_user', {}).get('user_focus_alignment', 0) > 0.6 else "Good"}
+    
+    **Cross-Functional Integration Score**: 
+    {sum(corr.get('strength', 0.5) for corr in correlations.values()) / max(len(correlations), 1):.2f}
+    
+    **Integration Recommendations**:
+    - Strengthen technical-research alignment through deeper integration
+    - Enhance market-user focus consistency
+    - Develop cross-functional synthesis capabilities
+    
+    **Correlation Matrix Complete**: Multi-dimensional analysis reveals workflow coherence patterns
+    """
+    
+    return StepOutput(content=correlation_report, success=True)
+```
+
+### Dynamic Step Discovery
+```python
+def dynamic_step_discoverer(step_input: StepInput) -> StepOutput:
+    """Dynamically discover and process all available step outputs"""
+    
+    # Get all previous content for pattern analysis
+    all_content = step_input.get_all_previous_content()
+    
+    # Attempt to discover step names through common patterns
+    potential_steps = [
+        "research", "analysis", "technical", "market", "user", "business",
+        "validation", "review", "synthesis", "optimization", "planning",
+        "implementation", "testing", "deployment", "monitoring"
+    ]
+    
+    discovered_steps = {}
+    
+    # Discover actual steps by trying to access them
+    for potential_step in potential_steps:
+        step_content = step_input.get_step_content(potential_step)
+        if step_content:
+            discovered_steps[potential_step] = {
+                "content": str(step_content),
+                "length": len(str(step_content)),
+                "type": type(step_content).__name__,
+                "structured": hasattr(step_content, '__dict__')
+            }
+    
+    # Try variations and combinations
+    step_variations = [
+        "primary_research", "secondary_research", "market_research",
+        "technical_analysis", "business_analysis", "user_analysis",
+        "initial_review", "final_review", "quality_review"
+    ]
+    
+    for variation in step_variations:
+        step_content = step_input.get_step_content(variation)
+        if step_content:
+            discovered_steps[variation] = {
+                "content": str(step_content),
+                "length": len(str(step_content)),
+                "type": type(step_content).__name__,
+                "structured": hasattr(step_content, '__dict__')
+            }
+    
+    # Analyze discovery results
+    total_discovered = len(discovered_steps)
+    total_length = sum(info["length"] for info in discovered_steps.values())
+    structured_count = sum(1 for info in discovered_steps.values() if info["structured"])
+    
+    discovery_report = f"""
+    ## Dynamic Step Discovery Analysis
+    
+    **Discovery Results**:
+    - Total Steps Discovered: {total_discovered}
+    - Combined Content Length: {total_length} characters
+    - Structured Data Steps: {structured_count}
+    - Discovery Coverage: {"Comprehensive" if total_discovered > 6 else "Moderate" if total_discovered > 3 else "Basic"}
+    
+    **Discovered Steps Inventory**:
+    {chr(10).join(f"- **{step}**: {info['type']}, {info['length']} chars, {'Structured' if info['structured'] else 'Unstructured'}" for step, info in discovered_steps.items())}
+    
+    **Content Distribution Analysis**:
+    - Largest Step: {max(discovered_steps.items(), key=lambda x: x[1]['length'])[0] if discovered_steps else 'None'} 
+    - Average Step Size: {total_length / max(total_discovered, 1):.0f} characters
+    - Content Consistency: {"High" if max([info['length'] for info in discovered_steps.values()], default=0) / max([min([info['length'] for info in discovered_steps.values()], default=1), 1]) < 3 else "Variable"}
+    
+    **All Available Content Overview**:
+    {all_content[:400] if all_content else "No content available"}...
+    
+    **Dynamic Discovery Status**: {"Excellent coverage" if total_discovered > 5 else "Good coverage" if total_discovered > 2 else "Limited coverage"} of workflow steps
+    """
+    
+    return StepOutput(content=discovery_report, success=True)
+```
+
+## Speed Tips
+
+### Quick Multi-Step Access
+```python
+def quick_multi_access(step_input: StepInput, step_names: List[str]):
+    """Quickly access multiple named steps"""
+    results = {}
+    for name in step_names:
+        content = step_input.get_step_content(name)
+        if content:
+            results[name] = str(content)[:200]  # First 200 chars
+    return results
+
+# Usage
+def fast_integrator(step_input: StepInput) -> StepOutput:
+    key_steps = ["research", "analysis", "validation"]
+    step_data = quick_multi_access(step_input, key_steps)
+    
+    summary = f"Integrated {len(step_data)} key steps: {', '.join(step_data.keys())}"
+    return StepOutput(content=summary)
+```
+
+### Multi-Step Template Factory
+```python
+class MultiStepTemplates:
+    """Templates for common multi-step access patterns"""
+    
+    @staticmethod
+    def research_analysis_integration(step_input: StepInput):
+        """Standard research + analysis integration"""
+        research = step_input.get_step_content("research")
+        analysis = step_input.get_step_content("analysis")
+        
+        return f"""
+        Research: {str(research)[:100] if research else 'N/A'}...
+        Analysis: {str(analysis)[:100] if analysis else 'N/A'}...
+        Integration: Combined insights from both phases
+        """
+    
+    @staticmethod
+    def three_phase_synthesis(step_input: StepInput):
+        """Three-phase analysis synthesis"""
+        phase1 = step_input.get_step_content("phase1")
+        phase2 = step_input.get_step_content("phase2")
+        phase3 = step_input.get_step_content("phase3")
+        
+        phases = [phase1, phase2, phase3]
+        available = sum(1 for phase in phases if phase)
+        
+        return f"""
+        Three-Phase Analysis: {available}/3 phases available
+        Combined insights: {len(step_input.get_all_previous_content())} total chars
+        """
+```
+
+## Common Pitfalls
+
+### Step Name Assumptions
+```python
+# ❌ DON'T: Assume step names exist
+def bad_multi_access(step_input: StepInput) -> StepOutput:
+    research = step_input.get_step_content("research")
+    return StepOutput(content=research.upper())  # research might be None
+
+# ✅ DO: Check for None values
+def good_multi_access(step_input: StepInput) -> StepOutput:
+    research = step_input.get_step_content("research")
+    if research:
+        return StepOutput(content=str(research).upper())
+    else:
+        return StepOutput(content="Research step not available")
+```
+
+### Data Type Assumptions
+```python
+# ❌ DON'T: Assume specific data structures
+def bad_structured_access(step_input: StepInput) -> StepOutput:
+    analysis = step_input.get_step_content("analysis")
+    return StepOutput(content=analysis.key_findings)  # May not have key_findings
+
+# ✅ DO: Handle different data types safely
+def good_structured_access(step_input: StepInput) -> StepOutput:
+    analysis = step_input.get_step_content("analysis")
+    
+    if hasattr(analysis, 'key_findings'):
+        return StepOutput(content=str(analysis.key_findings))
+    else:
+        return StepOutput(content=f"Analysis data: {str(analysis)[:100]}")
+```
+
+## Best Practices Summary
+
+- **Named Steps**: Use descriptive step names for easier multi-step access
+- **Data Validation**: Always check if step content exists before processing
+- **Type Safety**: Handle both structured and unstructured step outputs
+- **Integration Logic**: Design comprehensive integration strategies for multi-step data
+- **Performance**: Cache frequently accessed step outputs when possible
+- **Error Handling**: Implement fallbacks when expected steps are missing
+- **Documentation**: Document expected step outputs and integration patterns
+- **Testing**: Test multi-step access with various workflow configurations
+- **Correlation Analysis**: Look for relationships and patterns across steps
+
+## References
+
+- [StepInput API](/docs/api/workflows_2/step_input.md)
+- [Multi-Step Integration Guide](/docs/workflows_2/multi_step_integration.md)
+- [Data Flow Patterns](/docs/workflows_2/data_flow.md)
+- [Workflow State Management](/docs/workflows_2/state_management.md)

@@ -1,0 +1,601 @@
+---
+description: Complete RAG System - Production retrieval-augmented generation implementation with optimization
+alwaysApply: false
+---
+
+> You are an expert in building complete DSPy 3.0.1 RAG systems for production deployment.
+
+## Complete RAG Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Document      │    │   Embedding     │    │   Vector        │
+│   Ingestion     │───▶│   Processing    │───▶│   Storage       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Query         │    │   Retrieval     │    │   Generation    │
+│   Processing    │───▶│   & Reranking   │───▶│   & Response    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Optimization  │    │   Evaluation    │    │   Monitoring    │
+│   & Training    │◀───│   & Metrics     │◀───│   & Logging     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Instant RAG Templates
+
+### Quick Start RAG
+
+```python
+import dspy
+import ujson
+from dspy.utils import download
+
+# Configure DSPy with your LM
+lm = dspy.LM('openai/gpt-4o-mini')
+dspy.configure(lm=lm)
+
+class SimpleRAG(dspy.Module):
+    def __init__(self, retriever):
+        self.retriever = retriever
+        self.respond = dspy.ChainOfThought('context, question -> response')
+
+    def forward(self, question):
+        context = self.retriever(question).passages
+        return self.respond(context=context, question=question)
+
+# Quick setup with embeddings
+embedder = dspy.Embedder('openai/text-embedding-3-small', dimensions=512)
+corpus = ["Your documents here"]
+search = dspy.retrievers.Embeddings(embedder=embedder, corpus=corpus, k=5)
+
+# Use the RAG system
+rag = SimpleRAG(retriever=search)
+result = rag(question="Your question here")
+print(result.response)
+```
+
+### Production RAG System
+
+```python
+import dspy
+import ujson
+import logging
+from typing import List, Dict, Optional
+from pydantic import BaseModel, Field
+
+class ProductionRAG(dspy.Module):
+    """Production-ready RAG system with optimization and monitoring"""
+
+    def __init__(self,
+                 embedder_model: str = 'openai/text-embedding-3-small',
+                 embedding_dims: int = 512,
+                 top_k: int = 5,
+                 max_characters: int = 6000):
+
+        # Initialize retrieval system
+        self.embedder = dspy.Embedder(embedder_model, dimensions=embedding_dims)
+        self.top_k = top_k
+        self.max_characters = max_characters
+
+        # Initialize generation modules
+        self.respond = dspy.ChainOfThought('context, question -> response')
+
+        # Initialize corpus (will be set during setup)
+        self.corpus = None
+        self.search = None
+
+        # Metrics and logging
+        self.query_count = 0
+        self.setup_logging()
+
+    def setup_logging(self):
+        """Configure logging for production monitoring"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def load_corpus(self, corpus_path: str):
+        """Load and process document corpus"""
+        self.logger.info(f"Loading corpus from {corpus_path}")
+
+        with open(corpus_path) as f:
+            raw_corpus = [ujson.loads(line) for line in f]
+
+        # Process documents with character limit
+        self.corpus = [
+            doc['text'][:self.max_characters] if 'text' in doc else str(doc)
+            for doc in raw_corpus
+        ]
+
+        # Initialize search index
+        self.search = dspy.retrievers.Embeddings(
+            embedder=self.embedder,
+            corpus=self.corpus,
+            k=self.top_k
+        )
+
+        self.logger.info(f"Loaded {len(self.corpus)} documents")
+        return self
+
+    def forward(self, question: str) -> dspy.Prediction:
+        """Process question through RAG pipeline"""
+        if not self.search:
+            raise ValueError("Corpus not loaded. Call load_corpus() first.")
+
+        self.query_count += 1
+        self.logger.info(f"Processing query #{self.query_count}: {question[:100]}...")
+
+        try:
+            # Retrieve relevant context
+            context = self.search(question).passages
+            self.logger.info(f"Retrieved {len(context)} passages")
+
+            # Generate response
+            response = self.respond(context=context, question=question)
+
+            self.logger.info("Response generated successfully")
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Error processing query: {str(e)}")
+            raise
+
+    def batch_process(self, questions: List[str]) -> List[dspy.Prediction]:
+        """Process multiple questions efficiently"""
+        return [self.forward(q) for q in questions]
+
+# Example usage with optimization
+def create_optimized_rag(corpus_path: str, trainset: List[dspy.Example]):
+    """Create and optimize a production RAG system"""
+
+    # Initialize RAG system
+    rag = ProductionRAG()
+    rag.load_corpus(corpus_path)
+
+    # Define evaluation metric
+    from dspy.evaluate import SemanticF1
+    metric = SemanticF1(decompositional=True)
+
+    # Optimize with MIPROv2
+    optimizer = dspy.MIPROv2(metric=metric, auto="medium", num_threads=24)
+    optimized_rag = optimizer.compile(
+        rag,
+        trainset=trainset,
+        max_bootstrapped_demos=2,
+        max_labeled_demos=2
+    )
+
+    return optimized_rag
+```
+
+## Core Implementation Patterns
+
+### Document Processing Pipeline
+
+```python
+class DocumentProcessor:
+    """Handle document ingestion and preprocessing"""
+
+    def __init__(self, chunk_size: int = 1000, overlap: int = 200):
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    def chunk_documents(self, documents: List[str]) -> List[str]:
+        """Split documents into overlapping chunks"""
+        chunks = []
+        for doc in documents:
+            for i in range(0, len(doc), self.chunk_size - self.overlap):
+                chunk = doc[i:i + self.chunk_size]
+                if len(chunk.strip()) > 50:  # Skip tiny chunks
+                    chunks.append(chunk)
+        return chunks
+
+    def process_corpus(self, raw_documents: List[Dict]) -> List[str]:
+        """Process raw documents into searchable corpus"""
+        processed = []
+        for doc in raw_documents:
+            # Extract text content
+            if 'content' in doc:
+                text = doc['content']
+            elif 'text' in doc:
+                text = doc['text']
+            else:
+                text = str(doc)
+
+            # Add metadata if available
+            if 'title' in doc:
+                text = f"{doc['title']} | {text}"
+
+            processed.append(text)
+
+        # Chunk if needed
+        return self.chunk_documents(processed)
+
+# Advanced retrieval with reranking
+class AdvancedRAG(dspy.Module):
+    """RAG with multiple retrieval strategies and reranking"""
+
+    def __init__(self, primary_retriever, secondary_retriever=None):
+        self.primary_retriever = primary_retriever
+        self.secondary_retriever = secondary_retriever
+
+        # Multi-stage response generation
+        self.initial_response = dspy.ChainOfThought('context, question -> initial_response')
+        self.refine_response = dspy.ChainOfThought(
+            'question, initial_response, additional_context -> refined_response'
+        )
+
+    def forward(self, question: str):
+        # Primary retrieval
+        primary_context = self.primary_retriever(question).passages
+        initial_resp = self.initial_response(context=primary_context, question=question)
+
+        # Secondary retrieval if available
+        if self.secondary_retriever:
+            secondary_context = self.secondary_retriever(question).passages
+            return self.refine_response(
+                question=question,
+                initial_response=initial_resp.initial_response,
+                additional_context=secondary_context
+            )
+
+        return dspy.Prediction(response=initial_resp.initial_response)
+```
+
+### Retrieval Optimization Strategies
+
+```python
+# Hybrid search combining dense and sparse retrieval
+class HybridRetriever:
+    """Combine embedding search with BM25 for better coverage"""
+
+    def __init__(self, embedder, corpus, alpha=0.7):
+        # Dense retrieval
+        self.dense_search = dspy.retrievers.Embeddings(
+            embedder=embedder, corpus=corpus, k=10
+        )
+
+        # Sparse retrieval (BM25)
+        try:
+            import bm25s
+            import Stemmer
+            self.setup_bm25(corpus)
+            self.has_bm25 = True
+        except ImportError:
+            print("BM25 not available, using dense retrieval only")
+            self.has_bm25 = False
+
+        self.alpha = alpha  # Weight for dense vs sparse
+
+    def setup_bm25(self, corpus):
+        """Initialize BM25 retrieval"""
+        stemmer = Stemmer.Stemmer("english")
+        corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=stemmer)
+        self.bm25_retriever = bm25s.BM25(k1=0.9, b=0.4)
+        self.bm25_retriever.index(corpus_tokens)
+        self.bm25_corpus = corpus
+
+    def __call__(self, query: str, k: int = 5):
+        # Get dense retrieval results
+        dense_results = self.dense_search(query)
+
+        if not self.has_bm25:
+            return dense_results
+
+        # Get sparse retrieval results
+        import bm25s
+        import Stemmer
+        stemmer = Stemmer.Stemmer("english")
+        query_tokens = bm25s.tokenize(query, stopwords="en", stemmer=stemmer)
+        bm25_results, scores = self.bm25_retriever.retrieve(query_tokens, k=k*2)
+
+        # Combine and rerank results
+        combined_passages = []
+
+        # Add dense results with higher weight
+        for passage in dense_results.passages[:k]:
+            combined_passages.append(passage)
+
+        # Add unique sparse results
+        for idx, score in zip(bm25_results[0], scores[0]):
+            passage = self.bm25_corpus[idx]
+            if passage not in combined_passages:
+                combined_passages.append(passage)
+                if len(combined_passages) >= k:
+                    break
+
+        return dspy.Prediction(passages=combined_passages[:k])
+```
+
+## Production Deployment
+
+### Docker Configuration
+
+```dockerfile
+# Dockerfile for RAG deployment
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV DSPY_CACHEDIR=/app/cache
+
+# Create cache directory
+RUN mkdir -p /app/cache
+
+# Expose port
+EXPOSE 8000
+
+# Run application
+CMD ["uvicorn", "rag_api:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```yaml
+# docker-compose.yml
+version: "3.8"
+services:
+  rag-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DSPY_CACHEDIR=/app/cache
+    volumes:
+      - ./cache:/app/cache
+      - ./data:/app/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+```
+
+### Monitoring Integration
+
+```python
+import time
+from dataclasses import dataclass
+from typing import Dict, Any
+
+@dataclass
+class RAGMetrics:
+    """Track RAG system performance metrics"""
+    query_count: int = 0
+    avg_response_time: float = 0.0
+    success_rate: float = 1.0
+    retrieval_quality: float = 0.0
+
+class MonitoredRAG(ProductionRAG):
+    """RAG system with comprehensive monitoring"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.metrics = RAGMetrics()
+        self.response_times = []
+        self.error_count = 0
+
+    def forward(self, question: str) -> dspy.Prediction:
+        start_time = time.time()
+
+        try:
+            result = super().forward(question)
+
+            # Track successful query
+            response_time = time.time() - start_time
+            self.response_times.append(response_time)
+            self.update_metrics(response_time, success=True)
+
+            return result
+
+        except Exception as e:
+            # Track error
+            self.error_count += 1
+            response_time = time.time() - start_time
+            self.update_metrics(response_time, success=False)
+
+            self.logger.error(f"Query failed after {response_time:.2f}s: {str(e)}")
+            raise
+
+    def update_metrics(self, response_time: float, success: bool):
+        """Update performance metrics"""
+        self.metrics.query_count += 1
+
+        # Update average response time
+        if len(self.response_times) > 0:
+            self.metrics.avg_response_time = sum(self.response_times) / len(self.response_times)
+
+        # Update success rate
+        self.metrics.success_rate = (self.metrics.query_count - self.error_count) / self.metrics.query_count
+
+        # Log metrics periodically
+        if self.metrics.query_count % 100 == 0:
+            self.log_metrics()
+
+    def log_metrics(self):
+        """Log current system metrics"""
+        self.logger.info(f"RAG Metrics - Queries: {self.metrics.query_count}, "
+                        f"Avg Time: {self.metrics.avg_response_time:.2f}s, "
+                        f"Success Rate: {self.metrics.success_rate:.2%}")
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Return system health status"""
+        return {
+            "status": "healthy" if self.metrics.success_rate > 0.95 else "degraded",
+            "metrics": self.metrics.__dict__,
+            "corpus_loaded": self.search is not None,
+            "last_query_time": max(self.response_times) if self.response_times else None
+        }
+```
+
+## Performance Optimization
+
+### Caching Strategy
+
+```python
+import functools
+import hashlib
+import pickle
+from pathlib import Path
+
+class RAGWithCaching(ProductionRAG):
+    """RAG system with intelligent caching"""
+
+    def __init__(self, *args, cache_dir: str = "./rag_cache", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+
+        # Enable DSPy caching
+        dspy.settings.configure(cache_turn_on=True)
+
+    def _get_cache_key(self, question: str) -> str:
+        """Generate cache key for question"""
+        return hashlib.md5(question.encode()).hexdigest()
+
+    def _load_from_cache(self, cache_key: str):
+        """Load response from cache if available"""
+        cache_file = self.cache_dir / f"{cache_key}.pkl"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                self.logger.warning(f"Cache load failed: {e}")
+        return None
+
+    def _save_to_cache(self, cache_key: str, response):
+        """Save response to cache"""
+        cache_file = self.cache_dir / f"{cache_key}.pkl"
+        try:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(response, f)
+        except Exception as e:
+            self.logger.warning(f"Cache save failed: {e}")
+
+    def forward(self, question: str) -> dspy.Prediction:
+        # Check cache first
+        cache_key = self._get_cache_key(question)
+        cached_response = self._load_from_cache(cache_key)
+
+        if cached_response:
+            self.logger.info(f"Cache hit for query: {question[:50]}...")
+            return cached_response
+
+        # Generate new response
+        response = super().forward(question)
+
+        # Cache the response
+        self._save_to_cache(cache_key, response)
+
+        return response
+```
+
+### Batch Processing Optimization
+
+```python
+class BatchOptimizedRAG(ProductionRAG):
+    """RAG system optimized for batch processing"""
+
+    def batch_retrieve(self, questions: List[str], k: int = None) -> Dict[str, List[str]]:
+        """Efficient batch retrieval"""
+        if k is None:
+            k = self.top_k
+
+        # Batch embedding computation
+        all_contexts = {}
+        for question in questions:
+            contexts = self.search(question, k=k).passages
+            all_contexts[question] = contexts
+
+        return all_contexts
+
+    def batch_generate(self,
+                      questions: List[str],
+                      contexts: Dict[str, List[str]]) -> List[dspy.Prediction]:
+        """Batch response generation"""
+        responses = []
+
+        for question in questions:
+            context = contexts[question]
+            response = self.respond(context=context, question=question)
+            responses.append(response)
+
+        return responses
+
+    def batch_process(self, questions: List[str]) -> List[dspy.Prediction]:
+        """Optimized batch processing pipeline"""
+        self.logger.info(f"Processing batch of {len(questions)} questions")
+
+        # Batch retrieval
+        contexts = self.batch_retrieve(questions)
+
+        # Batch generation
+        responses = self.batch_generate(questions, contexts)
+
+        return responses
+```
+
+## Speed Tips
+
+- **Embedding Caching**: Cache embeddings for frequently accessed documents
+- **Batch Retrieval**: Process multiple queries together for better throughput
+- **Smart Chunking**: Use overlapping chunks with optimal size (800-1200 tokens)
+- **Async Processing**: Use async/await for I/O operations
+- **Model Optimization**: Use smaller, task-specific models when possible
+- **Index Optimization**: Pre-build and persist retrieval indices
+- **Response Caching**: Cache responses for similar queries
+- **Lazy Loading**: Load corpus and indices only when needed
+
+## Common Pitfalls
+
+- **Context Window Limits**: Monitor total context length with retrieved passages
+- **Retrieval Quality**: Poor retrieval ruins generation quality - optimize separately
+- **Embedding Mismatch**: Use same embedding model for indexing and querying
+- **Corpus Preprocessing**: Clean and structure documents before indexing
+- **Evaluation Metrics**: Use multiple metrics (semantic similarity, faithfulness, etc.)
+- **Cache Invalidation**: Clear caches when updating corpus or model
+- **Error Handling**: Gracefully handle retrieval failures and empty results
+- **Memory Usage**: Monitor memory with large corpora and embedding models
+
+## Best Practices Summary
+
+- **Modular Design**: Separate retrieval, generation, and optimization components
+- **Comprehensive Evaluation**: Use multiple metrics and datasets for testing
+- **Production Monitoring**: Track performance, errors, and quality metrics
+- **Optimization Pipeline**: Use DSPy optimizers to improve prompts and examples
+- **Scalable Architecture**: Design for horizontal scaling and load balancing
+- **Quality Assurance**: Implement evaluation pipelines for continuous improvement
+- **Documentation**: Maintain clear documentation for system components
+- **Version Control**: Track model versions, prompts, and configuration changes
+
+## References
+
+- [DSPy RAG Tutorial](https://github.com/stanfordnlp/dspy/blob/main/docs/tutorials/rag/index.ipynb)
+- [SemanticF1 Evaluation](https://dspy.ai/api/evaluation/SemanticF1)
+- [MIPROv2 Optimizer](https://dspy.ai/api/optimizers/MIPROv2)
+- [Embeddings Retriever](https://dspy.ai/api/tools/Embeddings)
+- [Production Deployment Guide](https://dspy.ai/docs/tutorials/deployment/)

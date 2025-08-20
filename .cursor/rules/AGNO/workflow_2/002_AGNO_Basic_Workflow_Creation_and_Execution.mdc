@@ -1,0 +1,571 @@
+---
+description: AGNO Workflows 2.0 - Master basic workflow creation and execution patterns
+alwaysApply: false
+---
+
+> You are an expert in AGNO Workflows 2.0 basic workflow creation and execution. Create and run workflows instantly with optimal patterns.
+
+## Basic Workflow Creation Flow
+
+```
+Import Components → Create Executors → Define Steps → Build Workflow → Execute
+        ↓               ↓              ↓            ↓           ↓
+   Core Classes     Agents/Teams/   Step Objects   Workflow    Run Methods
+   Workflow, Step   Functions       Named/Direct   Instance    .run()/.arun()
+        ↓               ↓              ↓            ↓           ↓  
+   Ready to Use    Configured      Step Sequence  Ready for   Response
+   Building Blocks Executors       Created        Execution   Generated
+```
+
+## Instant Patterns
+
+### Quick Start - Simplest Workflow
+```python
+from agno.workflow.v2 import Workflow
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+# Create agent
+agent = Agent(
+    name="Assistant", 
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Help with tasks"
+)
+
+# Create and run workflow - one line
+Workflow(name="Quick", steps=[agent]).print_response("Hello")
+```
+
+### Production Ready - Complete Workflow Setup
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.storage.sqlite import SqliteStorage
+from agno.run.v2.workflow import WorkflowRunResponse
+import asyncio
+
+# Define specialized agents
+researcher = Agent(
+    name="Research Specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Research topics thoroughly and gather comprehensive information",
+    instructions=[
+        "Search for recent information on the given topic",
+        "Focus on credible sources and current trends",
+        "Provide detailed analysis with supporting data"
+    ]
+)
+
+analyst = Agent(
+    name="Data Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Analyze research data and extract key insights",
+    instructions=[
+        "Review research findings systematically", 
+        "Identify patterns, trends, and key insights",
+        "Summarize findings with actionable recommendations"
+    ]
+)
+
+writer = Agent(
+    name="Content Writer",
+    model=OpenAIChat(id="gpt-4o"),
+    role="Create engaging content from analysis",
+    instructions=[
+        "Transform analysis into compelling narrative",
+        "Ensure clarity and engagement for target audience",
+        "Include key insights and recommendations"
+    ]
+)
+
+# Create research team
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",
+    members=[researcher],
+    instructions="Conduct comprehensive research on assigned topics"
+)
+
+# Production workflow configuration
+workflow = Workflow(
+    name="Content Creation Pipeline",
+    description="End-to-end content creation from research to publication",
+    steps=[
+        research_team,    # Team-based research
+        analyst,          # Individual analysis  
+        writer           # Content creation
+    ],
+    storage=SqliteStorage(
+        table_name="content_workflows",
+        db_file="workflows.db",
+        mode="workflow_v2"
+    ),
+    store_events=True,
+    workflow_session_state={"project": "content_pipeline"}
+)
+
+# Execution with full configuration
+if __name__ == "__main__":
+    # Synchronous execution
+    response: WorkflowRunResponse = workflow.run(
+        message="Analyze the impact of AI on healthcare in 2024",
+        markdown=True,
+        additional_data={
+            "priority": "high",
+            "deadline": "2024-12-31",
+            "target_audience": "healthcare professionals"
+        }
+    )
+    
+    print(f"Run ID: {response.run_id}")
+    print(f"Content: {response.content}")
+    print(f"Events Count: {len(response.events) if response.events else 0}")
+```
+
+## Core Creation Patterns
+
+### Direct Agent/Team Assignment
+```python
+# Simplest pattern - direct executor assignment
+workflow = Workflow(
+    name="Simple Pipeline",
+    steps=[
+        researcher_agent,     # Direct agent
+        analysis_team,        # Direct team
+        writer_agent         # Direct agent
+    ]
+)
+
+# Equivalent to explicit Step creation
+workflow = Workflow(
+    name="Explicit Pipeline",
+    steps=[
+        Step(agent=researcher_agent),
+        Step(team=analysis_team),
+        Step(agent=writer_agent)
+    ]
+)
+```
+
+### Named Steps for Better Tracking
+```python
+# Named steps for debugging and monitoring
+workflow = Workflow(
+    name="Named Pipeline",
+    steps=[
+        Step(
+            name="research_phase",
+            description="Gather comprehensive research data",
+            agent=researcher
+        ),
+        Step(
+            name="analysis_phase", 
+            description="Analyze research findings",
+            agent=analyst
+        ),
+        Step(
+            name="writing_phase",
+            description="Create final content",
+            agent=writer
+        )
+    ]
+)
+
+# Benefits: Better logging, step-specific output access
+```
+
+### Custom Function Integration
+```python
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def data_validator(step_input: StepInput) -> StepOutput:
+    """Validate research data quality"""
+    content = step_input.previous_step_content or ""
+    
+    # Validation logic
+    word_count = len(content.split())
+    has_sources = "source" in content.lower()
+    
+    if word_count < 100:
+        return StepOutput(
+            content="❌ Research insufficient - needs more detail",
+            success=False
+        )
+    
+    if not has_sources:
+        return StepOutput(
+            content="⚠️ Research lacks source citations",
+            success=True  # Warning but continue
+        )
+    
+    return StepOutput(
+        content=f"✅ Research validated: {word_count} words, sources included",
+        success=True
+    )
+
+# Mixed workflow with validation
+workflow = Workflow(
+    name="Validated Pipeline",
+    steps=[
+        researcher,           # Agent
+        data_validator,       # Custom function
+        analyst,             # Agent  
+        writer              # Agent
+    ]
+)
+```
+
+## Execution Methods
+
+### Synchronous Execution
+```python
+# Basic run() method
+response = workflow.run("Analyze AI trends")
+print(response.content)
+
+# With configuration
+response = workflow.run(
+    message="Research quantum computing",
+    markdown=True,
+    additional_data={"priority": "high"}
+)
+
+# Print helper (common for demos)
+workflow.print_response(
+    "Create content about renewable energy",
+    markdown=True
+)
+```
+
+### Asynchronous Execution  
+```python
+async def run_workflow():
+    # Async execution
+    response = await workflow.arun("Process data asynchronously")
+    return response.content
+
+# Background execution (non-blocking)
+async def background_workflow():
+    # Start in background
+    bg_response = await workflow.arun(
+        message="Long-running analysis",
+        background=True
+    )
+    
+    print(f"Started background workflow: {bg_response.run_id}")
+    
+    # Poll for completion
+    while True:
+        result = workflow.get_run(bg_response.run_id)
+        if result and result.has_completed():
+            break
+        await asyncio.sleep(5)
+    
+    return workflow.get_run(bg_response.run_id)
+```
+
+### Streaming Execution
+```python
+# Real-time streaming
+for event in workflow.run("Analyze data", stream=True):
+    print(f"Event: {event.event}")
+    if hasattr(event, 'content') and event.content:
+        print(f"Content: {event.content[:100]}...")
+
+# Detailed streaming with intermediate steps
+for event in workflow.run(
+    "Complex analysis", 
+    stream=True, 
+    stream_intermediate_steps=True
+):
+    if event.event == "step_started":
+        print(f"Starting: {event.step_name}")
+    elif event.event == "step_completed":
+        print(f"Completed: {event.step_name}")
+
+# Async streaming
+async def stream_workflow():
+    async for event in await workflow.arun(
+        "Stream analysis",
+        stream=True
+    ):
+        print(f"Async Event: {event.event}")
+```
+
+## Storage and Persistence
+
+### SQLite Storage (Most Common)
+```python
+from agno.storage.sqlite import SqliteStorage
+
+# Basic SQLite setup
+storage = SqliteStorage(
+    table_name="my_workflows",
+    db_file="tmp/workflows.db",
+    mode="workflow_v2"
+)
+
+workflow = Workflow(
+    name="Persistent Workflow",
+    steps=[researcher, writer],
+    storage=storage
+)
+```
+
+### PostgreSQL Storage (Production)
+```python
+from agno.storage.postgres import PgStorage
+
+# Production PostgreSQL setup
+storage = PgStorage(
+    table_name="production_workflows",
+    db_url="postgresql://user:pass@localhost:5432/agno_db",
+    mode="workflow_v2"
+)
+
+workflow = Workflow(
+    name="Production Workflow", 
+    steps=[team, analyzer],
+    storage=storage
+)
+```
+
+### Event Storage Configuration
+```python
+from agno.run.v2.workflow import WorkflowRunEvent
+
+# Store all events (debugging)
+debug_workflow = Workflow(
+    name="Debug Mode",
+    steps=[agent1, agent2],
+    store_events=True  # Store everything
+)
+
+# Filter events (production)
+production_workflow = Workflow(
+    name="Production Mode",
+    steps=[agent1, agent2], 
+    store_events=True,
+    events_to_skip=[
+        WorkflowRunEvent.step_started,
+        WorkflowRunEvent.step_completed,
+        # Keep workflow_completed and errors
+    ]
+)
+```
+
+## Response Handling Patterns
+
+### Basic Response Access
+```python
+response = workflow.run("Analyze market trends")
+
+# Core response data
+content = response.content           # Main result
+run_id = response.run_id            # Execution ID
+status = response.status            # Success/Error status
+created_at = response.created_at    # Timestamp
+
+# Extended response data  
+events = response.events            # Execution events
+images = response.images            # Media outputs
+artifacts = response.artifacts      # File outputs
+```
+
+### Response Processing
+```python
+def process_workflow_response(response: WorkflowRunResponse):
+    """Process and validate workflow response"""
+    
+    if not response.content:
+        print("❌ No content generated")
+        return None
+    
+    # Content validation
+    word_count = len(response.content.split())
+    print(f"✅ Generated {word_count} words")
+    
+    # Event analysis (if stored)
+    if response.events:
+        step_count = len([e for e in response.events if "step_completed" in e.event])
+        print(f"📊 Completed {step_count} steps")
+    
+    # Media handling
+    if response.images:
+        print(f"🖼️ Generated {len(response.images)} images")
+    
+    return {
+        "content": response.content,
+        "metadata": {
+            "run_id": response.run_id,
+            "word_count": word_count,
+            "has_media": bool(response.images)
+        }
+    }
+
+# Usage
+response = workflow.run("Create visual content analysis")
+result = process_workflow_response(response)
+```
+
+### Batch Processing
+```python
+def batch_process_workflows(workflow, inputs):
+    """Process multiple inputs efficiently"""
+    results = []
+    
+    for i, input_msg in enumerate(inputs):
+        print(f"Processing {i+1}/{len(inputs)}: {input_msg[:50]}...")
+        
+        try:
+            response = workflow.run(input_msg)
+            results.append({
+                "input": input_msg,
+                "output": response.content,
+                "run_id": response.run_id,
+                "success": True
+            })
+        except Exception as e:
+            results.append({
+                "input": input_msg,
+                "error": str(e),
+                "success": False
+            })
+    
+    return results
+
+# Batch execution
+topics = [
+    "AI in healthcare",
+    "Sustainable energy solutions", 
+    "Future of work automation"
+]
+
+results = batch_process_workflows(workflow, topics)
+for result in results:
+    if result["success"]:
+        print(f"✅ {result['input']}: {len(result['output'])} chars")
+    else:
+        print(f"❌ {result['input']}: {result['error']}")
+```
+
+## Speed Tips
+
+### Rapid Development Patterns
+```python
+# One-liner workflow creation
+quick_analysis = lambda topic: Workflow(
+    "Quick Analysis", 
+    [researcher, analyst]
+).run(topic).content
+
+# Instant execution
+result = quick_analysis("AI trends")
+
+# Template workflows
+def create_content_workflow(name="Content Pipeline"):
+    return Workflow(
+        name=name,
+        steps=[researcher, writer, editor]
+    )
+
+# Reusable configurations
+STANDARD_STORAGE = SqliteStorage(
+    table_name="workflows",
+    db_file="app.db", 
+    mode="workflow_v2"
+)
+
+def standard_workflow(name, steps):
+    return Workflow(
+        name=name,
+        steps=steps,
+        storage=STANDARD_STORAGE,
+        store_events=True
+    )
+```
+
+### Performance Optimization
+```python
+# Workflow instance reuse
+pipeline = Workflow("Reusable", [agent1, agent2])
+
+# Process multiple inputs
+inputs = ["Topic A", "Topic B", "Topic C"]
+results = [pipeline.run(msg).content for msg in inputs]
+
+# Async batch processing  
+async def async_batch(workflow, inputs):
+    tasks = [workflow.arun(msg) for msg in inputs]
+    responses = await asyncio.gather(*tasks)
+    return [r.content for r in responses]
+
+# Usage
+results = asyncio.run(async_batch(pipeline, inputs))
+```
+
+## Common Pitfalls
+
+### Empty or Invalid Steps
+```python
+# ❌ DON'T: Empty workflow
+workflow = Workflow(name="Empty", steps=[])
+
+# ❌ DON'T: None values in steps
+workflow = Workflow(name="Invalid", steps=[agent, None, team])
+
+# ✅ DO: Valid executors only
+workflow = Workflow(name="Valid", steps=[agent, team])
+```
+
+### Configuration Issues
+```python
+# ❌ DON'T: Missing required configuration
+agent = Agent(name="Agent")  # Missing model
+workflow = Workflow(steps=[agent])
+
+# ✅ DO: Proper agent configuration
+agent = Agent(
+    name="Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),  # Required
+    role="Assistant"
+)
+workflow = Workflow(steps=[agent])
+```
+
+### Response Handling Errors
+```python
+# ❌ DON'T: Assume response structure
+response = workflow.run("task")
+result = response.data  # May not exist
+
+# ✅ DO: Check response attributes
+response = workflow.run("task")
+if hasattr(response, 'content') and response.content:
+    result = response.content
+else:
+    print("No content generated")
+```
+
+## Best Practices Summary
+
+- **Start Simple**: Begin with basic workflows, add complexity gradually
+- **Name Components**: Use descriptive names for workflows and steps
+- **Configure Storage**: Set up persistence for production workflows
+- **Handle Responses**: Always validate workflow responses
+- **Reuse Instances**: Create workflow once, use multiple times
+- **Enable Events**: Store events for debugging and monitoring
+- **Error Handling**: Implement try-catch for robust execution
+- **Batch Processing**: Use async methods for multiple inputs
+- **Test Thoroughly**: Validate workflows before production deployment
+
+## References
+
+- [Workflow Architecture](/docs/workflows_2/overview.md)
+- [Execution Patterns](/docs/workflows_2/types_of_workflows.md)
+- [Advanced Features](/docs/workflows_2/advanced.md)
+- [Storage Configuration](/docs/storage/overview.md)

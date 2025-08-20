@@ -1,0 +1,324 @@
+---
+description: DSPy 3.0.1 Unified LM Interface - Master the new dspy.LM() for all providers
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1's unified Language Model interface. Master the dspy.LM() class for seamless provider integration, caching, and production deployment.
+
+## LM Interface Development Flow
+
+```
+Choose Provider → Configure LM → Set Global → Use Modules → Monitor Usage
+      ↓              ↓            ↓           ↓            ↓
+  OpenAI/Anthropic   dspy.LM()   configure()  Predict/CoT   track_usage()
+      ↓              ↓            ↓           ↓            ↓
+  Local/Cloud        Parameters   Global LM   Auto-calls   Cost Control
+      ↓              ↓            ↓           ↓            ↓
+  Any LiteLLM        Caching      Context     Streaming    Optimization
+```
+
+## Instant Patterns
+
+### Quick Start - Basic Configuration
+
+```python
+import dspy
+
+# Most common pattern - OpenAI GPT models
+lm = dspy.LM("openai/gpt-4o-mini", temperature=0.3, max_tokens=1000)
+dspy.configure(lm=lm)
+
+# Ready to use with any module
+predictor = dspy.Predict("question -> answer")
+result = predictor(question="What is DSPy?")
+```
+
+### Production Ready - Full Configuration
+
+```python
+import dspy
+from dspy.utils.callback import BaseCallback
+
+class UsageTracker(BaseCallback):
+    def __init__(self):
+        self.total_tokens = 0
+        self.total_cost = 0
+
+    def on_lm_end(self, result, **kwargs):
+        if hasattr(result, 'usage'):
+            self.total_tokens += result.usage.total_tokens
+
+# Production LM with all features
+lm = dspy.LM(
+    model="openai/gpt-4o",
+    model_type="chat",  # "chat" or "text"
+    temperature=0.1,
+    max_tokens=4000,
+    cache=True,
+    cache_in_memory=True,
+    callbacks=[UsageTracker()],
+    num_retries=3,
+    # Provider-specific args
+    api_key="your-key",
+    api_base="https://api.openai.com/v1"
+)
+
+dspy.configure(lm=lm)
+
+# Auto-handles failures, caching, callbacks
+qa_module = dspy.ChainOfThought("question, context -> reasoning, answer")
+result = qa_module(question="...", context="...")
+```
+
+## Provider Configurations
+
+### OpenAI Family
+
+```python
+# GPT-4o models
+gpt4o = dspy.LM("openai/gpt-4o", temperature=0.7, max_tokens=4000)
+gpt4o_mini = dspy.LM("openai/gpt-4o-mini", temperature=0.3)
+
+# Reasoning models (special requirements)
+o1 = dspy.LM(
+    "openai/o1-mini",
+    temperature=1.0,  # Required for o1 models
+    max_tokens=20000  # Minimum required
+)
+
+# Custom OpenAI endpoint
+custom_gpt = dspy.LM(
+    "openai/gpt-4",
+    api_base="https://your-proxy.com/v1",
+    api_key="custom-key"
+)
+```
+
+### Anthropic Claude
+
+```python
+# Claude 3.5 Sonnet
+claude = dspy.LM(
+    "anthropic/claude-3-5-sonnet-20241022",
+    temperature=0.3,
+    max_tokens=4000
+)
+
+# Claude 3.5 Haiku (faster, cheaper)
+claude_haiku = dspy.LM(
+    "anthropic/claude-3-5-haiku-20241022",
+    temperature=0.1,
+    max_tokens=2000
+)
+```
+
+### Local Models
+
+```python
+# Ollama local models
+llama = dspy.LM(
+    "ollama/llama3.1:8b",
+    api_base="http://localhost:11434",
+    temperature=0.7
+)
+
+# vLLM endpoint
+vllm_model = dspy.LM(
+    "openai/meta-llama/Llama-2-70b-chat-hf",  # Model path
+    api_base="http://localhost:8000/v1",
+    api_key="EMPTY"
+)
+
+# Hugging Face Transformers (local)
+hf_model = dspy.LM(
+    "huggingface/microsoft/DialoGPT-medium",
+    device_map="auto",
+    torch_dtype="float16"
+)
+```
+
+### Azure, AWS, GCP
+
+```python
+# Azure OpenAI
+azure_lm = dspy.LM(
+    "azure/gpt-4",
+    api_base="https://your-resource.openai.azure.com/",
+    api_key="your-azure-key",
+    api_version="2024-02-15-preview"
+)
+
+# AWS Bedrock
+bedrock_lm = dspy.LM(
+    "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+    aws_access_key_id="...",
+    aws_secret_access_key="...",
+    aws_region_name="us-west-2"
+)
+
+# GCP Vertex AI
+vertex_lm = dspy.LM(
+    "vertex_ai/gemini-1.5-pro",
+    project_id="your-project",
+    location="us-central1"
+)
+```
+
+## Advanced Features
+
+### Caching Strategies
+
+```python
+# Memory + disk caching (development)
+dev_lm = dspy.LM(
+    "openai/gpt-4o-mini",
+    cache=True,
+    cache_in_memory=True  # LRU cache in memory
+)
+
+# Disk-only caching (production)
+prod_lm = dspy.LM(
+    "openai/gpt-4o",
+    cache=True,
+    cache_in_memory=False  # Persistent disk cache only
+)
+
+# No caching (testing)
+test_lm = dspy.LM(
+    "openai/gpt-4o-mini",
+    cache=False
+)
+```
+
+### Async Operations
+
+```python
+import asyncio
+
+# Async LM usage
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+
+async def process_batch(questions):
+    qa = dspy.Predict("question -> answer")
+
+    # Process in parallel
+    tasks = [qa.acall(question=q) for q in questions]
+    results = await asyncio.gather(*tasks)
+    return results
+
+# Run async batch
+questions = ["What is AI?", "How does ML work?", "Explain LLMs"]
+results = asyncio.run(process_batch(questions))
+```
+
+### Error Handling & Retries
+
+```python
+# Robust LM with retry logic
+robust_lm = dspy.LM(
+    "openai/gpt-4o",
+    num_retries=5,  # Exponential backoff
+    temperature=0.3,
+    max_tokens=2000
+)
+
+# Handle specific failures
+try:
+    result = predictor(question="...")
+except Exception as e:
+    # DSPy auto-retries network/rate limit errors
+    # Only unrecoverable errors reach here
+    print(f"LM call failed: {e}")
+    # Fallback to different model
+    fallback_lm = dspy.LM("openai/gpt-4o-mini")
+    dspy.configure(lm=fallback_lm)
+    result = predictor(question="...")
+```
+
+## Speed Tips
+
+### Development Optimization
+
+- **Use gpt-4o-mini**: 10x cheaper for development/testing
+- **Enable caching**: Avoid repeated identical calls
+- **Set reasonable max_tokens**: Prevent runaway costs
+- **Use temperature=0**: For reproducible results
+
+### Production Patterns
+
+```python
+# Cost-optimized production setup
+production_lm = dspy.LM(
+    "openai/gpt-4o-mini",  # Start with cheapest
+    temperature=0.1,
+    max_tokens=1000,
+    cache=True,
+    num_retries=3
+)
+
+# High-quality setup (when needed)
+quality_lm = dspy.LM(
+    "openai/gpt-4o",
+    temperature=0.3,
+    max_tokens=2000,
+    cache=True
+)
+
+# Switch based on task complexity
+def get_lm_for_task(task_complexity):
+    return quality_lm if task_complexity == "high" else production_lm
+```
+
+## Common Pitfalls
+
+### Configuration Mistakes
+
+```python
+# ❌ DON'T: Pass string as LM
+dspy.configure(lm="openai/gpt-4")  # Error!
+
+# ✅ DO: Create LM instance
+lm = dspy.LM("openai/gpt-4")
+dspy.configure(lm=lm)
+
+# ❌ DON'T: Forget reasoning model requirements
+o1_bad = dspy.LM("openai/o1-mini")  # Will fail
+
+# ✅ DO: Use correct parameters for reasoning models
+o1_good = dspy.LM("openai/o1-mini", temperature=1.0, max_tokens=20000)
+```
+
+### Memory Management
+
+```python
+# ❌ DON'T: Create LM instances in loops
+for item in large_dataset:
+    lm = dspy.LM("openai/gpt-4o-mini")  # Memory leak!
+    dspy.configure(lm=lm)
+
+# ✅ DO: Reuse LM instance
+lm = dspy.LM("openai/gpt-4o-mini")
+dspy.configure(lm=lm)
+for item in large_dataset:
+    # Use configured LM
+    result = predictor(input=item)
+```
+
+## Best Practices Summary
+
+- **One LM per application**: Configure once, use everywhere
+- **Start cheap**: Use gpt-4o-mini for development
+- **Enable caching**: Essential for development and testing
+- **Handle retries**: Set num_retries for production reliability
+- **Monitor usage**: Track tokens and costs with callbacks
+- **Use async**: For batch processing and high throughput
+- **Fallback strategy**: Have backup models for reliability
+- **Environment variables**: Store API keys securely
+
+## References
+
+- [LM API Documentation](/docs/api/models/LM.md)
+- [LiteLLM Provider List](https://docs.litellm.ai/docs/providers)
+- [DSPy Configuration Guide](/docs/learn/programming/language_models.md)
+- [Async Operations Tutorial](/docs/tutorials/async/)

@@ -1,0 +1,1334 @@
+---
+description: Cost Optimization - LM cost management and optimization strategies for DSPy production systems
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 cost optimization and LM cost management for production environments.
+
+## Cost Optimization Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Cost Monitor  │ => │  Cost Analytics │ => │  Optimization   │
+│   (Real-time)   │    │  (Insights)     │    │  (Actions)      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                    Cost Management Layer                       │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Token Count   │   Model Routing │     Caching Strategy        │
+│   Tracking      │   (Cheapest)    │     (Avoid Repeats)         │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│  Budget Control │  Alert System  │    Auto-scaling             │
+│  (Limits)       │  (Thresholds)   │    (Demand-based)           │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│               Intelligent Model Selection                      │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Task Analysis │   Quality Check │     Cost-Quality Trade-off │
+│   (Complexity)  │   (Accuracy)    │     (Pareto Optimal)        │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Cost Optimization Patterns
+
+### Quick Start Cost Monitoring
+
+```python
+# quick_cost_monitor.py - Simple cost tracking and optimization
+import dspy
+from dspy.utils.usage_tracker import track_usage
+from typing import Dict, Any, Optional
+import time
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class SimpleCostOptimizer:
+    """Simple cost optimization for DSPy applications"""
+
+    def __init__(self):
+        # Cost per 1000 tokens (rough estimates)
+        self.model_costs = {
+            "openai/gpt-4o": {"input": 0.005, "output": 0.015},
+            "openai/gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+            "openai/gpt-3.5-turbo": {"input": 0.0015, "output": 0.002},
+            "anthropic/claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
+            "anthropic/claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
+        }
+
+        # Model tiers by cost (cheapest to most expensive)
+        self.cost_tiers = [
+            ["openai/gpt-4o-mini"],
+            ["anthropic/claude-3-haiku-20240307", "openai/gpt-3.5-turbo"],
+            ["anthropic/claude-3-sonnet-20240229"],
+            ["openai/gpt-4o"]
+        ]
+
+        self.daily_budget = 50.0  # Default daily budget
+        self.current_spend = 0.0
+
+    def select_cost_effective_model(self,
+                                  task_complexity: str = "simple",
+                                  required_quality: str = "standard") -> str:
+        """Select most cost-effective model for the task"""
+
+        if task_complexity == "simple" and required_quality == "standard":
+            # Use cheapest model for simple tasks
+            return self.cost_tiers[0][0]
+
+        elif task_complexity == "medium" or required_quality == "high":
+            # Use mid-tier models
+            return self.cost_tiers[1][0]
+
+        elif task_complexity == "complex" and required_quality == "high":
+            # Use higher-tier model
+            return self.cost_tiers[2][0]
+
+        else:
+            # For critical tasks, use premium model
+            return self.cost_tiers[3][0]
+
+    def estimate_cost(self, input_text: str, expected_output_length: int, model: str) -> float:
+        """Estimate cost for a request"""
+
+        if model not in self.model_costs:
+            return 0.01  # Default estimate
+
+        # Rough token estimation (1 token ~= 4 characters)
+        input_tokens = len(input_text) // 4
+        output_tokens = expected_output_length // 4
+
+        costs = self.model_costs[model]
+        total_cost = (input_tokens / 1000 * costs["input"] +
+                     output_tokens / 1000 * costs["output"])
+
+        return total_cost
+
+    def can_afford_request(self, estimated_cost: float) -> bool:
+        """Check if request fits within budget"""
+        return (self.current_spend + estimated_cost) <= self.daily_budget
+
+    def predict_with_cost_control(self,
+                                 question: str,
+                                 task_complexity: str = "simple",
+                                 required_quality: str = "standard") -> Dict[str, Any]:
+        """Make prediction with cost optimization"""
+
+        # Select cost-effective model
+        selected_model = self.select_cost_effective_model(task_complexity, required_quality)
+
+        # Estimate cost
+        estimated_cost = self.estimate_cost(question, 200, selected_model)  # Assume 200 char output
+
+        # Check budget
+        if not self.can_afford_request(estimated_cost):
+            return {
+                "error": "Daily budget exceeded",
+                "current_spend": self.current_spend,
+                "daily_budget": self.daily_budget,
+                "status": "budget_exceeded"
+            }
+
+        # Configure DSPy with selected model
+        lm = dspy.LM(selected_model)
+        dspy.configure(lm=lm)
+
+        # Track usage and cost
+        with track_usage() as tracker:
+            program = dspy.ChainOfThought("question -> answer")
+            result = program(question=question)
+
+            # Calculate actual cost
+            usage_data = tracker.get_total_tokens()
+            actual_cost = self.calculate_actual_cost(usage_data, selected_model)
+            self.current_spend += actual_cost
+
+            logger.info(f"Cost: ${actual_cost:.6f}, Model: {selected_model}, Total spend: ${self.current_spend:.4f}")
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model_used": selected_model,
+                "estimated_cost": estimated_cost,
+                "actual_cost": actual_cost,
+                "remaining_budget": self.daily_budget - self.current_spend,
+                "status": "success"
+            }
+
+    def calculate_actual_cost(self, usage_data: Dict, model: str) -> float:
+        """Calculate actual cost from usage data"""
+
+        if model not in self.model_costs:
+            return 0.0
+
+        total_cost = 0.0
+        costs = self.model_costs[model]
+
+        for model_name, usage_entries in usage_data.items():
+            for entry in usage_entries:
+                input_tokens = entry.get("prompt_tokens", 0)
+                output_tokens = entry.get("completion_tokens", 0)
+
+                cost = (input_tokens / 1000 * costs["input"] +
+                       output_tokens / 1000 * costs["output"])
+                total_cost += cost
+
+        return total_cost
+
+# Usage example
+optimizer = SimpleCostOptimizer()
+optimizer.daily_budget = 10.0  # Set $10 daily budget
+
+# Simple task - will use cheapest model
+result1 = optimizer.predict_with_cost_control(
+    "What is 2+2?",
+    task_complexity="simple",
+    required_quality="standard"
+)
+print(f"Simple task result: {result1}")
+
+# Complex task - will use more expensive model
+result2 = optimizer.predict_with_cost_control(
+    "Write a comprehensive analysis of quantum computing implications for cryptography",
+    task_complexity="complex",
+    required_quality="high"
+)
+print(f"Complex task result: {result2}")
+```
+
+### Enterprise Cost Management
+
+```python
+# enterprise_cost.py - Advanced cost management and optimization
+import dspy
+from dspy.utils.usage_tracker import track_usage
+from typing import Dict, Any, List, Optional, Callable
+import asyncio
+import time
+import json
+import logging
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+from enum import Enum
+import numpy as np
+from collections import defaultdict
+import redis
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class TaskComplexity(Enum):
+    TRIVIAL = "trivial"
+    SIMPLE = "simple"
+    MEDIUM = "medium"
+    COMPLEX = "complex"
+    CRITICAL = "critical"
+
+class QualityRequirement(Enum):
+    BASIC = "basic"
+    STANDARD = "standard"
+    HIGH = "high"
+    PREMIUM = "premium"
+
+@dataclass
+class ModelConfig:
+    """Configuration for a model including cost and performance metrics"""
+    name: str
+    input_cost_per_1k: float
+    output_cost_per_1k: float
+    quality_score: float  # 0-1 scale
+    latency_ms: float
+    max_tokens: int
+    context_window: int
+
+@dataclass
+class CostBudget:
+    """Cost budget configuration"""
+    hourly_limit: float
+    daily_limit: float
+    weekly_limit: float
+    monthly_limit: float
+    alert_thresholds: Dict[str, float]
+
+class EnterpriseCostManager:
+    """Enterprise-grade cost management for DSPy applications"""
+
+    def __init__(self, redis_host: str = "localhost", redis_port: int = 6379):
+        # Redis for cost tracking across instances
+        self.redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            decode_responses=True
+        )
+
+        # Model configurations with real pricing
+        self.models = {
+            "openai/gpt-4o-mini": ModelConfig(
+                name="openai/gpt-4o-mini",
+                input_cost_per_1k=0.00015,
+                output_cost_per_1k=0.0006,
+                quality_score=0.7,
+                latency_ms=1500,
+                max_tokens=4096,
+                context_window=128000
+            ),
+            "openai/gpt-4o": ModelConfig(
+                name="openai/gpt-4o",
+                input_cost_per_1k=0.005,
+                output_cost_per_1k=0.015,
+                quality_score=0.95,
+                latency_ms=3000,
+                max_tokens=4096,
+                context_window=128000
+            ),
+            "openai/gpt-3.5-turbo": ModelConfig(
+                name="openai/gpt-3.5-turbo",
+                input_cost_per_1k=0.0015,
+                output_cost_per_1k=0.002,
+                quality_score=0.75,
+                latency_ms=1200,
+                max_tokens=4096,
+                context_window=16384
+            ),
+            "anthropic/claude-3-haiku-20240307": ModelConfig(
+                name="anthropic/claude-3-haiku-20240307",
+                input_cost_per_1k=0.00025,
+                output_cost_per_1k=0.00125,
+                quality_score=0.8,
+                latency_ms=2000,
+                max_tokens=4096,
+                context_window=200000
+            ),
+            "anthropic/claude-3-sonnet-20240229": ModelConfig(
+                name="anthropic/claude-3-sonnet-20240229",
+                input_cost_per_1k=0.003,
+                output_cost_per_1k=0.015,
+                quality_score=0.9,
+                latency_ms=2500,
+                max_tokens=4096,
+                context_window=200000
+            )
+        }
+
+        # Cost optimization strategies
+        self.strategies = {
+            "cost_first": self._cost_first_strategy,
+            "quality_first": self._quality_first_strategy,
+            "balanced": self._balanced_strategy,
+            "latency_first": self._latency_first_strategy
+        }
+
+        # Default budget
+        self.budget = CostBudget(
+            hourly_limit=5.0,
+            daily_limit=50.0,
+            weekly_limit=300.0,
+            monthly_limit=1000.0,
+            alert_thresholds={
+                "hourly_80": 4.0,
+                "daily_80": 40.0,
+                "weekly_80": 240.0,
+                "monthly_80": 800.0
+            }
+        )
+
+        # Caching for cost optimization
+        self.response_cache = {}
+        self.cost_history = defaultdict(list)
+
+    def set_budget(self, budget: CostBudget):
+        """Set cost budget limits"""
+        self.budget = budget
+        logger.info(f"Budget updated: Daily ${budget.daily_limit}, Monthly ${budget.monthly_limit}")
+
+    def get_current_spend(self, period: str = "daily") -> float:
+        """Get current spending for specified period"""
+
+        now = datetime.now()
+
+        if period == "hourly":
+            key = f"cost:hourly:{now.strftime('%Y%m%d%H')}"
+        elif period == "daily":
+            key = f"cost:daily:{now.strftime('%Y%m%d')}"
+        elif period == "weekly":
+            # Get Monday of current week
+            monday = now - timedelta(days=now.weekday())
+            key = f"cost:weekly:{monday.strftime('%Y%m%d')}"
+        elif period == "monthly":
+            key = f"cost:monthly:{now.strftime('%Y%m')}"
+        else:
+            raise ValueError("Period must be hourly, daily, weekly, or monthly")
+
+        try:
+            spend = self.redis_client.get(key)
+            return float(spend) if spend else 0.0
+        except:
+            return 0.0
+
+    def add_spend(self, amount: float):
+        """Record spending across all time periods"""
+
+        now = datetime.now()
+
+        # Add to all relevant time periods
+        periods = {
+            f"cost:hourly:{now.strftime('%Y%m%d%H')}": 3600,  # 1 hour TTL
+            f"cost:daily:{now.strftime('%Y%m%d')}": 86400,   # 1 day TTL
+            f"cost:weekly:{(now - timedelta(days=now.weekday())).strftime('%Y%m%d')}": 604800,  # 1 week TTL
+            f"cost:monthly:{now.strftime('%Y%m')}": 2678400,  # 31 days TTL
+        }
+
+        for key, ttl in periods.items():
+            try:
+                current = float(self.redis_client.get(key) or 0)
+                new_total = current + amount
+                self.redis_client.setex(key, ttl, str(new_total))
+            except Exception as e:
+                logger.error(f"Failed to update spend for {key}: {e}")
+
+    def check_budget_limits(self, estimated_cost: float) -> Dict[str, Any]:
+        """Check if request would exceed budget limits"""
+
+        limits_check = {
+            "can_proceed": True,
+            "warnings": [],
+            "blocks": []
+        }
+
+        # Check each time period
+        periods = [
+            ("hourly", self.budget.hourly_limit),
+            ("daily", self.budget.daily_limit),
+            ("weekly", self.budget.weekly_limit),
+            ("monthly", self.budget.monthly_limit)
+        ]
+
+        for period, limit in periods:
+            current_spend = self.get_current_spend(period)
+            projected_spend = current_spend + estimated_cost
+
+            # Check hard limits
+            if projected_spend > limit:
+                limits_check["blocks"].append(f"{period.capitalize()} budget exceeded: ${projected_spend:.4f} > ${limit}")
+                limits_check["can_proceed"] = False
+
+            # Check alert thresholds
+            alert_key = f"{period}_80"
+            if alert_key in self.budget.alert_thresholds:
+                threshold = self.budget.alert_thresholds[alert_key]
+                if projected_spend > threshold and current_spend <= threshold:
+                    limits_check["warnings"].append(f"{period.capitalize()} spend approaching limit: ${projected_spend:.4f}")
+
+        return limits_check
+
+    def select_optimal_model(self,
+                           task_complexity: TaskComplexity,
+                           quality_requirement: QualityRequirement,
+                           strategy: str = "balanced",
+                           max_cost: Optional[float] = None) -> str:
+        """Select optimal model based on requirements and strategy"""
+
+        # Filter models by cost constraint
+        available_models = self.models
+        if max_cost:
+            # Estimate tokens for filtering (rough approximation)
+            estimated_tokens = 500  # Default estimate
+            available_models = {
+                name: config for name, config in self.models.items()
+                if (estimated_tokens / 1000) * (config.input_cost_per_1k + config.output_cost_per_1k) <= max_cost
+            }
+
+        if not available_models:
+            # Fallback to cheapest model if no models meet cost constraint
+            available_models = {min(self.models.items(), key=lambda x: x[1].input_cost_per_1k + x[1].output_cost_per_1k)[0]:
+                             self.models[min(self.models.items(), key=lambda x: x[1].input_cost_per_1k + x[1].output_cost_per_1k)[0]]}
+
+        # Apply selection strategy
+        strategy_func = self.strategies.get(strategy, self._balanced_strategy)
+        selected_model = strategy_func(available_models, task_complexity, quality_requirement)
+
+        return selected_model
+
+    def _cost_first_strategy(self, models: Dict[str, ModelConfig],
+                           complexity: TaskComplexity,
+                           quality: QualityRequirement) -> str:
+        """Select cheapest model that meets minimum quality requirements"""
+
+        min_quality = {
+            QualityRequirement.BASIC: 0.6,
+            QualityRequirement.STANDARD: 0.7,
+            QualityRequirement.HIGH: 0.8,
+            QualityRequirement.PREMIUM: 0.9
+        }
+
+        # Filter by minimum quality
+        qualified_models = {
+            name: config for name, config in models.items()
+            if config.quality_score >= min_quality[quality]
+        }
+
+        if not qualified_models:
+            qualified_models = models  # Fallback to all models
+
+        # Select cheapest
+        return min(qualified_models.items(),
+                  key=lambda x: x[1].input_cost_per_1k + x[1].output_cost_per_1k)[0]
+
+    def _quality_first_strategy(self, models: Dict[str, ModelConfig],
+                              complexity: TaskComplexity,
+                              quality: QualityRequirement) -> str:
+        """Select highest quality model"""
+        return max(models.items(), key=lambda x: x[1].quality_score)[0]
+
+    def _balanced_strategy(self, models: Dict[str, ModelConfig],
+                         complexity: TaskComplexity,
+                         quality: QualityRequirement) -> str:
+        """Balance cost and quality using efficiency score"""
+
+        def efficiency_score(config: ModelConfig) -> float:
+            # Higher score is better (quality per dollar)
+            cost_per_request = (config.input_cost_per_1k + config.output_cost_per_1k) / 1000 * 500  # Assume 500 tokens
+            return config.quality_score / max(cost_per_request, 0.0001)
+
+        return max(models.items(), key=lambda x: efficiency_score(x[1]))[0]
+
+    def _latency_first_strategy(self, models: Dict[str, ModelConfig],
+                              complexity: TaskComplexity,
+                              quality: QualityRequirement) -> str:
+        """Select fastest model that meets quality requirements"""
+
+        min_quality = {
+            QualityRequirement.BASIC: 0.6,
+            QualityRequirement.STANDARD: 0.7,
+            QualityRequirement.HIGH: 0.8,
+            QualityRequirement.PREMIUM: 0.9
+        }
+
+        qualified_models = {
+            name: config for name, config in models.items()
+            if config.quality_score >= min_quality[quality]
+        }
+
+        if not qualified_models:
+            qualified_models = models
+
+        return min(qualified_models.items(), key=lambda x: x[1].latency_ms)[0]
+
+    def estimate_request_cost(self, input_text: str,
+                            expected_output_length: int,
+                            model_name: str) -> float:
+        """Estimate cost for a specific request"""
+
+        if model_name not in self.models:
+            return 0.01  # Default estimate
+
+        config = self.models[model_name]
+
+        # Token estimation (rough: 1 token ≈ 4 characters for English)
+        input_tokens = len(input_text) / 4
+        output_tokens = expected_output_length / 4
+
+        cost = ((input_tokens / 1000) * config.input_cost_per_1k +
+                (output_tokens / 1000) * config.output_cost_per_1k)
+
+        return cost
+
+    def get_cached_response(self, input_hash: str) -> Optional[Dict[str, Any]]:
+        """Get cached response to avoid repeat costs"""
+
+        try:
+            cached_data = self.redis_client.get(f"cache:response:{input_hash}")
+            if cached_data:
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.error(f"Cache retrieval error: {e}")
+
+        return None
+
+    def cache_response(self, input_hash: str, response: Dict[str, Any], ttl: int = 3600):
+        """Cache response for cost optimization"""
+
+        try:
+            self.redis_client.setex(
+                f"cache:response:{input_hash}",
+                ttl,
+                json.dumps(response)
+            )
+        except Exception as e:
+            logger.error(f"Cache storage error: {e}")
+
+    async def optimized_predict(self,
+                              question: str,
+                              task_complexity: TaskComplexity = TaskComplexity.SIMPLE,
+                              quality_requirement: QualityRequirement = QualityRequirement.STANDARD,
+                              strategy: str = "balanced",
+                              use_cache: bool = True) -> Dict[str, Any]:
+        """Make prediction with comprehensive cost optimization"""
+
+        start_time = time.time()
+
+        # Check cache first if enabled
+        input_hash = hash(question + str(task_complexity) + str(quality_requirement))
+
+        if use_cache:
+            cached_response = self.get_cached_response(str(input_hash))
+            if cached_response:
+                cached_response["cached"] = True
+                cached_response["cache_hit"] = True
+                logger.info(f"Cache hit for question: {question[:50]}...")
+                return cached_response
+
+        # Select optimal model
+        selected_model = self.select_optimal_model(task_complexity, quality_requirement, strategy)
+
+        # Estimate cost
+        estimated_cost = self.estimate_request_cost(question, 200, selected_model)
+
+        # Check budget limits
+        budget_check = self.check_budget_limits(estimated_cost)
+
+        if not budget_check["can_proceed"]:
+            return {
+                "error": "Budget limit exceeded",
+                "budget_blocks": budget_check["blocks"],
+                "estimated_cost": estimated_cost,
+                "status": "budget_exceeded"
+            }
+
+        # Log budget warnings
+        for warning in budget_check["warnings"]:
+            logger.warning(f"Budget warning: {warning}")
+
+        try:
+            # Configure DSPy with selected model
+            lm = dspy.LM(selected_model)
+            dspy.configure(lm=lm)
+
+            # Track usage and make prediction
+            with track_usage() as tracker:
+                program = dspy.ChainOfThought("question -> answer")
+                result = program(question=question)
+
+                # Calculate actual cost
+                usage_data = tracker.get_total_tokens()
+                actual_cost = self.calculate_actual_cost(usage_data, selected_model)
+
+                # Record spending
+                self.add_spend(actual_cost)
+
+                # Prepare response
+                response = {
+                    "answer": result.answer,
+                    "reasoning": getattr(result, "reasoning", ""),
+                    "model_used": selected_model,
+                    "task_complexity": task_complexity.value,
+                    "quality_requirement": quality_requirement.value,
+                    "strategy_used": strategy,
+                    "estimated_cost": estimated_cost,
+                    "actual_cost": actual_cost,
+                    "latency_ms": (time.time() - start_time) * 1000,
+                    "budget_warnings": budget_check["warnings"],
+                    "cached": False,
+                    "status": "success"
+                }
+
+                # Cache response if beneficial
+                if use_cache and actual_cost > 0.001:  # Cache expensive responses
+                    self.cache_response(str(input_hash), response, ttl=1800)  # 30 min cache
+
+                logger.info(f"Prediction completed: ${actual_cost:.6f}, Model: {selected_model}")
+
+                return response
+
+        except Exception as e:
+            logger.error(f"Prediction failed: {e}")
+            return {
+                "error": str(e),
+                "model_attempted": selected_model,
+                "estimated_cost": estimated_cost,
+                "status": "error"
+            }
+
+    def calculate_actual_cost(self, usage_data: Dict, model_name: str) -> float:
+        """Calculate actual cost from usage tracking data"""
+
+        if model_name not in self.models:
+            return 0.0
+
+        config = self.models[model_name]
+        total_cost = 0.0
+
+        for model_usage, entries in usage_data.items():
+            for entry in entries:
+                input_tokens = entry.get("prompt_tokens", 0)
+                output_tokens = entry.get("completion_tokens", 0)
+
+                cost = ((input_tokens / 1000) * config.input_cost_per_1k +
+                       (output_tokens / 1000) * config.output_cost_per_1k)
+                total_cost += cost
+
+        return total_cost
+
+    def get_cost_analytics(self) -> Dict[str, Any]:
+        """Get comprehensive cost analytics"""
+
+        analytics = {
+            "current_spend": {
+                "hourly": self.get_current_spend("hourly"),
+                "daily": self.get_current_spend("daily"),
+                "weekly": self.get_current_spend("weekly"),
+                "monthly": self.get_current_spend("monthly")
+            },
+            "budget_limits": {
+                "hourly": self.budget.hourly_limit,
+                "daily": self.budget.daily_limit,
+                "weekly": self.budget.weekly_limit,
+                "monthly": self.budget.monthly_limit
+            },
+            "utilization": {
+                "hourly": self.get_current_spend("hourly") / self.budget.hourly_limit,
+                "daily": self.get_current_spend("daily") / self.budget.daily_limit,
+                "weekly": self.get_current_spend("weekly") / self.budget.weekly_limit,
+                "monthly": self.get_current_spend("monthly") / self.budget.monthly_limit
+            },
+            "model_efficiency": {}
+        }
+
+        # Calculate model efficiency scores
+        for name, config in self.models.items():
+            avg_cost = (config.input_cost_per_1k + config.output_cost_per_1k) / 2
+            efficiency = config.quality_score / max(avg_cost, 0.001)
+            analytics["model_efficiency"][name] = {
+                "efficiency_score": efficiency,
+                "quality_score": config.quality_score,
+                "avg_cost_per_1k": avg_cost
+            }
+
+        return analytics
+
+# Usage example for enterprise cost management
+async def enterprise_cost_example():
+    """Example of enterprise cost management"""
+
+    # Initialize cost manager
+    cost_manager = EnterpriseCostManager()
+
+    # Set custom budget
+    budget = CostBudget(
+        hourly_limit=2.0,
+        daily_limit=20.0,
+        weekly_limit=100.0,
+        monthly_limit=400.0,
+        alert_thresholds={
+            "hourly_80": 1.6,
+            "daily_80": 16.0,
+            "weekly_80": 80.0,
+            "monthly_80": 320.0
+        }
+    )
+    cost_manager.set_budget(budget)
+
+    # Different request scenarios
+    scenarios = [
+        {
+            "question": "What is 2+2?",
+            "complexity": TaskComplexity.TRIVIAL,
+            "quality": QualityRequirement.BASIC,
+            "strategy": "cost_first"
+        },
+        {
+            "question": "Explain the impact of quantum computing on modern cryptography",
+            "complexity": TaskComplexity.COMPLEX,
+            "quality": QualityRequirement.HIGH,
+            "strategy": "balanced"
+        },
+        {
+            "question": "Write a comprehensive business plan for an AI startup",
+            "complexity": TaskComplexity.CRITICAL,
+            "quality": QualityRequirement.PREMIUM,
+            "strategy": "quality_first"
+        }
+    ]
+
+    # Process requests with cost optimization
+    for i, scenario in enumerate(scenarios):
+        print(f"\n--- Scenario {i+1} ---")
+        result = await cost_manager.optimized_predict(
+            question=scenario["question"],
+            task_complexity=scenario["complexity"],
+            quality_requirement=scenario["quality"],
+            strategy=scenario["strategy"]
+        )
+
+        print(f"Question: {scenario['question'][:50]}...")
+        print(f"Model used: {result.get('model_used', 'N/A')}")
+        print(f"Actual cost: ${result.get('actual_cost', 0):.6f}")
+        print(f"Cached: {result.get('cached', False)}")
+
+        if result.get("budget_warnings"):
+            print(f"Warnings: {result['budget_warnings']}")
+
+    # Get cost analytics
+    analytics = cost_manager.get_cost_analytics()
+    print(f"\n--- Cost Analytics ---")
+    print(f"Daily spend: ${analytics['current_spend']['daily']:.4f} / ${analytics['budget_limits']['daily']}")
+    print(f"Daily utilization: {analytics['utilization']['daily']:.1%}")
+
+# Run example
+# asyncio.run(enterprise_cost_example())
+```
+
+## Core Cost Optimization Patterns
+
+### Smart Model Routing
+
+```python
+# Smart routing based on task analysis
+import dspy
+from typing import Dict, Any, List
+import re
+
+class TaskAnalyzer:
+    """Analyze task complexity to route to appropriate models"""
+
+    def __init__(self):
+        # Keywords that indicate task complexity
+        self.complexity_indicators = {
+            "trivial": [
+                "what is", "define", "simple math", "basic question",
+                "yes or no", "true or false"
+            ],
+            "simple": [
+                "explain", "describe", "how to", "list", "compare"
+            ],
+            "medium": [
+                "analyze", "evaluate", "discuss", "pros and cons",
+                "complex", "detailed analysis"
+            ],
+            "complex": [
+                "comprehensive", "in-depth", "research", "strategy",
+                "design", "architecture", "detailed plan"
+            ],
+            "critical": [
+                "business plan", "legal advice", "medical diagnosis",
+                "financial advice", "safety critical"
+            ]
+        }
+
+        # Model routing based on complexity
+        self.model_routes = {
+            "trivial": "openai/gpt-4o-mini",
+            "simple": "openai/gpt-4o-mini",
+            "medium": "openai/gpt-3.5-turbo",
+            "complex": "anthropic/claude-3-sonnet-20240229",
+            "critical": "openai/gpt-4o"
+        }
+
+    def analyze_complexity(self, question: str) -> str:
+        """Analyze question complexity"""
+
+        question_lower = question.lower()
+        complexity_scores = {}
+
+        for complexity, indicators in self.complexity_indicators.items():
+            score = sum(1 for indicator in indicators if indicator in question_lower)
+            complexity_scores[complexity] = score
+
+        # Additional heuristics
+        if len(question) < 50:
+            complexity_scores["trivial"] += 2
+        elif len(question) > 500:
+            complexity_scores["complex"] += 2
+
+        if "?" in question and question.count("?") == 1:
+            complexity_scores["simple"] += 1
+        elif question.count("?") > 1:
+            complexity_scores["complex"] += 1
+
+        # Return highest scoring complexity
+        return max(complexity_scores.items(), key=lambda x: x[1])[0]
+
+    def get_optimal_model(self, question: str) -> str:
+        """Get optimal model for question"""
+        complexity = self.analyze_complexity(question)
+        return self.model_routes[complexity]
+
+class SmartRouter:
+    """Smart model router with cost optimization"""
+
+    def __init__(self):
+        self.analyzer = TaskAnalyzer()
+        self.cost_tracker = 0.0
+        self.request_count = 0
+
+    async def route_and_predict(self, question: str) -> Dict[str, Any]:
+        """Route question to optimal model and predict"""
+
+        # Analyze and route
+        optimal_model = self.analyzer.get_optimal_model(question)
+        complexity = self.analyzer.analyze_complexity(question)
+
+        # Configure DSPy
+        lm = dspy.LM(optimal_model)
+        dspy.configure(lm=lm)
+
+        # Track usage
+        with track_usage() as tracker:
+            program = dspy.ChainOfThought("question -> answer")
+            result = program(question=question)
+
+            # Simple cost estimation
+            usage_data = tracker.get_total_tokens()
+            estimated_cost = self.estimate_cost_from_usage(usage_data, optimal_model)
+
+            self.cost_tracker += estimated_cost
+            self.request_count += 1
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model_used": optimal_model,
+                "complexity_detected": complexity,
+                "estimated_cost": estimated_cost,
+                "total_cost": self.cost_tracker,
+                "avg_cost_per_request": self.cost_tracker / self.request_count,
+                "status": "success"
+            }
+
+    def estimate_cost_from_usage(self, usage_data: Dict, model: str) -> float:
+        """Simple cost estimation"""
+        # Basic cost estimates (per 1000 tokens)
+        model_costs = {
+            "openai/gpt-4o-mini": 0.0002,
+            "openai/gpt-4o": 0.01,
+            "openai/gpt-3.5-turbo": 0.0015,
+            "anthropic/claude-3-sonnet-20240229": 0.009
+        }
+
+        base_cost = model_costs.get(model, 0.001)
+        total_requests = sum(len(entries) for entries in usage_data.values())
+
+        return base_cost * total_requests
+
+# Usage
+router = SmartRouter()
+
+# Test different complexity questions
+questions = [
+    "What is 2+2?",  # Trivial
+    "How do you bake a cake?",  # Simple
+    "Compare the advantages and disadvantages of different cloud providers",  # Medium
+    "Design a comprehensive marketing strategy for launching an AI product in competitive market",  # Complex
+    "Provide legal advice for structuring a multi-million dollar acquisition"  # Critical
+]
+
+for question in questions:
+    result = await router.route_and_predict(question)
+    print(f"Q: {question}")
+    print(f"Model: {result['model_used']} | Complexity: {result['complexity_detected']} | Cost: ${result['estimated_cost']:.6f}")
+    print()
+```
+
+### Response Caching Strategy
+
+```python
+# Advanced caching for cost optimization
+import dspy
+import hashlib
+import json
+import redis
+from typing import Optional, Dict, Any
+import time
+
+class CostOptimizedCache:
+    """Cache responses to minimize repeated LM costs"""
+
+    def __init__(self, redis_host: str = "localhost"):
+        self.redis = redis.Redis(host=redis_host, decode_responses=True)
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.cost_savings = 0.0
+
+    def generate_cache_key(self, question: str, model: str, temperature: float = 0.1) -> str:
+        """Generate cache key for question/model combination"""
+        content = f"{question.lower().strip()}:{model}:{temperature}"
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    def should_cache_response(self, question: str, cost: float) -> bool:
+        """Determine if response should be cached based on cost and reusability"""
+
+        # Cache expensive responses (> $0.001)
+        if cost > 0.001:
+            return True
+
+        # Cache responses to common question patterns
+        common_patterns = [
+            "what is",
+            "how to",
+            "define",
+            "explain",
+            "list"
+        ]
+
+        question_lower = question.lower()
+        if any(pattern in question_lower for pattern in common_patterns):
+            return True
+
+        return False
+
+    async def get_cached_response(self, question: str, model: str,
+                                temperature: float = 0.1) -> Optional[Dict[str, Any]]:
+        """Get cached response if available"""
+
+        cache_key = self.generate_cache_key(question, model, temperature)
+
+        try:
+            cached_data = self.redis.get(f"response:{cache_key}")
+            if cached_data:
+                response = json.loads(cached_data)
+
+                # Update cache statistics
+                self.cache_hits += 1
+                self.cost_savings += response.get("original_cost", 0)
+
+                response["cached"] = True
+                response["cache_hit_time"] = time.time()
+
+                return response
+        except Exception as e:
+            print(f"Cache retrieval error: {e}")
+
+        self.cache_misses += 1
+        return None
+
+    async def cache_response(self, question: str, model: str, response: Dict[str, Any],
+                           cost: float, ttl: int = 3600):
+        """Cache response with cost information"""
+
+        if not self.should_cache_response(question, cost):
+            return
+
+        cache_key = self.generate_cache_key(question, model)
+
+        # Prepare cache data
+        cache_data = {
+            "answer": response.get("answer", ""),
+            "reasoning": response.get("reasoning", ""),
+            "original_cost": cost,
+            "cached_time": time.time(),
+            "model": model
+        }
+
+        try:
+            self.redis.setex(
+                f"response:{cache_key}",
+                ttl,
+                json.dumps(cache_data)
+            )
+        except Exception as e:
+            print(f"Cache storage error: {e}")
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics"""
+
+        total_requests = self.cache_hits + self.cache_misses
+        hit_rate = self.cache_hits / total_requests if total_requests > 0 else 0
+
+        return {
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "hit_rate": hit_rate,
+            "total_cost_savings": self.cost_savings,
+            "avg_savings_per_hit": self.cost_savings / self.cache_hits if self.cache_hits > 0 else 0
+        }
+
+# Usage with DSPy
+class CachedDSPyPredictor:
+    """DSPy predictor with intelligent caching"""
+
+    def __init__(self, model_name: str = "openai/gpt-4o-mini"):
+        self.cache = CostOptimizedCache()
+        self.model_name = model_name
+
+        # Configure DSPy
+        self.lm = dspy.LM(model_name)
+        dspy.configure(lm=self.lm)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def predict_with_caching(self, question: str) -> Dict[str, Any]:
+        """Make prediction with cost-optimized caching"""
+
+        # Check cache first
+        cached_response = await self.cache.get_cached_response(question, self.model_name)
+        if cached_response:
+            return cached_response
+
+        # Make new prediction
+        with track_usage() as tracker:
+            result = self.program(question=question)
+
+            # Estimate cost (simplified)
+            usage_data = tracker.get_total_tokens()
+            estimated_cost = self.estimate_cost(usage_data)
+
+            response = {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model": self.model_name,
+                "cost": estimated_cost,
+                "cached": False,
+                "status": "success"
+            }
+
+            # Cache response if beneficial
+            await self.cache.cache_response(question, self.model_name, response, estimated_cost)
+
+            return response
+
+    def estimate_cost(self, usage_data: Dict) -> float:
+        """Simple cost estimation"""
+        # Simplified cost calculation
+        total_entries = sum(len(entries) for entries in usage_data.values())
+        return total_entries * 0.0002  # Rough estimate for gpt-4o-mini
+
+# Example usage
+predictor = CachedDSPyPredictor()
+
+# First request - will be cached
+result1 = await predictor.predict_with_caching("What is machine learning?")
+print(f"First request: Cached={result1['cached']}, Cost=${result1['cost']:.6f}")
+
+# Second identical request - should hit cache
+result2 = await predictor.predict_with_caching("What is machine learning?")
+print(f"Second request: Cached={result2['cached']}, Cost=${result2.get('cost', 0):.6f}")
+
+# Get cache statistics
+stats = predictor.cache.get_cache_stats()
+print(f"Cache stats: {stats}")
+```
+
+## Performance Optimization
+
+### Batch Processing for Cost Efficiency
+
+```python
+# Batch processing to optimize costs
+import dspy
+import asyncio
+from typing import List, Dict, Any
+import time
+
+class BatchCostOptimizer:
+    """Batch processing for cost-efficient predictions"""
+
+    def __init__(self, batch_size: int = 10, max_wait_time: float = 2.0):
+        self.batch_size = batch_size
+        self.max_wait_time = max_wait_time
+        self.pending_requests = []
+        self.batch_costs = []
+
+    async def add_request(self, question: str, priority: str = "normal") -> Dict[str, Any]:
+        """Add request to batch queue"""
+
+        future = asyncio.Future()
+        request = {
+            "question": question,
+            "priority": priority,
+            "future": future,
+            "timestamp": time.time()
+        }
+
+        self.pending_requests.append(request)
+
+        # Process batch if full or high priority
+        if len(self.pending_requests) >= self.batch_size or priority == "urgent":
+            asyncio.create_task(self._process_batch())
+        else:
+            # Schedule batch processing after wait time
+            asyncio.create_task(self._delayed_batch_process())
+
+        return await future
+
+    async def _delayed_batch_process(self):
+        """Process batch after delay"""
+        await asyncio.sleep(self.max_wait_time)
+        if self.pending_requests:
+            await self._process_batch()
+
+    async def _process_batch(self):
+        """Process accumulated requests in batch"""
+
+        if not self.pending_requests:
+            return
+
+        # Take current batch
+        current_batch = self.pending_requests[:]
+        self.pending_requests.clear()
+
+        # Group by priority
+        urgent_requests = [r for r in current_batch if r["priority"] == "urgent"]
+        normal_requests = [r for r in current_batch if r["priority"] == "normal"]
+
+        # Process urgent requests first with higher-quality model
+        if urgent_requests:
+            await self._process_batch_group(urgent_requests, "openai/gpt-4o")
+
+        if normal_requests:
+            await self._process_batch_group(normal_requests, "openai/gpt-4o-mini")
+
+    async def _process_batch_group(self, requests: List[Dict], model: str):
+        """Process a group of requests with same model"""
+
+        # Configure DSPy
+        lm = dspy.LM(model)
+        dspy.configure(lm=lm)
+        program = dspy.ChainOfThought("question -> answer")
+
+        batch_start_time = time.time()
+
+        # Process requests concurrently
+        async def process_single(request):
+            try:
+                with track_usage() as tracker:
+                    result = program(question=request["question"])
+                    usage_data = tracker.get_total_tokens()
+                    cost = self.estimate_cost(usage_data, model)
+
+                    return {
+                        "answer": result.answer,
+                        "reasoning": getattr(result, "reasoning", ""),
+                        "model": model,
+                        "cost": cost,
+                        "batch_processing": True,
+                        "status": "success"
+                    }
+            except Exception as e:
+                return {"error": str(e), "status": "error"}
+
+        # Execute batch concurrently
+        tasks = [process_single(req) for req in requests]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Calculate batch metrics
+        total_cost = sum(r.get("cost", 0) for r in results if isinstance(r, dict))
+        batch_time = time.time() - batch_start_time
+
+        self.batch_costs.append({
+            "batch_size": len(requests),
+            "total_cost": total_cost,
+            "avg_cost_per_request": total_cost / len(requests),
+            "batch_time": batch_time,
+            "model": model
+        })
+
+        # Return results to futures
+        for request, result in zip(requests, results):
+            if isinstance(result, Exception):
+                request["future"].set_exception(result)
+            else:
+                request["future"].set_result(result)
+
+    def estimate_cost(self, usage_data: Dict, model: str) -> float:
+        """Estimate cost from usage data"""
+        costs = {
+            "openai/gpt-4o-mini": 0.0002,
+            "openai/gpt-4o": 0.01
+        }
+
+        total_entries = sum(len(entries) for entries in usage_data.values())
+        return total_entries * costs.get(model, 0.001)
+
+    def get_batch_analytics(self) -> Dict[str, Any]:
+        """Get batch processing analytics"""
+
+        if not self.batch_costs:
+            return {"message": "No batches processed yet"}
+
+        total_requests = sum(b["batch_size"] for b in self.batch_costs)
+        total_cost = sum(b["total_cost"] for b in self.batch_costs)
+        avg_batch_size = sum(b["batch_size"] for b in self.batch_costs) / len(self.batch_costs)
+
+        return {
+            "total_batches": len(self.batch_costs),
+            "total_requests_processed": total_requests,
+            "total_cost": total_cost,
+            "avg_cost_per_request": total_cost / total_requests if total_requests > 0 else 0,
+            "avg_batch_size": avg_batch_size,
+            "cost_efficiency": "High" if avg_batch_size > 5 else "Medium" if avg_batch_size > 2 else "Low"
+        }
+
+# Usage example
+batch_optimizer = BatchCostOptimizer(batch_size=5, max_wait_time=1.0)
+
+# Simulate multiple requests
+questions = [
+    "What is AI?",
+    "How does machine learning work?",
+    "Explain neural networks",
+    "What is deep learning?",
+    "Define artificial intelligence"
+]
+
+# Add requests (they will be batched automatically)
+tasks = []
+for question in questions:
+    task = batch_optimizer.add_request(question)
+    tasks.append(task)
+
+# Wait for all results
+results = await asyncio.gather(*tasks)
+
+for i, result in enumerate(results):
+    print(f"Q: {questions[i]}")
+    print(f"Cost: ${result.get('cost', 0):.6f}")
+    print(f"Batched: {result.get('batch_processing', False)}")
+    print()
+
+# Get analytics
+analytics = batch_optimizer.get_batch_analytics()
+print(f"Batch Analytics: {analytics}")
+```
+
+## Speed Tips
+
+- Implement intelligent caching based on cost thresholds and question patterns
+- Use batch processing to amortize fixed costs across multiple requests
+- Route simple tasks to cheaper models automatically with task complexity analysis
+- Set up real-time budget monitoring with automatic throttling
+- Implement response compression and deduplication to reduce storage costs
+- Use async processing to handle multiple cost-optimized requests concurrently
+
+## Common Pitfalls
+
+- Not tracking costs in real-time leading to budget overruns
+- Using expensive models for simple tasks that cheap models can handle
+- Missing caching opportunities for repeated or similar questions
+- Not implementing proper budget controls and alerting mechanisms
+- Overlooking batch processing benefits for high-volume scenarios
+- Not analyzing cost efficiency across different models and strategies
+
+## Best Practices Summary
+
+- Always implement real-time cost tracking and budget controls
+- Use intelligent model routing based on task complexity and quality requirements
+- Implement comprehensive caching strategies for cost optimization
+- Set up automated alerts for budget thresholds across different time periods
+- Analyze cost efficiency regularly and optimize model selection strategies
+- Use batch processing for high-volume scenarios to improve cost efficiency
+- Monitor and optimize the cost-quality trade-off continuously
+
+## References
+
+- [OpenAI Pricing](https://openai.com/pricing)
+- [Anthropic Pricing](https://www.anthropic.com/pricing)
+- [DSPy Usage Tracker](https://github.com/stanfordnlp/dspy/blob/main/dspy/utils/usage_tracker.py)
+- [Cost Management Best Practices](https://platform.openai.com/docs/guides/rate-limits)
+- [Redis Caching Strategies](https://redis.io/docs/manual/patterns/)

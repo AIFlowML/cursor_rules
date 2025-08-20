@@ -1,0 +1,338 @@
+---
+description: DSPy SIMBA - Stochastic introspective optimization for rapid development
+globs: ["**/*.py", "**/*.ipynb"] 
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 SIMBA (Stochastic Introspective Mini-Batch Ascent) optimization for maximum development speed.
+
+## SIMBA Development Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Mini-Batch    │───▶│ Variability      │───▶│ Strategy        │
+│   Sampling      │    │ Analysis         │    │ Selection       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                        │                        │
+         ▼                        ▼                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│ Trajectory      │    │ Self-Reflection  │    │ Demo/Rule       │
+│ Generation      │    │ via LLM          │    │ Augmentation    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
+
+## Instant SIMBA Patterns
+
+### Quick Start
+```python
+import dspy
+
+# Initialize SIMBA for rapid optimization
+def accuracy_metric(gold, pred):
+    """Simple accuracy metric for SIMBA"""
+    return float(gold.answer.lower().strip() == pred.answer.lower().strip())
+
+simba = dspy.SIMBA(
+    metric=accuracy_metric,
+    bsize=32,               # Mini-batch size
+    num_candidates=6,       # Candidates per iteration
+    max_steps=8,           # Optimization steps
+    max_demos=4,           # Max demos per predictor
+    temperature_for_sampling=0.2,
+    temperature_for_candidates=0.2
+)
+
+# Optimize program
+optimized = simba.compile(program, trainset=trainset)
+```
+
+### Production Configuration
+```python
+# Enterprise SIMBA setup
+simba = dspy.SIMBA(
+    metric=comprehensive_metric,
+    
+    # Batch configuration
+    bsize=64,                    # Larger batches for stability
+    num_candidates=8,            # More candidates for exploration
+    max_steps=12,               # More steps for complex tasks
+    
+    # Demo management
+    max_demos=6,                # More demos for complex patterns
+    demo_input_field_maxlen=50_000,  # Longer demos for context
+    
+    # Temperature tuning
+    temperature_for_sampling=0.1,    # Lower for exploitation
+    temperature_for_candidates=0.3,  # Higher for exploration
+    
+    # Performance optimization
+    num_threads=16               # Parallel execution
+)
+
+# Compile with comprehensive logging
+optimized = simba.compile(program, trainset=trainset, seed=42)
+
+# Access optimization artifacts
+winning_programs = optimized.candidate_programs
+trial_logs = optimized.trial_logs
+```
+
+## Core SIMBA Patterns
+
+### Variability-Based Strategy Selection
+```python
+def analyze_simba_strategies(optimized_program):
+    """Analyze which SIMBA strategies were most effective"""
+    
+    trial_logs = optimized_program.trial_logs
+    
+    strategy_performance = {}
+    for trial_idx, trial_data in trial_logs.items():
+        strategy = trial_data.get('strategy_used', 'unknown')
+        score = trial_data.get('train_score', 0.0)
+        
+        if strategy not in strategy_performance:
+            strategy_performance[strategy] = []
+        strategy_performance[strategy].append(score)
+    
+    # Analyze effectiveness
+    for strategy, scores in strategy_performance.items():
+        avg_score = sum(scores) / len(scores)
+        print(f"Strategy '{strategy}': {avg_score:.3f} avg (n={len(scores)})")
+    
+    return strategy_performance
+
+def custom_simba_with_strategy_weights(metric, strategy_weights=None):
+    """SIMBA with custom strategy weighting"""
+    
+    if strategy_weights is None:
+        strategy_weights = {
+            'append_a_demo': 0.6,    # Favor demo augmentation
+            'append_a_rule': 0.4     # Less rule generation
+        }
+    
+    # Custom SIMBA implementation using strategy weights
+    class WeightedSIMBA(dspy.SIMBA):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.strategy_weights = strategy_weights
+            
+        def _select_strategy(self, rng):
+            strategies = list(self.strategy_weights.keys())
+            weights = list(self.strategy_weights.values())
+            return rng.choices(strategies, weights=weights, k=1)[0]
+    
+    return WeightedSIMBA(metric=metric)
+```
+
+### High-Variability Example Detection
+```python
+def detect_challenging_examples(simba_outputs, threshold=0.3):
+    """Identify examples with high output variability for SIMBA focus"""
+    
+    challenging_examples = []
+    
+    for example_idx, example_outputs in enumerate(simba_outputs):
+        # Calculate variability metrics
+        scores = [output['score'] for output in example_outputs]
+        
+        if len(scores) > 1:
+            score_variance = np.var(scores)
+            score_range = max(scores) - min(scores)
+            
+            # High variability indicates challenging example
+            if score_range > threshold:
+                challenging_examples.append({
+                    'example_idx': example_idx,
+                    'score_variance': score_variance,
+                    'score_range': score_range,
+                    'min_score': min(scores),
+                    'max_score': max(scores),
+                    'outputs': example_outputs
+                })
+    
+    # Sort by score range (most variable first)
+    challenging_examples.sort(key=lambda x: x['score_range'], reverse=True)
+    
+    return challenging_examples
+
+def targeted_simba_optimization(program, trainset, challenging_indices):
+    """SIMBA optimization focused on challenging examples"""
+    
+    # Create focused training set
+    focused_trainset = [trainset[i] for i in challenging_indices]
+    
+    simba = dspy.SIMBA(
+        metric=accuracy_metric,
+        bsize=min(16, len(focused_trainset)),  # Smaller batches for focus
+        num_candidates=8,
+        max_steps=12,
+        temperature_for_sampling=0.3,  # Higher temp for exploration
+        max_demos=6
+    )
+    
+    return simba.compile(program, trainset=focused_trainset)
+```
+
+### Progressive SIMBA Training
+```python
+def progressive_simba_training(program, trainset, stages=3):
+    """Multi-stage SIMBA training with increasing complexity"""
+    
+    current_program = program
+    stage_results = []
+    
+    for stage in range(stages):
+        # Progressive configuration
+        stage_config = {
+            0: {'bsize': 16, 'max_steps': 4, 'temp': 0.1},    # Conservative start
+            1: {'bsize': 32, 'max_steps': 8, 'temp': 0.2},    # Balanced exploration
+            2: {'bsize': 64, 'max_steps': 12, 'temp': 0.3}    # Aggressive optimization
+        }
+        
+        config = stage_config[stage]
+        
+        simba = dspy.SIMBA(
+            metric=accuracy_metric,
+            bsize=config['bsize'],
+            max_steps=config['max_steps'],
+            temperature_for_sampling=config['temp'],
+            temperature_for_candidates=config['temp'],
+            num_candidates=6 + stage * 2  # More candidates each stage
+        )
+        
+        print(f"SIMBA Stage {stage + 1}: {config}")
+        current_program = simba.compile(current_program, trainset=trainset)
+        
+        # Evaluate stage performance
+        stage_results.append({
+            'stage': stage + 1,
+            'candidate_programs': len(current_program.candidate_programs),
+            'best_score': current_program.candidate_programs[0]['score'],
+            'config': config
+        })
+    
+    return current_program, stage_results
+```
+
+### SIMBA with Custom Demo Management
+```python
+def smart_demo_simba(program, trainset, demo_strategy='diverse'):
+    """SIMBA with intelligent demo selection"""
+    
+    class SmartDemoSIMBA(dspy.SIMBA):
+        def __init__(self, demo_strategy='diverse', **kwargs):
+            super().__init__(**kwargs)
+            self.demo_strategy = demo_strategy
+        
+        def select_demo_candidates(self, successful_examples):
+            """Custom demo selection based on strategy"""
+            
+            if self.demo_strategy == 'diverse':
+                # Select diverse examples
+                return self._select_diverse_demos(successful_examples)
+            elif self.demo_strategy == 'difficult':
+                # Select challenging but successful examples
+                return self._select_difficult_demos(successful_examples)
+            elif self.demo_strategy == 'recent':
+                # Prefer recent successful examples
+                return successful_examples[-self.max_demos:]
+            
+            return successful_examples[:self.max_demos]
+        
+        def _select_diverse_demos(self, examples):
+            # Implement diversity-based selection
+            # (simplified - could use embedding similarity)
+            diverse_examples = []
+            for example in examples:
+                if not self._is_similar_to_existing(example, diverse_examples):
+                    diverse_examples.append(example)
+                if len(diverse_examples) >= self.max_demos:
+                    break
+            return diverse_examples
+    
+    return SmartDemoSIMBA(
+        metric=accuracy_metric,
+        demo_strategy=demo_strategy,
+        max_demos=4,
+        bsize=32
+    )
+```
+
+## Performance Insights
+
+### SIMBA vs Other Optimizers
+- **Sample Efficiency**: 2x faster than BootstrapFewShot for simple tasks
+- **Convergence**: Rapid initial gains in first 2-3 iterations
+- **Variability Handling**: Excels with inconsistent model outputs
+- **Demo Quality**: Self-generated demos often outperform human examples
+
+### Optimal Configuration Guide
+```python
+def simba_config_for_task(task_type, dataset_size, model_capability):
+    """SIMBA configuration recommendations by task"""
+    
+    configs = {
+        'classification': {
+            'bsize': min(32, dataset_size // 10),
+            'max_steps': 6,
+            'max_demos': 3,
+            'temperature_for_sampling': 0.1,
+            'temperature_for_candidates': 0.2
+        },
+        'generation': {
+            'bsize': min(16, dataset_size // 20),
+            'max_steps': 10,
+            'max_demos': 5,
+            'temperature_for_sampling': 0.2,
+            'temperature_for_candidates': 0.3
+        },
+        'reasoning': {
+            'bsize': min(8, dataset_size // 40),
+            'max_steps': 12,
+            'max_demos': 6,
+            'temperature_for_sampling': 0.3,
+            'temperature_for_candidates': 0.4
+        }
+    }
+    
+    base_config = configs.get(task_type, configs['classification'])
+    
+    # Adjust for model capability
+    if model_capability == 'weak':
+        base_config['max_demos'] += 2  # More demos for weak models
+        base_config['temperature_for_sampling'] *= 0.5  # Less exploration
+    elif model_capability == 'strong':
+        base_config['temperature_for_candidates'] *= 1.5  # More exploration
+    
+    return base_config
+```
+
+## Speed Tips
+- Use smaller batch sizes (8-16) for rapid iteration during development
+- `temperature_for_sampling=0.1` for exploitation of known good patterns
+- `temperature_for_candidates=0.3` for healthy exploration
+- Start with `max_demos=3` and increase if patterns are complex
+- `num_threads` scales well up to available CPU cores
+- Focus on high-variability examples for maximum SIMBA benefit
+
+## Common Pitfalls
+- **Batch Size Too Large**: Wastes budget on easy examples
+- **Temperature Too High**: Random sampling instead of guided optimization
+- **Too Many Demos**: Overfitting to demonstration patterns
+- **Insufficient Steps**: SIMBA needs time to build effective strategies
+- **Wrong Metric**: Simple metrics limit self-reflection capability
+
+## Best Practices Summary
+- Start with balanced temperatures (0.2/0.2) and adjust based on results
+- Use progressive training for complex optimization landscapes
+- Focus SIMBA on examples with high output variability
+- Monitor trial logs to understand strategy effectiveness
+- Balance demo augmentation vs rule generation based on task nature
+- Leverage parallel execution for faster iteration cycles
+
+## References  
+- DSPy SIMBA Source: `/docs/dspy/dspy/teleprompt/simba.py`
+- API Documentation: `/docs/dspy/docs/api/optimizers/SIMBA.md`
+- SIMBA Blog Post: [Marius Vach's Analysis](https://blog.mariusvach.com/posts/dspy-simba)
+- SIMBA Utils: `/docs/dspy/dspy/teleprompt/simba_utils.py`

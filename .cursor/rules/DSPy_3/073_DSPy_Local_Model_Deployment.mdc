@@ -1,0 +1,1084 @@
+---
+description: Local Model Deployment - Local model deployment patterns with SGLang, Ollama, and vLLM for DSPy production systems
+alwaysApply: false
+---
+
+> You are an expert in DSPy 3.0.1 local model deployment with SGLang, Ollama, and vLLM for production environments.
+
+## Local Model Deployment Flow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   DSPy Client   │ => │  Load Balancer  │ => │   Local Models  │
+│   Application   │    │   (nginx/HAP)   │    │   SGLang/vLLM   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│                   Model Serving Infrastructure                  │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   SGLang RT     │     Ollama      │       vLLM Engine           │
+│   (Fast Inf.)   │   (Easy Setup)  │    (Throughput Opt.)        │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────┬─────────────────┬─────────────────────────────┐
+│   GPU Memory    │   Model Cache   │     Request Queue           │
+│   Management    │   (Disk/RAM)    │     (Batching)              │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+          │                       │                       │
+          v                       v                       v
+┌─────────────────────────────────────────────────────────────────┐
+│              Local Model Repository                            │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│   Llama Models  │   Mistral       │     Custom Fine-tuned       │
+│   (7B/13B/70B)  │   (7B/8x7B)     │     Domain Models           │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## Instant Local Deployment Patterns
+
+### Quick Start with Ollama
+
+```python
+# quick_local.py - Minimal local deployment with Ollama
+import dspy
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+import subprocess
+import time
+import requests
+from typing import Optional
+
+# Check if Ollama is running
+def check_ollama_service():
+    try:
+        response = requests.get("http://localhost:11434/api/tags")
+        return response.status_code == 200
+    except:
+        return False
+
+def start_ollama_if_needed():
+    if not check_ollama_service():
+        print("Starting Ollama service...")
+        subprocess.Popen(["ollama", "serve"])
+        time.sleep(5)  # Wait for service to start
+
+def ensure_model_available(model_name: str):
+    try:
+        # Check if model exists
+        response = requests.get("http://localhost:11434/api/tags")
+        models = response.json().get("models", [])
+
+        if not any(model["name"].startswith(model_name) for model in models):
+            print(f"Pulling {model_name} model...")
+            subprocess.run(["ollama", "pull", model_name], check=True)
+            print(f"Model {model_name} ready!")
+    except Exception as e:
+        print(f"Error setting up model: {e}")
+        raise
+
+class LocalModelServer:
+    def __init__(self, model_name: str = "llama3.1:8b"):
+        # Ensure Ollama is running
+        start_ollama_if_needed()
+        ensure_model_available(model_name)
+
+        # Configure DSPy with local Ollama model
+        self.lm = dspy.LM(
+            f"ollama/{model_name}",
+            api_base="http://localhost:11434",
+            max_tokens=2000,
+            temperature=0.1
+        )
+
+        dspy.configure(lm=self.lm, async_max_workers=4)
+
+        # Initialize DSPy program
+        self.program = dspy.ChainOfThought("question -> answer")
+        self.async_program = dspy.asyncify(self.program)
+
+    async def predict(self, question: str) -> dict:
+        try:
+            result = await self.async_program(question=question)
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model": "local-llama",
+                "status": "success"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Local prediction failed: {str(e)}")
+
+# FastAPI setup
+app = FastAPI(title="DSPy Local Model Server", version="1.0.0")
+server = LocalModelServer()
+
+class QueryRequest(BaseModel):
+    question: str
+    max_tokens: Optional[int] = 1000
+
+@app.post("/predict")
+async def predict_local(request: QueryRequest):
+    return await server.predict(request.question)
+
+@app.get("/health")
+async def health():
+    ollama_status = "running" if check_ollama_service() else "stopped"
+    return {
+        "status": "healthy" if ollama_status == "running" else "unhealthy",
+        "ollama_service": ollama_status,
+        "model": "llama3.1:8b"
+    }
+
+@app.get("/models")
+async def list_models():
+    try:
+        response = requests.get("http://localhost:11434/api/tags")
+        return response.json()
+    except:
+        return {"error": "Ollama service not available"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+### Enterprise Local Deployment
+
+```python
+# enterprise_local.py - Production local deployment with multiple engines
+import dspy
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel, Field
+import uvicorn
+import asyncio
+import logging
+import psutil
+import GPUtil
+from typing import Optional, Dict, Any, List
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from enum import Enum
+import subprocess
+import json
+import time
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class LocalEngine(str, Enum):
+    OLLAMA = "ollama"
+    VLLM = "vllm"
+    SGLANG = "sglang"
+
+@dataclass
+class ModelConfig:
+    name: str
+    engine: LocalEngine
+    model_path: str
+    gpu_memory_gb: int
+    max_tokens: int
+    context_length: int
+    quantization: Optional[str] = None
+
+class LocalModelManager:
+    """Manages multiple local model engines for DSPy."""
+
+    def __init__(self):
+        self.models = {}
+        self.engine_processes = {}
+        self.model_stats = {}
+
+    def get_system_info(self) -> Dict[str, Any]:
+        """Get system resource information."""
+        cpu_count = psutil.cpu_count()
+        memory = psutil.virtual_memory()
+
+        gpu_info = []
+        try:
+            gpus = GPUtil.getGPUs()
+            for gpu in gpus:
+                gpu_info.append({
+                    "id": gpu.id,
+                    "name": gpu.name,
+                    "memory_total": gpu.memoryTotal,
+                    "memory_used": gpu.memoryUsed,
+                    "memory_free": gpu.memoryFree,
+                    "utilization": gpu.load
+                })
+        except:
+            gpu_info = [{"error": "No GPU info available"}]
+
+        return {
+            "cpu_count": cpu_count,
+            "memory_total_gb": round(memory.total / (1024**3), 2),
+            "memory_available_gb": round(memory.available / (1024**3), 2),
+            "gpus": gpu_info
+        }
+
+    async def setup_ollama_model(self, config: ModelConfig) -> bool:
+        """Set up Ollama model."""
+        try:
+            # Check if Ollama service is running
+            proc = subprocess.run(["pgrep", "-f", "ollama"], capture_output=True)
+            if proc.returncode != 0:
+                logger.info("Starting Ollama service...")
+                self.engine_processes["ollama"] = subprocess.Popen(["ollama", "serve"])
+                await asyncio.sleep(3)
+
+            # Pull model if needed
+            result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True, text=True
+            )
+
+            if config.name not in result.stdout:
+                logger.info(f"Pulling Ollama model {config.name}...")
+                subprocess.run(["ollama", "pull", config.name], check=True)
+
+            # Configure DSPy LM
+            lm = dspy.LM(
+                f"ollama/{config.name}",
+                api_base="http://localhost:11434",
+                max_tokens=config.max_tokens,
+                temperature=0.1
+            )
+
+            # Create async program
+            program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+            self.models[config.name] = {
+                "lm": lm,
+                "program": program,
+                "config": config,
+                "status": "ready"
+            }
+
+            logger.info(f"Ollama model {config.name} ready")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to setup Ollama model {config.name}: {e}")
+            return False
+
+    async def setup_vllm_model(self, config: ModelConfig) -> bool:
+        """Set up vLLM model."""
+        try:
+            import vllm
+            from vllm import LLM, SamplingParams
+
+            # Start vLLM server
+            vllm_cmd = [
+                "python", "-m", "vllm.entrypoints.openai.api_server",
+                "--model", config.model_path,
+                "--host", "0.0.0.0",
+                "--port", "8001",
+                "--gpu-memory-utilization", "0.8"
+            ]
+
+            if config.quantization:
+                vllm_cmd.extend(["--quantization", config.quantization])
+
+            logger.info(f"Starting vLLM server for {config.name}...")
+            self.engine_processes[f"vllm_{config.name}"] = subprocess.Popen(vllm_cmd)
+
+            # Wait for server to start
+            await asyncio.sleep(10)
+
+            # Configure DSPy LM
+            lm = dspy.LM(
+                "openai/local",  # Use OpenAI-compatible endpoint
+                api_base="http://localhost:8001/v1",
+                api_key="fake-key",  # vLLM doesn't require real key
+                max_tokens=config.max_tokens
+            )
+
+            program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+            self.models[config.name] = {
+                "lm": lm,
+                "program": program,
+                "config": config,
+                "status": "ready"
+            }
+
+            logger.info(f"vLLM model {config.name} ready")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to setup vLLM model {config.name}: {e}")
+            return False
+
+    async def setup_sglang_model(self, config: ModelConfig) -> bool:
+        """Set up SGLang model."""
+        try:
+            # Start SGLang runtime server
+            sglang_cmd = [
+                "python", "-m", "sglang.launch_server",
+                "--model-path", config.model_path,
+                "--host", "0.0.0.0",
+                "--port", "8002",
+                "--mem-fraction-static", "0.8"
+            ]
+
+            logger.info(f"Starting SGLang server for {config.name}...")
+            self.engine_processes[f"sglang_{config.name}"] = subprocess.Popen(sglang_cmd)
+
+            # Wait for server to start
+            await asyncio.sleep(15)
+
+            # Configure DSPy LM for SGLang
+            lm = dspy.LM(
+                "openai/local",  # SGLang provides OpenAI-compatible API
+                api_base="http://localhost:8002/v1",
+                api_key="fake-key",
+                max_tokens=config.max_tokens
+            )
+
+            program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+            self.models[config.name] = {
+                "lm": lm,
+                "program": program,
+                "config": config,
+                "status": "ready"
+            }
+
+            logger.info(f"SGLang model {config.name} ready")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to setup SGLang model {config.name}: {e}")
+            return False
+
+    async def initialize_models(self, model_configs: List[ModelConfig]):
+        """Initialize all configured models."""
+        tasks = []
+
+        for config in model_configs:
+            if config.engine == LocalEngine.OLLAMA:
+                task = asyncio.create_task(self.setup_ollama_model(config))
+            elif config.engine == LocalEngine.VLLM:
+                task = asyncio.create_task(self.setup_vllm_model(config))
+            elif config.engine == LocalEngine.SGLANG:
+                task = asyncio.create_task(self.setup_sglang_model(config))
+
+            tasks.append((config.name, task))
+
+        # Wait for all models to initialize
+        for model_name, task in tasks:
+            try:
+                success = await task
+                if success:
+                    self.model_stats[model_name] = {
+                        "requests": 0,
+                        "successes": 0,
+                        "failures": 0,
+                        "avg_latency": 0.0
+                    }
+            except Exception as e:
+                logger.error(f"Failed to initialize {model_name}: {e}")
+
+    async def predict(self, model_name: str, question: str) -> Dict[str, Any]:
+        """Make prediction with specified model."""
+        if model_name not in self.models:
+            raise ValueError(f"Model {model_name} not available")
+
+        model_info = self.models[model_name]
+        stats = self.model_stats[model_name]
+
+        start_time = time.time()
+        stats["requests"] += 1
+
+        try:
+            # Temporarily configure DSPy with the specific model
+            dspy.configure(lm=model_info["lm"])
+
+            result = await model_info["program"](question=question)
+
+            latency = time.time() - start_time
+            stats["successes"] += 1
+            stats["avg_latency"] = (
+                stats["avg_latency"] * (stats["successes"] - 1) + latency
+            ) / stats["successes"]
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "model": model_name,
+                "engine": model_info["config"].engine.value,
+                "latency": latency,
+                "status": "success"
+            }
+
+        except Exception as e:
+            stats["failures"] += 1
+            logger.error(f"Prediction failed for {model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Prediction failed: {str(e)}"
+            )
+
+    def get_model_stats(self) -> Dict[str, Any]:
+        """Get statistics for all models."""
+        system_info = self.get_system_info()
+        model_info = {}
+
+        for model_name, model in self.models.items():
+            stats = self.model_stats.get(model_name, {})
+            model_info[model_name] = {
+                "engine": model["config"].engine.value,
+                "status": model["status"],
+                "requests": stats.get("requests", 0),
+                "successes": stats.get("successes", 0),
+                "failures": stats.get("failures", 0),
+                "success_rate": (
+                    stats["successes"] / stats["requests"]
+                    if stats.get("requests", 0) > 0 else 0
+                ),
+                "avg_latency": stats.get("avg_latency", 0.0),
+                "gpu_memory_gb": model["config"].gpu_memory_gb,
+                "max_tokens": model["config"].max_tokens
+            }
+
+        return {
+            "system": system_info,
+            "models": model_info
+        }
+
+    async def cleanup(self):
+        """Clean up all model processes."""
+        for process in self.engine_processes.values():
+            try:
+                process.terminate()
+                process.wait(timeout=10)
+            except:
+                process.kill()
+
+class EnterpriseLocalServer:
+    """Enterprise local model server with multiple engines."""
+
+    def __init__(self):
+        self.model_manager = LocalModelManager()
+
+    async def initialize(self):
+        """Initialize all local models."""
+        # Configure models based on available resources
+        system_info = self.model_manager.get_system_info()
+        gpu_memory = sum(gpu.get("memory_free", 0) for gpu in system_info["gpus"] if "error" not in gpu)
+
+        model_configs = []
+
+        # Always try Ollama (CPU fallback available)
+        model_configs.append(
+            ModelConfig(
+                name="llama3.1:8b",
+                engine=LocalEngine.OLLAMA,
+                model_path="llama3.1:8b",
+                gpu_memory_gb=8,
+                max_tokens=2000,
+                context_length=8192
+            )
+        )
+
+        # Add vLLM if sufficient GPU memory
+        if gpu_memory > 16000:  # 16GB+ GPU memory
+            model_configs.append(
+                ModelConfig(
+                    name="llama-3.1-8b-vllm",
+                    engine=LocalEngine.VLLM,
+                    model_path="meta-llama/Llama-3.1-8B-Instruct",
+                    gpu_memory_gb=12,
+                    max_tokens=4000,
+                    context_length=8192,
+                    quantization="awq"
+                )
+            )
+
+        # Add SGLang if sufficient resources
+        if gpu_memory > 24000:  # 24GB+ for SGLang
+            model_configs.append(
+                ModelConfig(
+                    name="llama-3.1-8b-sglang",
+                    engine=LocalEngine.SGLANG,
+                    model_path="meta-llama/Llama-3.1-8B-Instruct",
+                    gpu_memory_gb=16,
+                    max_tokens=4000,
+                    context_length=8192
+                )
+            )
+
+        await self.model_manager.initialize_models(model_configs)
+        logger.info("Local model server initialized")
+
+    async def predict(self, model_name: str, question: str) -> Dict[str, Any]:
+        """Make prediction with load balancing."""
+        return await self.model_manager.predict(model_name, question)
+
+    async def predict_auto(self, question: str) -> Dict[str, Any]:
+        """Automatically select best available model."""
+        available_models = list(self.model_manager.models.keys())
+
+        if not available_models:
+            raise HTTPException(status_code=503, detail="No models available")
+
+        # Simple strategy: use first available model
+        # In production, implement more sophisticated selection
+        model_name = available_models[0]
+        return await self.predict(model_name, question)
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive server status."""
+        return self.model_manager.get_model_stats()
+
+# FastAPI application
+server = EnterpriseLocalServer()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await server.initialize()
+    yield
+    await server.model_manager.cleanup()
+
+app = FastAPI(
+    title="DSPy Enterprise Local Model Server",
+    description="Production local model serving with multiple engines",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+class PredictionRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    model: Optional[str] = None
+
+@app.post("/predict")
+async def predict_endpoint(request: PredictionRequest):
+    """Main prediction endpoint."""
+    if request.model:
+        return await server.predict(request.model, request.question)
+    else:
+        return await server.predict_auto(request.question)
+
+@app.get("/models")
+async def list_models():
+    """List all available local models."""
+    status = server.get_status()
+    return status["models"]
+
+@app.get("/system")
+async def system_info():
+    """Get system resource information."""
+    status = server.get_status()
+    return status["system"]
+
+@app.get("/health")
+async def health_check():
+    """Comprehensive health check."""
+    try:
+        status = server.get_status()
+        healthy_models = sum(
+            1 for model in status["models"].values()
+            if model["status"] == "ready"
+        )
+
+        return {
+            "status": "healthy" if healthy_models > 0 else "unhealthy",
+            "healthy_models": healthy_models,
+            "total_models": len(status["models"]),
+            "system_status": "ok"
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+
+@app.get("/stats")
+async def get_statistics():
+    """Get detailed model statistics."""
+    return server.get_status()
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "enterprise_local:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False
+    )
+```
+
+## Core Local Deployment Patterns
+
+### Basic Ollama Setup
+
+```python
+# Simple Ollama integration for DSPy
+import dspy
+import subprocess
+import requests
+import time
+
+def setup_ollama_model(model_name: str = "llama3.1:8b"):
+    """Set up Ollama model for DSPy."""
+
+    # Start Ollama service if not running
+    try:
+        requests.get("http://localhost:11434/api/tags", timeout=5)
+    except:
+        print("Starting Ollama...")
+        subprocess.Popen(["ollama", "serve"])
+        time.sleep(5)
+
+    # Pull model if not available
+    result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+    if model_name not in result.stdout:
+        print(f"Downloading {model_name}...")
+        subprocess.run(["ollama", "pull", model_name])
+
+    # Configure DSPy
+    lm = dspy.LM(
+        f"ollama/{model_name}",
+        api_base="http://localhost:11434"
+    )
+    dspy.configure(lm=lm)
+
+    return dspy.ChainOfThought("question -> answer")
+
+# Usage
+program = setup_ollama_model()
+result = program(question="What is machine learning?")
+print(result.answer)
+```
+
+### Advanced vLLM Integration
+
+```python
+# Production vLLM setup for DSPy
+import dspy
+import subprocess
+import asyncio
+import aiohttp
+from typing import Optional
+
+class VLLMManager:
+    def __init__(self, model_path: str, port: int = 8001):
+        self.model_path = model_path
+        self.port = port
+        self.process = None
+        self.api_base = f"http://localhost:{port}/v1"
+
+    async def start_server(self, gpu_memory_utilization: float = 0.8):
+        """Start vLLM OpenAI-compatible server."""
+        cmd = [
+            "python", "-m", "vllm.entrypoints.openai.api_server",
+            "--model", self.model_path,
+            "--host", "0.0.0.0",
+            "--port", str(self.port),
+            "--gpu-memory-utilization", str(gpu_memory_utilization),
+            "--disable-log-requests"  # Reduce logging for production
+        ]
+
+        print(f"Starting vLLM server for {self.model_path}...")
+        self.process = subprocess.Popen(cmd)
+
+        # Wait for server to be ready
+        await self._wait_for_server()
+
+    async def _wait_for_server(self, timeout: int = 120):
+        """Wait for vLLM server to be ready."""
+        start_time = asyncio.get_event_loop().time()
+
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{self.api_base}/models") as response:
+                        if response.status == 200:
+                            print("vLLM server is ready!")
+                            return
+            except:
+                pass
+
+            await asyncio.sleep(2)
+
+        raise TimeoutError("vLLM server failed to start within timeout")
+
+    def get_dspy_lm(self) -> dspy.LM:
+        """Get DSPy LM configured for vLLM."""
+        return dspy.LM(
+            "openai/local",  # Use generic OpenAI interface
+            api_base=self.api_base,
+            api_key="fake-key",  # vLLM doesn't require real key
+            max_tokens=4000
+        )
+
+    def stop_server(self):
+        """Stop vLLM server."""
+        if self.process:
+            self.process.terminate()
+            self.process.wait()
+
+# Usage example
+async def setup_vllm_dspy():
+    manager = VLLMManager("meta-llama/Llama-3.1-8B-Instruct")
+    await manager.start_server()
+
+    lm = manager.get_dspy_lm()
+    dspy.configure(lm=lm, async_max_workers=4)
+
+    program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+    return program, manager
+
+# Run setup
+# program, manager = await setup_vllm_dspy()
+```
+
+### SGLang Runtime Configuration
+
+```python
+# SGLang runtime setup for high-performance inference
+import dspy
+import subprocess
+import asyncio
+import aiohttp
+from typing import Dict, Any
+
+class SGLangManager:
+    def __init__(self, model_path: str, port: int = 8002):
+        self.model_path = model_path
+        self.port = port
+        self.process = None
+        self.api_base = f"http://localhost:{port}/v1"
+
+    async def start_runtime(self,
+                          mem_fraction_static: float = 0.8,
+                          tp_size: int = 1,
+                          enable_flashinfer: bool = True):
+        """Start SGLang runtime server."""
+        cmd = [
+            "python", "-m", "sglang.launch_server",
+            "--model-path", self.model_path,
+            "--host", "0.0.0.0",
+            "--port", str(self.port),
+            "--mem-fraction-static", str(mem_fraction_static),
+            "--tp-size", str(tp_size)
+        ]
+
+        if enable_flashinfer:
+            cmd.append("--enable-flashinfer")
+
+        print(f"Starting SGLang runtime for {self.model_path}...")
+        self.process = subprocess.Popen(cmd)
+
+        await self._wait_for_runtime()
+
+    async def _wait_for_runtime(self, timeout: int = 180):
+        """Wait for SGLang runtime to be ready."""
+        start_time = asyncio.get_event_loop().time()
+
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    health_url = f"http://localhost:{self.port}/health"
+                    async with session.get(health_url) as response:
+                        if response.status == 200:
+                            print("SGLang runtime is ready!")
+                            return
+            except:
+                pass
+
+            await asyncio.sleep(3)
+
+        raise TimeoutError("SGLang runtime failed to start within timeout")
+
+    def get_dspy_lm(self) -> dspy.LM:
+        """Get DSPy LM configured for SGLang."""
+        return dspy.LM(
+            "openai/local",
+            api_base=self.api_base,
+            api_key="fake-key",
+            max_tokens=4000,
+            temperature=0.1
+        )
+
+    async def get_runtime_stats(self) -> Dict[str, Any]:
+        """Get SGLang runtime statistics."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                stats_url = f"http://localhost:{self.port}/get_server_info"
+                async with session.get(stats_url) as response:
+                    if response.status == 200:
+                        return await response.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+        return {"status": "unknown"}
+
+    def stop_runtime(self):
+        """Stop SGLang runtime."""
+        if self.process:
+            self.process.terminate()
+            self.process.wait()
+
+# Production setup with monitoring
+class ProductionSGLang:
+    def __init__(self, model_path: str):
+        self.manager = SGLangManager(model_path)
+        self.program = None
+
+    async def initialize(self):
+        """Initialize SGLang for production use."""
+        await self.manager.start_runtime(
+            mem_fraction_static=0.85,  # Use more GPU memory
+            tp_size=1,  # Tensor parallelism
+            enable_flashinfer=True  # Performance optimization
+        )
+
+        # Configure DSPy
+        lm = self.manager.get_dspy_lm()
+        dspy.configure(lm=lm, async_max_workers=8)
+
+        # Create async program
+        self.program = dspy.asyncify(dspy.ChainOfThought("question -> answer"))
+
+    async def predict(self, question: str) -> Dict[str, Any]:
+        """Make prediction with performance monitoring."""
+        if not self.program:
+            raise RuntimeError("SGLang not initialized")
+
+        start_time = asyncio.get_event_loop().time()
+
+        try:
+            result = await self.program(question=question)
+            latency = asyncio.get_event_loop().time() - start_time
+
+            # Get runtime stats
+            stats = await self.manager.get_runtime_stats()
+
+            return {
+                "answer": result.answer,
+                "reasoning": getattr(result, "reasoning", ""),
+                "latency": latency,
+                "runtime_stats": stats,
+                "status": "success"
+            }
+
+        except Exception as e:
+            return {
+                "error": str(e),
+                "latency": asyncio.get_event_loop().time() - start_time,
+                "status": "error"
+            }
+
+    async def cleanup(self):
+        """Clean up resources."""
+        self.manager.stop_runtime()
+
+# Usage
+# sglang = ProductionSGLang("meta-llama/Llama-3.1-8B-Instruct")
+# await sglang.initialize()
+# result = await sglang.predict("Explain quantum computing")
+```
+
+## Performance Optimization
+
+### GPU Memory Management
+
+```python
+# Optimize GPU memory usage for local models
+import torch
+import gc
+from typing import Optional
+
+class GPUMemoryManager:
+    def __init__(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def get_memory_info(self) -> dict:
+        """Get current GPU memory usage."""
+        if not torch.cuda.is_available():
+            return {"error": "CUDA not available"}
+
+        allocated = torch.cuda.memory_allocated()
+        reserved = torch.cuda.memory_reserved()
+
+        return {
+            "allocated_mb": allocated / 1024 / 1024,
+            "reserved_mb": reserved / 1024 / 1024,
+            "free_mb": (torch.cuda.get_device_properties(0).total_memory - reserved) / 1024 / 1024
+        }
+
+    def optimize_memory(self):
+        """Optimize GPU memory usage."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+
+    def set_memory_fraction(self, fraction: float = 0.8):
+        """Set maximum GPU memory fraction to use."""
+        if torch.cuda.is_available():
+            torch.cuda.set_per_process_memory_fraction(fraction)
+
+# Memory monitoring for local models
+class MemoryMonitoredDSPy:
+    def __init__(self, model_name: str):
+        self.memory_manager = GPUMemoryManager()
+        self.lm = dspy.LM(f"ollama/{model_name}")
+        dspy.configure(lm=self.lm)
+        self.program = dspy.ChainOfThought("question -> answer")
+
+    async def predict_with_monitoring(self, question: str) -> dict:
+        """Predict with memory monitoring."""
+        # Check memory before prediction
+        memory_before = self.memory_manager.get_memory_info()
+
+        try:
+            result = self.program(question=question)
+
+            # Optimize memory after prediction
+            self.memory_manager.optimize_memory()
+
+            memory_after = self.memory_manager.get_memory_info()
+
+            return {
+                "answer": result.answer,
+                "memory_before": memory_before,
+                "memory_after": memory_after,
+                "status": "success"
+            }
+
+        except Exception as e:
+            return {
+                "error": str(e),
+                "memory_info": self.memory_manager.get_memory_info(),
+                "status": "error"
+            }
+```
+
+### Request Batching
+
+```python
+# Batch processing for improved throughput
+import asyncio
+from typing import List, Dict, Any
+import time
+
+class BatchProcessor:
+    def __init__(self, max_batch_size: int = 8, wait_time: float = 0.1):
+        self.max_batch_size = max_batch_size
+        self.wait_time = wait_time
+        self.pending_requests = []
+        self.processing = False
+
+    async def add_request(self, question: str) -> Dict[str, Any]:
+        """Add request to batch queue."""
+        future = asyncio.Future()
+        self.pending_requests.append({"question": question, "future": future})
+
+        # Start processing if not already running
+        if not self.processing:
+            asyncio.create_task(self.process_batch())
+
+        return await future
+
+    async def process_batch(self):
+        """Process accumulated requests in batches."""
+        self.processing = True
+
+        while self.pending_requests:
+            # Wait for more requests or timeout
+            await asyncio.sleep(self.wait_time)
+
+            # Take batch of requests
+            batch = self.pending_requests[:self.max_batch_size]
+            self.pending_requests = self.pending_requests[self.max_batch_size:]
+
+            if batch:
+                await self._process_request_batch(batch)
+
+        self.processing = False
+
+    async def _process_request_batch(self, batch: List[Dict[str, Any]]):
+        """Process a batch of requests."""
+        questions = [item["question"] for item in batch]
+
+        try:
+            # Process all questions concurrently
+            tasks = []
+            for question in questions:
+                # Configure your DSPy program here
+                task = asyncio.create_task(self._single_prediction(question))
+                tasks.append(task)
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Return results to waiting futures
+            for i, result in enumerate(results):
+                future = batch[i]["future"]
+                if isinstance(result, Exception):
+                    future.set_exception(result)
+                else:
+                    future.set_result(result)
+
+        except Exception as e:
+            # Set exception for all futures in batch
+            for item in batch:
+                item["future"].set_exception(e)
+
+    async def _single_prediction(self, question: str) -> Dict[str, Any]:
+        """Make single prediction - implement with your DSPy program."""
+        # This would use your configured DSPy program
+        program = dspy.ChainOfThought("question -> answer")
+        result = program(question=question)
+
+        return {
+            "answer": result.answer,
+            "status": "success"
+        }
+
+# Usage with FastAPI
+from fastapi import FastAPI
+
+app = FastAPI()
+batch_processor = BatchProcessor(max_batch_size=4, wait_time=0.05)
+
+@app.post("/predict")
+async def batched_predict(request: dict):
+    return await batch_processor.add_request(request["question"])
+```
+
+## Speed Tips
+
+- Use quantized models (AWQ, GPTQ) to reduce GPU memory requirements and increase throughput
+- Configure optimal batch sizes based on your GPU memory capacity
+- Enable FlashAttention and other optimization flags in SGLang/vLLM for better performance
+- Use tensor parallelism for large models across multiple GPUs
+- Implement request batching to improve overall throughput
+- Monitor GPU utilization and memory usage to optimize resource allocation
+
+## Common Pitfalls
+
+- Not checking GPU memory capacity before loading large models
+- Missing proper error handling for model server startup failures
+- Not implementing graceful degradation when local models are unavailable
+- Overlooking proper cleanup of model processes and GPU memory
+- Not monitoring resource usage leading to OOM errors
+- Insufficient warm-up time for model servers during initialization
+
+## Best Practices Summary
+
+- Always implement health checks for local model services
+- Use connection pooling and async patterns for better resource utilization
+- Monitor GPU memory usage and implement proper cleanup routines
+- Implement fallback strategies when local models fail or are unavailable
+- Use environment-specific configurations for development vs production
+- Set up proper logging and monitoring for local model performance
+- Consider using Docker containers for consistent deployment environments
+
+## References
+
+- [Ollama Documentation](https://ollama.ai/docs)
+- [vLLM Documentation](https://vllm.readthedocs.io/)
+- [SGLang Documentation](https://sgl-project.github.io/)
+- [CUDA Memory Management](https://pytorch.org/docs/stable/notes/cuda.html)
+- [Model Quantization Techniques](https://huggingface.co/docs/transformers/quantization)

@@ -1,0 +1,1179 @@
+---
+description: Complete Migration Guide - Legacy DSPy to 3.0.1 migration patterns and best practices
+alwaysApply: false
+---
+
+> You are an expert in migrating legacy DSPy applications to DSPy 3.0.1 with comprehensive migration patterns and automated tooling.
+
+## Complete Migration Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Legacy        │    │   Assessment    │    │   Migration     │
+│   Code Analysis │───▶│   & Planning    │───▶│   Execution     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Dependencies  │    │   API Changes   │    │   Configuration │
+│   Updates       │───▶│   Mapping       │───▶│   Updates       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Testing &     │    │   Performance   │    │   Documentation│
+│   Validation    │◀───│   Optimization  │◀───│   & Training    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Migration Overview
+
+### Major Changes in DSPy 3.0.1
+
+**1. Language Model Configuration**
+
+- **Legacy**: `dspy.OpenAI()`, `dspy.Cohere()`, `dspy.Anthropic()`
+- **New**: `dspy.LM('openai/gpt-4o')`, `dspy.LM('cohere/command-r')`
+
+**2. Settings Configuration**
+
+- **Legacy**: `dspy.settings.configure(lm=model, rm=retriever)`
+- **New**: `dspy.configure(lm=model)` with built-in retrieval
+
+**3. Retrieval Integration**
+
+- **Legacy**: Separate retrieval model setup
+- **New**: Built-in retrieval with `dspy.retrievers.*`
+
+**4. Optimizer Changes**
+
+- **Legacy**: Basic optimizers with limited capabilities
+- **New**: Advanced GEPA, SIMBA, and MIPROv2 optimizers
+
+**5. Module Enhancements**
+
+- **Legacy**: Basic modules with limited functionality
+- **New**: Enhanced modules with better error handling and features
+
+## Instant Migration Templates
+
+### Quick Migration Script
+
+```python
+#!/usr/bin/env python3
+"""
+Quick migration script for DSPy legacy code to 3.0.1
+Usage: python migrate_dspy.py <source_file_or_directory>
+"""
+
+import re
+import os
+import sys
+from pathlib import Path
+from typing import Dict, List, Tuple
+import argparse
+
+class DSPyMigrator:
+    """Automated migration tool for DSPy legacy code"""
+
+    def __init__(self):
+        self.migration_patterns = self._initialize_patterns()
+        self.migration_log = []
+
+    def _initialize_patterns(self) -> List[Tuple[str, str, str]]:
+        """Initialize migration patterns (regex, replacement, description)"""
+
+        return [
+            # LM Configuration Changes
+            (r'dspy\.OpenAI\(\)', 'dspy.LM(\'openai/gpt-3.5-turbo\')', 'Updated OpenAI LM initialization'),
+            (r'dspy\.OpenAI\(model="([^"]+)"\)', r'dspy.LM(\'openai/\1\')', 'Updated OpenAI LM with model'),
+            (r'dspy\.Cohere\(\)', 'dspy.LM(\'cohere/command-r\')', 'Updated Cohere LM initialization'),
+            (r'dspy\.Anthropic\(\)', 'dspy.LM(\'anthropic/claude-3-sonnet\')', 'Updated Anthropic LM initialization'),
+
+            # Settings Configuration
+            (r'dspy\.settings\.configure\(lm=([^,)]+)\)', r'dspy.configure(lm=\1)', 'Updated settings configuration'),
+            (r'dspy\.settings\.configure\(lm=([^,]+),\s*rm=([^)]+)\)',
+             r'dspy.configure(lm=\1)  # NOTE: Retrieval model integration changed - see migration guide',
+             'Updated settings with retrieval note'),
+
+            # Import Changes
+            (r'from dspy import OpenAI, Cohere, Anthropic', 'import dspy  # Use dspy.LM() instead', 'Updated imports'),
+            (r'import dspy\nfrom dspy import (.*)', r'import dspy\n# Legacy imports updated - use dspy.LM() for models', 'Simplified imports'),
+
+            # Retrieval Changes
+            (r'dspy\.ColBERTv2\(([^)]+)\)', r'dspy.retrievers.ColBERTv2(\1)', 'Updated ColBERTv2 retrieval'),
+            (r'dspy\.Retrieve\(([^)]+)\)', r'dspy.retrievers.Embeddings(\1)', 'Updated retrieval to Embeddings'),
+
+            # Optimizer Updates
+            (r'dspy\.BootstrapFewShot\(', r'dspy.BootstrapFewShot(', 'BootstrapFewShot unchanged'),
+            (r'dspy\.teleprompt\.BootstrapFewShot\(', r'dspy.BootstrapFewShot(', 'Updated optimizer import'),
+
+            # Module Updates (most remain compatible)
+            (r'dspy\.Predict\(', r'dspy.Predict(', 'Predict module unchanged'),
+            (r'dspy\.ChainOfThought\(', r'dspy.ChainOfThought(', 'ChainOfThought unchanged'),
+        ]
+
+    def migrate_file(self, file_path: Path) -> bool:
+        """Migrate a single Python file"""
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            original_content = content
+            migration_count = 0
+
+            # Apply migration patterns
+            for pattern, replacement, description in self.migration_patterns:
+                matches = re.findall(pattern, content)
+                if matches:
+                    content = re.sub(pattern, replacement, content)
+                    migration_count += len(matches)
+
+                    self.migration_log.append({
+                        'file': str(file_path),
+                        'pattern': pattern,
+                        'matches': len(matches),
+                        'description': description
+                    })
+
+            # Write migrated content if changes were made
+            if content != original_content:
+                # Create backup
+                backup_path = file_path.with_suffix(file_path.suffix + '.backup')
+                with open(backup_path, 'w', encoding='utf-8') as f:
+                    f.write(original_content)
+
+                # Write migrated code
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                print(f"✅ Migrated {file_path} ({migration_count} changes)")
+                return True
+            else:
+                print(f"⚪ No changes needed for {file_path}")
+                return False
+
+        except Exception as e:
+            print(f"❌ Error migrating {file_path}: {e}")
+            return False
+
+def main():
+    parser = argparse.ArgumentParser(description='Migrate DSPy legacy code to 3.0.1')
+    parser.add_argument('path', help='File or directory to migrate')
+    parser.add_argument('--dry-run', action='store_true', help='Show changes without applying them')
+
+    args = parser.parse_args()
+
+    migrator = DSPyMigrator()
+    path = Path(args.path)
+
+    if path.is_file():
+        migrator.migrate_file(path)
+    elif path.is_dir():
+        for py_file in path.rglob('*.py'):
+            migrator.migrate_file(py_file)
+
+    # Print migration summary
+    print("\n📊 Migration Summary:")
+    for log_entry in migrator.migration_log:
+        print(f"  {log_entry['file']}: {log_entry['description']} ({log_entry['matches']} changes)")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Comprehensive Migration Framework
+
+````python
+import dspy
+import ast
+import os
+import json
+from typing import Dict, List, Any, Optional, Tuple
+from pathlib import Path
+from dataclasses import dataclass
+import logging
+
+@dataclass
+class MigrationIssue:
+    """Represents a migration issue found in code"""
+    file_path: str
+    line_number: int
+    issue_type: str
+    description: str
+    legacy_code: str
+    suggested_fix: str
+    severity: str  # 'error', 'warning', 'info'
+
+class DSPyCodeAnalyzer(ast.NodeVisitor):
+    """AST-based code analyzer for DSPy migration"""
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.issues = []
+        self.imports = {}
+        self.current_line = 0
+
+    def visit_Import(self, node):
+        """Analyze import statements"""
+        for alias in node.names:
+            self.imports[alias.name] = alias.asname or alias.name
+
+            # Check for deprecated imports
+            if alias.name in ['dspy.OpenAI', 'dspy.Cohere', 'dspy.Anthropic']:
+                self.issues.append(MigrationIssue(
+                    file_path=self.file_path,
+                    line_number=node.lineno,
+                    issue_type='deprecated_import',
+                    description=f'Deprecated import: {alias.name}',
+                    legacy_code=f'import {alias.name}',
+                    suggested_fix='Use dspy.LM() instead',
+                    severity='warning'
+                ))
+
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        """Analyze function calls for deprecated patterns"""
+
+        # Check for deprecated LM initializations
+        if isinstance(node.func, ast.Attribute):
+            if (isinstance(node.func.value, ast.Name) and
+                node.func.value.id == 'dspy' and
+                node.func.attr in ['OpenAI', 'Cohere', 'Anthropic']):
+
+                self.issues.append(MigrationIssue(
+                    file_path=self.file_path,
+                    line_number=node.lineno,
+                    issue_type='deprecated_lm_init',
+                    description=f'Deprecated LM initialization: dspy.{node.func.attr}()',
+                    legacy_code=f'dspy.{node.func.attr}()',
+                    suggested_fix=f'dspy.LM(\'{node.func.attr.lower()}/model-name\')',
+                    severity='error'
+                ))
+
+        # Check for deprecated settings.configure
+        if (isinstance(node.func, ast.Attribute) and
+            isinstance(node.func.value, ast.Attribute) and
+            isinstance(node.func.value.value, ast.Name) and
+            node.func.value.value.id == 'dspy' and
+            node.func.value.attr == 'settings' and
+            node.func.attr == 'configure'):
+
+            self.issues.append(MigrationIssue(
+                file_path=self.file_path,
+                line_number=node.lineno,
+                issue_type='deprecated_settings',
+                description='Deprecated settings.configure usage',
+                legacy_code='dspy.settings.configure(...)',
+                suggested_fix='dspy.configure(...)',
+                severity='warning'
+            ))
+
+        self.generic_visit(node)
+
+class ComprehensiveMigrationTool:
+    """Comprehensive migration tool with analysis and automated fixes"""
+
+    def __init__(self):
+        self.setup_logging()
+        self.migration_stats = {
+            'files_analyzed': 0,
+            'files_migrated': 0,
+            'issues_found': 0,
+            'issues_fixed': 0
+        }
+
+    def setup_logging(self):
+        """Setup logging for migration process"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('dspy_migration.log'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def analyze_codebase(self, root_path: Path) -> List[MigrationIssue]:
+        """Analyze entire codebase for migration issues"""
+
+        all_issues = []
+
+        for py_file in root_path.rglob('*.py'):
+            self.migration_stats['files_analyzed'] += 1
+
+            try:
+                with open(py_file, 'r', encoding='utf-8') as f:
+                    source = f.read()
+
+                # Parse AST
+                tree = ast.parse(source, filename=str(py_file))
+
+                # Analyze with custom visitor
+                analyzer = DSPyCodeAnalyzer(str(py_file))
+                analyzer.visit(tree)
+
+                all_issues.extend(analyzer.issues)
+
+                if analyzer.issues:
+                    self.logger.info(f"Found {len(analyzer.issues)} issues in {py_file}")
+
+            except Exception as e:
+                self.logger.error(f"Error analyzing {py_file}: {e}")
+
+        self.migration_stats['issues_found'] = len(all_issues)
+        return all_issues
+
+    def generate_migration_plan(self, issues: List[MigrationIssue]) -> Dict[str, Any]:
+        """Generate comprehensive migration plan"""
+
+        # Group issues by type and severity
+        issue_summary = {}
+        file_summary = {}
+
+        for issue in issues:
+            # By type
+            if issue.issue_type not in issue_summary:
+                issue_summary[issue.issue_type] = []
+            issue_summary[issue.issue_type].append(issue)
+
+            # By file
+            if issue.file_path not in file_summary:
+                file_summary[issue.file_path] = []
+            file_summary[issue.file_path].append(issue)
+
+        # Create migration steps
+        migration_steps = []
+
+        # Step 1: Update dependencies
+        migration_steps.append({
+            'step': 1,
+            'title': 'Update Dependencies',
+            'description': 'Update DSPy to version 3.0.1',
+            'commands': [
+                'pip install --upgrade dspy-ai>=3.0.1'
+            ],
+            'estimated_time': '5 minutes'
+        })
+
+        # Step 2: Fix critical issues
+        critical_issues = [i for i in issues if i.severity == 'error']
+        if critical_issues:
+            migration_steps.append({
+                'step': 2,
+                'title': 'Fix Critical Issues',
+                'description': f'Fix {len(critical_issues)} critical issues that will break functionality',
+                'issues': critical_issues,
+                'estimated_time': f'{len(critical_issues) * 2} minutes'
+            })
+
+        # Step 3: Address warnings
+        warning_issues = [i for i in issues if i.severity == 'warning']
+        if warning_issues:
+            migration_steps.append({
+                'step': 3,
+                'title': 'Address Warnings',
+                'description': f'Update {len(warning_issues)} deprecated patterns',
+                'issues': warning_issues,
+                'estimated_time': f'{len(warning_issues)} minutes'
+            })
+
+        # Step 4: Test and validate
+        migration_steps.append({
+            'step': 4,
+            'title': 'Test and Validate',
+            'description': 'Run tests and validate migration',
+            'commands': [
+                'python -m pytest tests/',
+                'python -c "import dspy; print(dspy.__version__)"'
+            ],
+            'estimated_time': '10 minutes'
+        })
+
+        return {
+            'summary': {
+                'total_issues': len(issues),
+                'critical_issues': len(critical_issues),
+                'warning_issues': len(warning_issues),
+                'files_affected': len(file_summary),
+                'estimated_migration_time': sum([
+                    int(step['estimated_time'].split()[0])
+                    for step in migration_steps
+                    if 'minutes' in step['estimated_time']
+                ])
+            },
+            'issue_breakdown': issue_summary,
+            'file_breakdown': file_summary,
+            'migration_steps': migration_steps
+        }
+
+    def apply_automated_fixes(self, issues: List[MigrationIssue]) -> int:
+        """Apply automated fixes for common migration issues"""
+
+        fixes_applied = 0
+
+        # Group issues by file for efficient processing
+        files_to_fix = {}
+        for issue in issues:
+            if issue.file_path not in files_to_fix:
+                files_to_fix[issue.file_path] = []
+            files_to_fix[issue.file_path].append(issue)
+
+        for file_path, file_issues in files_to_fix.items():
+            try:
+                # Read file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                original_content = content
+
+                # Apply fixes (sort by line number descending to avoid offset issues)
+                file_issues.sort(key=lambda x: x.line_number, reverse=True)
+
+                for issue in file_issues:
+                    if issue.issue_type == 'deprecated_lm_init':
+                        content = self._fix_lm_initialization(content, issue)
+                        fixes_applied += 1
+                    elif issue.issue_type == 'deprecated_settings':
+                        content = self._fix_settings_configure(content, issue)
+                        fixes_applied += 1
+
+                # Write back if changes were made
+                if content != original_content:
+                    # Create backup
+                    backup_path = Path(file_path).with_suffix('.backup')
+                    with open(backup_path, 'w', encoding='utf-8') as f:
+                        f.write(original_content)
+
+                    # Write fixed content
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+
+                    self.logger.info(f"Applied fixes to {file_path}")
+                    self.migration_stats['files_migrated'] += 1
+
+            except Exception as e:
+                self.logger.error(f"Error applying fixes to {file_path}: {e}")
+
+        self.migration_stats['issues_fixed'] = fixes_applied
+        return fixes_applied
+
+    def _fix_lm_initialization(self, content: str, issue: MigrationIssue) -> str:
+        """Fix deprecated LM initialization patterns"""
+
+        # Map old patterns to new ones
+        lm_mappings = {
+            'dspy.OpenAI()': 'dspy.LM(\'openai/gpt-3.5-turbo\')',
+            'dspy.Cohere()': 'dspy.LM(\'cohere/command-r\')',
+            'dspy.Anthropic()': 'dspy.LM(\'anthropic/claude-3-sonnet\')'
+        }
+
+        for old_pattern, new_pattern in lm_mappings.items():
+            content = content.replace(old_pattern, new_pattern)
+
+        return content
+
+    def _fix_settings_configure(self, content: str, issue: MigrationIssue) -> str:
+        """Fix deprecated settings.configure patterns"""
+
+        # Simple replacement for basic cases
+        content = content.replace('dspy.settings.configure', 'dspy.configure')
+
+        return content
+
+    def generate_migration_report(self, issues: List[MigrationIssue], migration_plan: Dict[str, Any]) -> str:
+        """Generate comprehensive migration report"""
+
+        report = []
+        report.append("# DSPy Migration Report")
+        report.append("=" * 50)
+        report.append("")
+
+        # Summary
+        report.append("## Summary")
+        summary = migration_plan['summary']
+        report.append(f"- **Files Analyzed**: {self.migration_stats['files_analyzed']}")
+        report.append(f"- **Total Issues Found**: {summary['total_issues']}")
+        report.append(f"- **Critical Issues**: {summary['critical_issues']}")
+        report.append(f"- **Warning Issues**: {summary['warning_issues']}")
+        report.append(f"- **Files Affected**: {summary['files_affected']}")
+        report.append(f"- **Estimated Migration Time**: {summary['estimated_migration_time']} minutes")
+        report.append("")
+
+        # Migration steps
+        report.append("## Migration Steps")
+        for step in migration_plan['migration_steps']:
+            report.append(f"### Step {step['step']}: {step['title']}")
+            report.append(f"**Description**: {step['description']}")
+            report.append(f"**Estimated Time**: {step['estimated_time']}")
+
+            if 'commands' in step:
+                report.append("**Commands**:")
+                for cmd in step['commands']:
+                    report.append(f"```bash\n{cmd}\n```")
+
+            if 'issues' in step:
+                report.append("**Issues to Fix**:")
+                for issue in step['issues'][:5]:  # Show first 5
+                    report.append(f"- {issue.file_path}:{issue.line_number} - {issue.description}")
+                if len(step['issues']) > 5:
+                    report.append(f"- ... and {len(step['issues']) - 5} more")
+
+            report.append("")
+
+        # Detailed issues
+        report.append("## Detailed Issues")
+        for file_path, file_issues in migration_plan['file_breakdown'].items():
+            report.append(f"### {file_path}")
+            for issue in file_issues:
+                report.append(f"- **Line {issue.line_number}** ({issue.severity}): {issue.description}")
+                report.append(f"  - Legacy: `{issue.legacy_code}`")
+                report.append(f"  - Fix: `{issue.suggested_fix}`")
+            report.append("")
+
+        return "\n".join(report)
+
+    def run_migration(self, root_path: Path, apply_fixes: bool = True) -> str:
+        """Run complete migration process"""
+
+        self.logger.info(f"Starting DSPy migration for {root_path}")
+
+        # Step 1: Analyze codebase
+        self.logger.info("Analyzing codebase...")
+        issues = self.analyze_codebase(root_path)
+
+        # Step 2: Generate migration plan
+        self.logger.info("Generating migration plan...")
+        migration_plan = self.generate_migration_plan(issues)
+
+        # Step 3: Apply automated fixes if requested
+        if apply_fixes:
+            self.logger.info("Applying automated fixes...")
+            self.apply_automated_fixes(issues)
+
+        # Step 4: Generate report
+        report = self.generate_migration_report(issues, migration_plan)
+
+        # Save report
+        report_path = root_path / "dspy_migration_report.md"
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report)
+
+        self.logger.info(f"Migration complete! Report saved to {report_path}")
+
+        return report
+````
+
+## Detailed Migration Patterns
+
+### LM Configuration Migration
+
+```python
+# BEFORE (Legacy DSPy)
+import dspy
+from dspy import OpenAI, Cohere, Anthropic
+
+# Old LM initialization
+openai_lm = OpenAI(model="gpt-4", api_key="your-key")
+cohere_lm = Cohere(model="command", api_key="your-key")
+anthropic_lm = Anthropic(model="claude-3-opus", api_key="your-key")
+
+# Old settings configuration
+dspy.settings.configure(lm=openai_lm, rm=retriever)
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# New unified LM initialization
+openai_lm = dspy.LM('openai/gpt-4', api_key="your-key")
+cohere_lm = dspy.LM('cohere/command', api_key="your-key")
+anthropic_lm = dspy.LM('anthropic/claude-3-opus', api_key="your-key")
+
+# New configuration (simplified)
+dspy.configure(lm=openai_lm)
+
+# Alternative: Set API key via environment or configuration
+import os
+os.environ['OPENAI_API_KEY'] = 'your-key'
+lm = dspy.LM('openai/gpt-4')
+dspy.configure(lm=lm)
+```
+
+### Retrieval System Migration
+
+```python
+# BEFORE (Legacy DSPy)
+import dspy
+
+# Old retrieval setup
+colbert = dspy.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts')
+dspy.settings.configure(lm=lm, rm=colbert)
+
+# Manual retrieval in modules
+class RAG(dspy.Module):
+    def __init__(self):
+        self.retrieve = dspy.Retrieve(k=5)
+        self.generate_answer = dspy.ChainOfThought("context, question -> answer")
+
+    def forward(self, question):
+        context = self.retrieve(question).passages
+        return self.generate_answer(context=context, question=question)
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# New retrieval integration
+lm = dspy.LM('openai/gpt-4o')
+dspy.configure(lm=lm)
+
+# Built-in retrieval options
+embedder = dspy.Embedder('openai/text-embedding-3-small', dimensions=512)
+retriever = dspy.retrievers.Embeddings(embedder=embedder, corpus=corpus, k=5)
+
+# Or ColBERTv2 with new interface
+retriever = dspy.retrievers.ColBERTv2(url='http://20.102.90.50:2017/wiki17_abstracts', k=5)
+
+class RAG(dspy.Module):
+    def __init__(self, retriever):
+        self.retriever = retriever
+        self.generate_answer = dspy.ChainOfThought("context, question -> answer")
+
+    def forward(self, question):
+        context = self.retriever(question).passages
+        return self.generate_answer(context=context, question=question)
+
+# Usage
+rag = RAG(retriever)
+```
+
+### Optimizer Migration
+
+```python
+# BEFORE (Legacy DSPy)
+from dspy.teleprompt import BootstrapFewShot, LabeledFewShot
+from dspy.evaluate import Evaluate
+
+# Old optimizer usage
+teleprompter = BootstrapFewShot(metric=metric)
+compiled_rag = teleprompter.compile(RAG(), trainset=trainset)
+
+# Old evaluation
+evaluate = Evaluate(devset=devset, metric=metric, num_threads=1, display_progress=True)
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# New optimizer imports (cleaner)
+optimizer = dspy.BootstrapFewShot(metric=metric)
+compiled_rag = optimizer.compile(RAG(), trainset=trainset)
+
+# New advanced optimizers available
+mipro_optimizer = dspy.MIPROv2(metric=metric, auto="medium", num_threads=24)
+gepa_optimizer = dspy.GEPA(metric=metric)
+simba_optimizer = dspy.SIMBA(metric=metric)
+
+# Enhanced evaluation
+evaluator = dspy.Evaluate(devset=devset, metric=metric, num_threads=24, display_progress=True)
+```
+
+### Module and Signature Migration
+
+```python
+# BEFORE (Legacy DSPy)
+import dspy
+
+# Old signature style (mostly compatible)
+class QA(dspy.Signature):
+    question = dspy.InputField()
+    answer = dspy.OutputField()
+
+# Usage remained similar
+qa_module = dspy.ChainOfThought(QA)
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# New signature styles (enhanced)
+class QA(dspy.Signature):
+    """Answer questions based on the given context."""
+    question: str = dspy.InputField(desc="The question to answer")
+    answer: str = dspy.OutputField(desc="The answer to the question")
+
+# Inline signatures (more concise)
+qa_module = dspy.ChainOfThought('question -> answer')
+
+# Type-aware signatures
+qa_module = dspy.ChainOfThought('question: str -> answer: str, confidence: float')
+
+# Enhanced modules with better error handling
+class EnhancedQA(dspy.Module):
+    def __init__(self):
+        self.qa = dspy.ChainOfThought('question -> answer: str, confidence: float')
+
+    def forward(self, question: str):
+        if not question.strip():
+            return dspy.Prediction(answer="Please provide a valid question.", confidence=0.0)
+
+        result = self.qa(question=question)
+        return result
+```
+
+### Data Handling Migration
+
+```python
+# BEFORE (Legacy DSPy)
+import dspy
+
+# Old example creation
+examples = []
+for data in raw_data:
+    example = dspy.Example(question=data['q'], answer=data['a'])
+    examples.append(example)
+
+# Old data loading patterns
+trainset = examples[:100]
+devset = examples[100:200]
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# Enhanced example creation with input specification
+examples = [
+    dspy.Example(question=data['q'], answer=data['a']).with_inputs('question')
+    for data in raw_data
+]
+
+# Better data loading utilities
+from dspy.datasets import DataLoader
+
+# Load from various sources
+loader = DataLoader()
+dataset = loader.from_huggingface(dataset_name="hotpotqa", split="train")
+
+# Enhanced data preprocessing
+def preprocess_examples(raw_examples):
+    processed = []
+    for ex in raw_examples:
+        if len(ex['question']) > 10 and ex['answer']:  # Quality filtering
+            processed.append(
+                dspy.Example(
+                    question=ex['question'],
+                    answer=ex['answer']
+                ).with_inputs('question')
+            )
+    return processed
+
+trainset = preprocess_examples(raw_data[:1000])
+```
+
+## Advanced Migration Scenarios
+
+### Complex Pipeline Migration
+
+```python
+# BEFORE (Legacy DSPy) - Complex multi-stage pipeline
+class LegacyComplexPipeline(dspy.Module):
+    def __init__(self):
+        # Multiple separate retrievers
+        self.colbert_retriever = dspy.ColBERTv2(url='http://example.com')
+        self.bm25_retriever = dspy.Retrieve(k=10)  # Hypothetical BM25
+
+        # Multiple processing stages
+        self.intent_classifier = dspy.ChainOfThought("query -> intent")
+        self.query_rewriter = dspy.ChainOfThought("query, intent -> rewritten_query")
+        self.answer_generator = dspy.ChainOfThought("context, query -> answer")
+        self.answer_refiner = dspy.ChainOfThought("answer, context -> refined_answer")
+
+    def forward(self, query):
+        # Multi-stage processing
+        intent = self.intent_classifier(query=query).intent
+
+        if intent == "factual":
+            rewritten = self.query_rewriter(query=query, intent=intent).rewritten_query
+            context1 = self.colbert_retriever(rewritten).passages
+            context2 = self.bm25_retriever(rewritten).passages
+
+            combined_context = context1 + context2
+            answer = self.answer_generator(context=combined_context, query=query).answer
+            refined = self.answer_refiner(answer=answer, context=combined_context).refined_answer
+
+            return dspy.Prediction(answer=refined, intent=intent)
+        else:
+            # Direct answer for non-factual queries
+            answer = self.answer_generator(context="", query=query).answer
+            return dspy.Prediction(answer=answer, intent=intent)
+
+# AFTER (DSPy 3.0.1) - Improved pipeline with new features
+class ModernComplexPipeline(dspy.Module):
+    def __init__(self, corpus=None):
+        # Modern retrieval setup
+        self.embedder = dspy.Embedder('openai/text-embedding-3-small', dimensions=512)
+        self.dense_retriever = dspy.retrievers.Embeddings(
+            embedder=self.embedder,
+            corpus=corpus,
+            k=10
+        )
+
+        # Enhanced modules with better signatures
+        self.intent_classifier = dspy.ChainOfThought(
+            'query: str -> intent: str, confidence: float'
+        )
+
+        self.query_rewriter = dspy.ChainOfThought(
+            'query: str, intent: str -> rewritten_query: str, reasoning: str'
+        )
+
+        self.answer_generator = dspy.ChainOfThought(
+            'context: str, query: str -> answer: str, confidence: float'
+        )
+
+        self.answer_refiner = dspy.ChainOfThought(
+            'answer: str, context: str -> refined_answer: str, improvements: str'
+        )
+
+    def forward(self, query: str):
+        # Enhanced multi-stage processing with better error handling
+        try:
+            # Intent classification with confidence
+            intent_result = self.intent_classifier(query=query)
+            intent = intent_result.intent
+            intent_confidence = getattr(intent_result, 'confidence', 0.5)
+
+            if intent == "factual" and intent_confidence > 0.7:
+                # Query rewriting for factual questions
+                rewrite_result = self.query_rewriter(query=query, intent=intent)
+                rewritten_query = rewrite_result.rewritten_query
+
+                # Retrieval with new system
+                retrieval_result = self.dense_retriever(rewritten_query)
+                context = '\n'.join(retrieval_result.passages)
+
+                # Answer generation
+                answer_result = self.answer_generator(context=context, query=query)
+                initial_answer = answer_result.answer
+
+                # Answer refinement
+                refine_result = self.answer_refiner(
+                    answer=initial_answer,
+                    context=context
+                )
+
+                return dspy.Prediction(
+                    answer=refine_result.refined_answer,
+                    intent=intent,
+                    confidence=answer_result.confidence,
+                    reasoning=rewrite_result.reasoning,
+                    improvements=refine_result.improvements
+                )
+            else:
+                # Direct answer for non-factual or low-confidence queries
+                answer_result = self.answer_generator(context="", query=query)
+
+                return dspy.Prediction(
+                    answer=answer_result.answer,
+                    intent=intent,
+                    confidence=answer_result.confidence,
+                    reasoning="Direct answer without retrieval"
+                )
+
+        except Exception as e:
+            # Enhanced error handling
+            return dspy.Prediction(
+                answer="I apologize, but I encountered an error processing your query.",
+                intent="error",
+                confidence=0.0,
+                error=str(e)
+            )
+```
+
+### Testing and Evaluation Migration
+
+```python
+# BEFORE (Legacy DSPy)
+from dspy.evaluate import Evaluate
+import dspy
+
+def legacy_metric(example, pred, trace=None):
+    return example.answer.lower() == pred.answer.lower()
+
+# Old evaluation setup
+evaluate = Evaluate(devset=devset, metric=legacy_metric, num_threads=1)
+score = evaluate(program)
+
+# AFTER (DSPy 3.0.1)
+import dspy
+
+# Enhanced metric with better error handling
+def modern_metric(example, pred, trace=None):
+    try:
+        expected = example.answer.lower().strip()
+        predicted = pred.answer.lower().strip()
+
+        # Simple exact match
+        exact_match = expected == predicted
+
+        # Add partial credit for similar answers
+        if not exact_match:
+            words_expected = set(expected.split())
+            words_predicted = set(predicted.split())
+            overlap = len(words_expected & words_predicted)
+            total_words = len(words_expected | words_predicted)
+            similarity = overlap / total_words if total_words > 0 else 0
+
+            # Return True if similarity is high enough
+            return similarity > 0.8
+
+        return exact_match
+
+    except Exception as e:
+        # Log error and return False for robustness
+        print(f"Metric evaluation error: {e}")
+        return False
+
+# Modern evaluation with enhanced features
+evaluator = dspy.Evaluate(
+    devset=devset,
+    metric=modern_metric,
+    num_threads=24,  # Better parallelization
+    display_progress=True,
+    display_table=5  # Show detailed results for first 5 examples
+)
+
+score = evaluator(program)
+
+# Use built-in semantic evaluation for better accuracy
+from dspy.evaluate import SemanticF1
+
+semantic_metric = SemanticF1(decompositional=True)
+semantic_evaluator = dspy.Evaluate(devset=devset, metric=semantic_metric, num_threads=24)
+semantic_score = semantic_evaluator(program)
+```
+
+## Migration Validation and Testing
+
+### Post-Migration Testing Framework
+
+```python
+import dspy
+import pytest
+from typing import List, Dict, Any
+
+class MigrationValidator:
+    """Validates that migration was successful"""
+
+    def __init__(self, legacy_results: Dict[str, Any] = None):
+        self.legacy_results = legacy_results or {}
+        self.validation_results = {}
+
+    def validate_lm_configuration(self) -> bool:
+        """Validate that LM configuration works correctly"""
+        try:
+            # Test LM initialization
+            lm = dspy.LM('openai/gpt-4o-mini')
+            dspy.configure(lm=lm)
+
+            # Test basic functionality
+            predictor = dspy.Predict('question -> answer')
+            result = predictor(question="Test question")
+
+            return hasattr(result, 'answer')
+
+        except Exception as e:
+            print(f"LM configuration validation failed: {e}")
+            return False
+
+    def validate_module_compatibility(self, modules: List[dspy.Module]) -> Dict[str, bool]:
+        """Validate that all modules work correctly after migration"""
+
+        results = {}
+
+        for i, module in enumerate(modules):
+            module_name = f"module_{i}"
+
+            try:
+                # Test basic module execution
+                if hasattr(module, 'forward'):
+                    # Try to call with minimal inputs
+                    test_result = module.forward(question="test")
+                    results[module_name] = test_result is not None
+                else:
+                    results[module_name] = True  # Module exists
+
+            except Exception as e:
+                print(f"Module {module_name} validation failed: {e}")
+                results[module_name] = False
+
+        return results
+
+    def validate_optimizer_compatibility(self) -> bool:
+        """Validate that optimizers work correctly"""
+        try:
+            # Test basic optimizer functionality
+            def simple_metric(example, pred, trace=None):
+                return True
+
+            optimizer = dspy.BootstrapFewShot(metric=simple_metric)
+
+            # Test with minimal setup
+            simple_program = dspy.Predict('input -> output')
+            trainset = [dspy.Example(input="test", output="test").with_inputs('input')]
+
+            compiled_program = optimizer.compile(simple_program, trainset=trainset)
+
+            return compiled_program is not None
+
+        except Exception as e:
+            print(f"Optimizer validation failed: {e}")
+            return False
+
+    def validate_evaluation_compatibility(self) -> bool:
+        """Validate that evaluation works correctly"""
+        try:
+            def test_metric(example, pred, trace=None):
+                return True
+
+            devset = [dspy.Example(input="test", output="test").with_inputs('input')]
+            evaluator = dspy.Evaluate(devset=devset, metric=test_metric)
+
+            simple_program = dspy.Predict('input -> output')
+            score = evaluator(simple_program)
+
+            return score is not None
+
+        except Exception as e:
+            print(f"Evaluation validation failed: {e}")
+            return False
+
+    def run_comprehensive_validation(self) -> Dict[str, Any]:
+        """Run comprehensive validation of migration"""
+
+        validation_results = {
+            'lm_configuration': self.validate_lm_configuration(),
+            'optimizer_compatibility': self.validate_optimizer_compatibility(),
+            'evaluation_compatibility': self.validate_evaluation_compatibility(),
+            'overall_success': True
+        }
+
+        # Check overall success
+        validation_results['overall_success'] = all([
+            validation_results['lm_configuration'],
+            validation_results['optimizer_compatibility'],
+            validation_results['evaluation_compatibility']
+        ])
+
+        return validation_results
+
+# Pytest-based migration tests
+class TestMigration:
+    """Test suite for migration validation"""
+
+    def test_dspy_import(self):
+        """Test that DSPy imports correctly"""
+        import dspy
+        assert dspy.__version__ >= '3.0.1'
+
+    def test_lm_initialization(self):
+        """Test new LM initialization patterns"""
+        lm = dspy.LM('openai/gpt-4o-mini')
+        assert lm is not None
+
+        dspy.configure(lm=lm)
+        assert dspy.settings.lm == lm
+
+    def test_basic_module_functionality(self):
+        """Test that basic modules work after migration"""
+        lm = dspy.LM('openai/gpt-4o-mini')
+        dspy.configure(lm=lm)
+
+        # Test Predict module
+        predictor = dspy.Predict('question -> answer')
+        assert predictor is not None
+
+        # Test ChainOfThought module
+        cot = dspy.ChainOfThought('question -> reasoning, answer')
+        assert cot is not None
+
+    def test_retrieval_integration(self):
+        """Test new retrieval integration"""
+        corpus = ["Test document 1", "Test document 2"]
+
+        embedder = dspy.Embedder('openai/text-embedding-3-small')
+        retriever = dspy.retrievers.Embeddings(embedder=embedder, corpus=corpus, k=1)
+
+        assert retriever is not None
+
+    def test_optimizer_functionality(self):
+        """Test that optimizers work correctly"""
+        def metric(example, pred, trace=None):
+            return True
+
+        optimizer = dspy.BootstrapFewShot(metric=metric)
+        assert optimizer is not None
+
+    def test_evaluation_functionality(self):
+        """Test evaluation functionality"""
+        def metric(example, pred, trace=None):
+            return True
+
+        devset = [dspy.Example(q="test", a="test").with_inputs('q')]
+        evaluator = dspy.Evaluate(devset=devset, metric=metric)
+
+        assert evaluator is not None
+
+if __name__ == "__main__":
+    # Run validation
+    validator = MigrationValidator()
+    results = validator.run_comprehensive_validation()
+
+    if results['overall_success']:
+        print("✅ Migration validation successful!")
+    else:
+        print("❌ Migration validation failed!")
+        for component, success in results.items():
+            if not success:
+                print(f"  - {component}: FAILED")
+```
+
+## Speed Tips
+
+- **Batch Migration**: Process multiple files simultaneously
+- **Automated Testing**: Set up automated tests before migration
+- **Incremental Migration**: Migrate modules one at a time
+- **Backup Strategy**: Always create backups before applying changes
+- **Dependency Management**: Update all dependencies together
+- **Configuration Migration**: Update configuration files and environment variables
+- **Documentation Updates**: Update internal documentation and README files
+- **Team Communication**: Coordinate migration across team members
+
+## Common Pitfalls
+
+- **API Key Management**: Update API key handling for new LM configuration
+- **Import Statements**: Update all import statements consistently
+- **Retrieval Integration**: Restructure retrieval setup for new architecture
+- **Optimizer Configuration**: Update optimizer parameters and usage patterns
+- **Error Handling**: Add proper error handling for new API patterns
+- **Testing Coverage**: Ensure all migrated code is properly tested
+- **Performance Changes**: Monitor performance impact of migration
+- **Backwards Compatibility**: Handle mixed old/new code during transition
+
+## Best Practices Summary
+
+- **Assessment First**: Always analyze codebase before starting migration
+- **Automated Tools**: Use automated migration tools where possible
+- **Comprehensive Testing**: Test thoroughly at each migration step
+- **Documentation**: Document all changes and migration decisions
+- **Rollback Plan**: Have a clear rollback strategy if issues arise
+- **Team Coordination**: Coordinate migration across development team
+- **Staged Approach**: Migrate in stages rather than all at once
+- **Performance Monitoring**: Monitor performance before and after migration
+
+## References
+
+- [DSPy 3.0.1 Release Notes](https://github.com/stanfordnlp/dspy/releases)
+- [DSPy Migration Examples](https://github.com/stanfordnlp/dspy/blob/main/examples/migration.ipynb)
+- [DSPy API Documentation](https://dspy.ai/api/)
+- [LM Configuration Guide](https://dspy.ai/learn/programming/language_models/)
+- [Optimizer Migration Guide](https://dspy.ai/learn/optimization/optimizers/)
