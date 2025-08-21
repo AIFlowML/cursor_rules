@@ -1,0 +1,1004 @@
+---
+description: NVIDIA Dynamo Distributed Deployment on Kubernetes - Production-ready orchestration with Helm, operators, and multi-node scaling
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo Kubernetes deployment and distributed orchestration.
+
+## Kubernetes Deployment Architecture
+
+NVIDIA Dynamo on Kubernetes provides enterprise-grade orchestration with automated scaling, health management, and seamless multi-node inference serving.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Kubernetes Cluster                          │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────┐  │
+│  │   Control       │    │   Worker        │    │   Worker    │  │
+│  │   Plane         │    │   Node 1        │    │   Node 2    │  │
+│  │ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────┐ │  │
+│  │ │etcd Cluster │ │    │ │Frontend Pods│ │    │ │Worker   │ │  │
+│  │ │NATS Cluster │ │    │ │Router Pods  │ │    │ │Pods     │ │  │
+│  │ │Prometheus   │ │    │ │Planner Pods │ │    │ │(vLLM/   │ │  │
+│  │ │Grafana      │ │    │ └─────────────┘ │    │ │SGLang/  │ │  │
+│  │ └─────────────┘ │    │ ┌─────────────┐ │    │ │TRT-LLM) │ │  │
+│  └─────────────────┘    │ │   GPUs      │ │    │ └─────────┘ │  │
+│                         │ │ ┌─────────┐ │ │    │ ┌─────────┐ │  │
+│                         │ │ │GPU 0-3  │ │ │    │ │GPU 4-7  │ │  │
+│                         │ │ └─────────┘ │ │    │ └─────────┘ │  │
+│                         │ └─────────────┘ │    │ └─────────┘ │  │
+│                         └─────────────────┘    └─────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Prerequisites and Cluster Setup
+
+### Kubernetes Cluster Requirements
+```bash
+# Minimum cluster specifications
+# - Kubernetes 1.24+
+# - CNI plugin (Calico, Flannel, or Weave)
+# - GPU Operator or device plugin
+# - Persistent storage (CSI driver)
+# - LoadBalancer support (MetalLB, cloud provider)
+
+# Verify cluster readiness
+kubectl cluster-info
+kubectl get nodes -o wide
+kubectl get storageclass
+```
+
+### GPU Operator Installation
+```bash
+# Add NVIDIA Helm repository
+helm repo add nvidia https://nvidia.github.io/gpu-operator
+helm repo update
+
+# Install GPU Operator
+helm install gpu-operator nvidia/gpu-operator \
+  --namespace gpu-operator \
+  --create-namespace \
+  --set driver.enabled=true \
+  --set toolkit.enabled=true \
+  --set devicePlugin.enabled=true \
+  --set dcgmExporter.enabled=true \
+  --set gfd.enabled=true
+
+# Verify GPU Operator
+kubectl get pods -n gpu-operator
+kubectl describe nodes | grep nvidia.com/gpu
+```
+
+### Storage Configuration
+```yaml
+# storage-class.yaml - High-performance storage for models
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: dynamo-fast-ssd
+provisioner: kubernetes.io/aws-ebs  # Adjust for your provider
+parameters:
+  type: gp3
+  throughput: "1000"
+  iops: "3000"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dynamo-model-cache
+  namespace: dynamo-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: dynamo-fast-ssd
+```
+
+## Dynamo Operator Deployment
+
+### Install Dynamo Cloud Platform
+```bash
+# Install Dynamo Cloud using Helm
+helm repo add dynamo https://ai-dynamo.github.io/dynamo
+helm repo update
+
+# Create namespace
+kubectl create namespace dynamo-system
+
+# Install with custom values
+helm install dynamo-platform dynamo/dynamo-platform \
+  --namespace dynamo-system \
+  --values dynamo-platform-values.yaml \
+  --timeout 600s
+```
+
+### Custom Platform Values
+```yaml
+# dynamo-platform-values.yaml
+global:
+  imageRegistry: nvcr.io
+  imagePullSecrets: []
+  defaultStorageClass: dynamo-fast-ssd
+
+# Infrastructure components
+etcd:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+nats:
+  enabled: true
+  nats:
+    jetstream:
+      enabled: true
+      fileStorage:
+        enabled: true
+        size: 50Gi
+  cluster:
+    enabled: true
+    replicas: 3
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Dynamo components
+frontend:
+  enabled: true
+  replicaCount: 3
+  service:
+    type: LoadBalancer
+    port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: dynamo.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+router:
+  enabled: true
+  replicaCount: 2
+  kvCache:
+    enabled: true
+    offloadToCPU: true
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "2000m"
+    limits:
+      memory: "8Gi"
+      cpu: "4000m"
+
+planner:
+  enabled: true
+  replicaCount: 1
+  sla:
+    enabled: true
+    targetLatency: "500ms"
+    targetThroughput: "1000rps"
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+# Monitoring stack
+monitoring:
+  prometheus:
+    enabled: true
+    retention: "7d"
+    storage: 100Gi
+  grafana:
+    enabled: true
+    adminPassword: "dynamo-admin"
+    dashboards:
+      enabled: true
+  dcgm:
+    enabled: true
+
+# Node selectors for GPU nodes
+nodeSelector:
+  accelerator: nvidia-gpu
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+```
+
+## Worker Deployment Configurations
+
+### vLLM Worker Deployment
+```yaml
+# vllm-worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamo-vllm-worker
+  namespace: dynamo-system
+  labels:
+    app: dynamo-worker
+    engine: vllm
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: dynamo-worker
+      engine: vllm
+  template:
+    metadata:
+      labels:
+        app: dynamo-worker
+        engine: vllm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      nodeSelector:
+        accelerator: nvidia-gpu
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      serviceAccountName: dynamo-worker
+      containers:
+      - name: vllm-worker
+        image: nvcr.io/nvidia/dynamo:vllm-latest
+        command:
+          - python
+          - -m
+          - dynamo.vllm
+        args:
+          - --model
+          - meta-llama/Llama-3.1-8B-Instruct
+          - --tensor-parallel-size
+          - "1"
+          - --max-model-len
+          - "8192"
+          - --gpu-memory-utilization
+          - "0.9"
+          - --enable-chunked-prefill
+          - --max-chunked-prefill-tokens
+          - "4096"
+        env:
+        - name: DYNAMO_NATS_URL
+          value: "nats://nats.dynamo-system.svc.cluster.local:4222"
+        - name: DYNAMO_ETCD_ENDPOINTS
+          value: "http://etcd.dynamo-system.svc.cluster.local:2379"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: DYN_LOG
+          value: "info"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512"
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "4"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "32Gi"
+            cpu: "8"
+            nvidia.com/gpu: 1
+        ports:
+        - containerPort: 9090
+          name: metrics
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        - name: shm
+          mountPath: /dev/shm
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9090
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: dynamo-model-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dynamo-worker
+  namespace: dynamo-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamo-vllm-worker
+  namespace: dynamo-system
+  labels:
+    app: dynamo-worker
+    engine: vllm
+spec:
+  selector:
+    app: dynamo-worker
+    engine: vllm
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  clusterIP: None  # Headless service for direct pod access
+```
+
+### SGLang Multi-Node Worker
+```yaml
+# sglang-worker-multinode.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dynamo-sglang-worker
+  namespace: dynamo-system
+spec:
+  serviceName: dynamo-sglang-worker-headless
+  replicas: 2  # Multi-node setup
+  selector:
+    matchLabels:
+      app: dynamo-worker
+      engine: sglang
+  template:
+    metadata:
+      labels:
+        app: dynamo-worker
+        engine: sglang
+    spec:
+      nodeSelector:
+        accelerator: nvidia-gpu
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+      - name: sglang-worker
+        image: nvcr.io/nvidia/dynamo:sglang-latest
+        command:
+          - python
+          - -m
+          - dynamo.sglang.worker
+        args:
+          - --model
+          - deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+          - --tp-size
+          - "4"
+          - --nnodes
+          - "2"
+          - --node-rank
+          - "$(NODE_RANK)"
+          - --nproc-per-node
+          - "4"
+          - --master-addr
+          - "dynamo-sglang-worker-0.dynamo-sglang-worker-headless"
+          - --master-port
+          - "29500"
+          - --mem-fraction-static
+          - "0.8"
+          - --enable-torch-compile
+          - --chunked-prefill-size
+          - "8192"
+        env:
+        - name: NODE_RANK
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name']
+        - name: DYNAMO_NATS_URL
+          value: "nats://nats.dynamo-system.svc.cluster.local:4222"
+        - name: DYNAMO_ETCD_ENDPOINTS
+          value: "http://etcd.dynamo-system.svc.cluster.local:2379"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0,1,2,3"
+        - name: NCCL_SOCKET_IFNAME
+          value: "eth0"
+        - name: NCCL_IB_DISABLE
+          value: "1"
+        resources:
+          requests:
+            memory: "32Gi"
+            cpu: "8"
+            nvidia.com/gpu: 4
+          limits:
+            memory: "64Gi"
+            cpu: "16"
+            nvidia.com/gpu: 4
+        ports:
+        - containerPort: 29500
+          name: distributed
+        - containerPort: 9090
+          name: metrics
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        - name: shm
+          mountPath: /dev/shm
+      initContainers:
+      - name: wait-for-master
+        image: busybox:1.35
+        command:
+          - sh
+          - -c
+          - |
+            if [ "$NODE_RANK" != "0" ]; then
+              until nc -z dynamo-sglang-worker-0.dynamo-sglang-worker-headless 29500; do
+                echo "Waiting for master node..."
+                sleep 5
+              done
+            fi
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: dynamo-model-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamo-sglang-worker-headless
+  namespace: dynamo-system
+spec:
+  clusterIP: None
+  selector:
+    app: dynamo-worker
+    engine: sglang
+  ports:
+  - name: distributed
+    port: 29500
+    targetPort: 29500
+```
+
+### TensorRT-LLM Worker with Pipeline Parallelism
+```yaml
+# trtllm-worker-pipeline.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamo-trtllm-worker
+  namespace: dynamo-system
+spec:
+  replicas: 1  # Single deployment with multiple GPUs
+  selector:
+    matchLabels:
+      app: dynamo-worker
+      engine: trtllm
+  template:
+    metadata:
+      labels:
+        app: dynamo-worker
+        engine: trtllm
+    spec:
+      nodeSelector:
+        accelerator: nvidia-gpu
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+      - name: trtllm-worker
+        image: nvcr.io/nvidia/dynamo:trtllm-latest
+        command:
+          - python
+          - -m
+          - dynamo.trtllm
+        args:
+          - --engine-dir
+          - /models/llama-3.1-70b-trt-pp4
+          - --tokenizer
+          - meta-llama/Llama-3.1-70B-Instruct
+          - --world-size
+          - "4"
+          - --tp-size
+          - "1"
+          - --pp-size
+          - "4"
+          - --max-batch-size
+          - "16"
+          - --max-input-len
+          - "4096"
+          - --max-output-len
+          - "2048"
+          - --enable-chunked-context
+        env:
+        - name: DYNAMO_NATS_URL
+          value: "nats://nats.dynamo-system.svc.cluster.local:4222"
+        - name: DYNAMO_ETCD_ENDPOINTS
+          value: "http://etcd.dynamo-system.svc.cluster.local:2379"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0,1,2,3"
+        resources:
+          requests:
+            memory: "64Gi"
+            cpu: "16"
+            nvidia.com/gpu: 4
+          limits:
+            memory: "128Gi"
+            cpu: "32"
+            nvidia.com/gpu: 4
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        - name: trt-engines
+          mountPath: /engines
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: dynamo-model-cache
+      - name: trt-engines
+        persistentVolumeClaim:
+          claimName: trt-engine-cache
+```
+
+## Horizontal Pod Autoscaling
+
+### HPA Configuration
+```yaml
+# dynamo-hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dynamo-vllm-worker-hpa
+  namespace: dynamo-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dynamo-vllm-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: dynamo_active_requests
+      target:
+        type: AverageValue
+        averageValue: "50"
+  - type: Pods
+    pods:
+      metric:
+        name: dynamo_gpu_utilization_percent
+      target:
+        type: AverageValue
+        averageValue: "85"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dynamo-frontend-hpa
+  namespace: dynamo-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dynamo-frontend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Pods
+    pods:
+      metric:
+        name: dynamo_request_rate
+      target:
+        type: AverageValue
+        averageValue: "100"
+```
+
+### Vertical Pod Autoscaling
+```yaml
+# dynamo-vpa.yaml
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: dynamo-vllm-worker-vpa
+  namespace: dynamo-system
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dynamo-vllm-worker
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: vllm-worker
+      maxAllowed:
+        cpu: "16"
+        memory: "64Gi"
+      minAllowed:
+        cpu: "2"
+        memory: "8Gi"
+      controlledResources: ["cpu", "memory"]
+```
+
+## Network Policies and Security
+
+### Network Security
+```yaml
+# network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dynamo-network-policy
+  namespace: dynamo-system
+spec:
+  podSelector:
+    matchLabels:
+      app: dynamo-worker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: dynamo-system
+    - podSelector:
+        matchLabels:
+          app: dynamo-frontend
+    - podSelector:
+        matchLabels:
+          app: dynamo-router
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: dynamo-system
+    ports:
+    - protocol: TCP
+      port: 4222  # NATS
+    - protocol: TCP
+      port: 2379  # etcd
+  - to: []  # Allow internet for model downloads
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+```
+
+### RBAC Configuration
+```yaml
+# rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dynamo-worker
+  namespace: dynamo-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dynamo-worker-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dynamo-worker-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dynamo-worker-role
+subjects:
+- kind: ServiceAccount
+  name: dynamo-worker
+  namespace: dynamo-system
+```
+
+## Monitoring and Observability
+
+### Service Monitors for Prometheus
+```yaml
+# service-monitors.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dynamo-workers
+  namespace: dynamo-system
+spec:
+  selector:
+    matchLabels:
+      app: dynamo-worker
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dynamo-infrastructure
+  namespace: dynamo-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: metrics
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+```
+
+### Grafana Dashboard ConfigMap
+```yaml
+# grafana-dashboard.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamo-dashboard
+  namespace: dynamo-system
+  labels:
+    grafana_dashboard: "1"
+data:
+  dynamo-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Dynamo Kubernetes Overview",
+        "tags": ["dynamo", "kubernetes"],
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate by Engine",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(dynamo_requests_total[5m])) by (engine)",
+                "legendFormat": "{{ engine }}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "GPU Utilization",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "dynamo_gpu_utilization_percent",
+                "legendFormat": "GPU {{ gpu_id }} - {{ engine }}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Pod Status by Engine",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "count by (engine) (kube_pod_status_phase{namespace=\"dynamo-system\", phase=\"Running\"})"
+              }
+            ]
+          }
+        ]
+      }
+    }
+```
+
+## Disaster Recovery and Backup
+
+### etcd Backup Strategy
+```yaml
+# etcd-backup-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: dynamo-system
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: etcd-backup
+            image: quay.io/coreos/etcd:v3.5.21
+            command:
+            - /bin/sh
+            - -c
+            - |
+              etcdctl snapshot save /backup/etcd-snapshot-$(date +%Y%m%d-%H%M%S).db \
+              --endpoints=http://etcd.dynamo-system.svc.cluster.local:2379
+              
+              # Clean old backups (keep last 7 days)
+              find /backup -name "etcd-snapshot-*.db" -mtime +7 -delete
+            env:
+            - name: ETCDCTL_API
+              value: "3"
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: etcd-backup-pvc
+          restartPolicy: OnFailure
+```
+
+### Model Cache Backup
+```bash
+# Model cache backup script
+#!/bin/bash
+# backup-models.sh
+
+NAMESPACE="dynamo-system"
+BACKUP_BUCKET="s3://dynamo-backups"
+DATE=$(date +%Y%m%d-%H%M%S)
+
+# Create temporary backup pod
+kubectl run backup-pod \
+  --namespace $NAMESPACE \
+  --image=amazon/aws-cli:latest \
+  --rm -i --tty \
+  --overrides='{
+    "spec": {
+      "volumes": [{
+        "name": "model-cache",
+        "persistentVolumeClaim": {"claimName": "dynamo-model-cache"}
+      }],
+      "containers": [{
+        "name": "backup",
+        "image": "amazon/aws-cli:latest", 
+        "command": ["aws", "s3", "sync", "/models", "'$BACKUP_BUCKET/models-$DATE'", "--delete"],
+        "volumeMounts": [{
+          "name": "model-cache",
+          "mountPath": "/models"
+        }]
+      }]
+    }
+  }'
+```
+
+## Troubleshooting and Operations
+
+### Common Kubernetes Issues
+```bash
+# Debug pod scheduling issues
+kubectl describe pod <pod-name> -n dynamo-system
+kubectl get events -n dynamo-system --sort-by='.lastTimestamp'
+
+# Check GPU allocation
+kubectl describe nodes | grep nvidia.com/gpu
+kubectl get pods -o wide -n dynamo-system
+
+# Debug network connectivity
+kubectl exec -it <pod-name> -n dynamo-system -- nslookup nats.dynamo-system.svc.cluster.local
+kubectl exec -it <pod-name> -n dynamo-system -- nc -zv etcd.dynamo-system.svc.cluster.local 2379
+
+# Check resource usage
+kubectl top pods -n dynamo-system
+kubectl top nodes
+
+# Debug persistent volumes
+kubectl get pv,pvc -n dynamo-system
+kubectl describe pvc dynamo-model-cache -n dynamo-system
+```
+
+### Performance Tuning
+```bash
+# Node-level optimizations
+echo 'vm.swappiness=1' >> /etc/sysctl.conf
+echo 'net.core.rmem_max=134217728' >> /etc/sysctl.conf
+echo 'net.core.wmem_max=134217728' >> /etc/sysctl.conf
+sysctl -p
+
+# GPU memory optimizations
+echo 'options nvidia NVreg_PreserveVideoMemoryAllocations=1' > /etc/modprobe.d/nvidia-preserve-vram.conf
+
+# Kubernetes node optimization
+kubectl patch node <node-name> -p '{"metadata":{"annotations":{"cluster-autoscaler.kubernetes.io/scale-down-disabled":"true"}}}'
+```
+
+### Upgrade Strategy
+```bash
+# Rolling upgrade with zero downtime
+helm upgrade dynamo-platform dynamo/dynamo-platform \
+  --namespace dynamo-system \
+  --values dynamo-platform-values.yaml \
+  --atomic \
+  --timeout 600s \
+  --wait
+
+# Verify upgrade
+kubectl rollout status deployment/dynamo-frontend -n dynamo-system
+kubectl rollout status deployment/dynamo-vllm-worker -n dynamo-system
+
+# Rollback if needed
+helm rollback dynamo-platform -n dynamo-system
+```
+
+This comprehensive Kubernetes deployment guide ensures production-ready NVIDIA Dynamo clusters with enterprise-grade reliability, scalability, and observability.

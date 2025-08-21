@@ -1,0 +1,1244 @@
+---
+description: NVIDIA Dynamo Production Deployment Best Practices - Enterprise-grade deployment strategies, security, monitoring, and operational excellence
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo production deployment and operational best practices.
+
+## Production Architecture Principles
+
+NVIDIA Dynamo production deployments require careful planning across multiple dimensions: reliability, security, scalability, and operational excellence.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                Production Architecture Stack                    │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │   Edge      │  │  Application│  │ Observability│  │Business │  │
+│  │   Layer     │  │    Layer    │  │   Layer     │  │ Layer   │  │
+│  │             │  │             │  │             │  │         │  │
+│  │• WAF        │  │• API        │  │• Metrics    │  │• SLAs   │  │
+│  │• CDN        │  │• Auth       │  │• Logging    │  │• Costs  │  │
+│  │• LB         │  │• Rate Limit │  │• Tracing    │  │• Alerts │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Dynamo Platform                             │  │
+│  │  Frontend → Router → Planner → Workers (Multi-Engine)      │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Infrastructure Layer                           │  │
+│  │   K8s/OpenShift → Storage → Networking → Security         │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Security Hardening
+
+### Network Security Configuration
+```yaml
+# network-security-policy.yaml - Comprehensive network security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dynamo-security-policy
+  namespace: dynamo-production
+spec:
+  podSelector:
+    matchLabels:
+      app: dynamo
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Ingress rules
+  ingress:
+  - from:
+    # Allow traffic from frontend pods
+    - podSelector:
+        matchLabels:
+          app: dynamo-frontend
+    # Allow monitoring traffic
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090  # Metrics
+  
+  # Egress rules
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow NATS communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  
+  # Allow etcd communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: etcd
+    ports:
+    - protocol: TCP
+      port: 2379
+  
+  # Allow HTTPS for model downloads (restricted to HuggingFace)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    # Add egress rules for specific domains if needed
+
+---
+# TLS configuration for secure communication
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dynamo-tls-certs
+  namespace: dynamo-production
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTi... # Base64 encoded certificate
+  tls.key: LS0tLS1CRUdJTi... # Base64 encoded private key
+  ca.crt: LS0tLS1CRUdJTi...  # Base64 encoded CA certificate
+
+---
+# Service mesh integration (Istio example)
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: dynamo-mtls
+  namespace: dynamo-production
+spec:
+  selector:
+    matchLabels:
+      app: dynamo
+  mtls:
+    mode: STRICT
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: dynamo-authz
+  namespace: dynamo-production
+spec:
+  selector:
+    matchLabels:
+      app: dynamo-worker
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/dynamo-production/sa/dynamo-frontend"]
+  - to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/v1/chat/completions", "/v1/completions"]
+```
+
+### Authentication and Authorization
+```yaml
+# auth-config.yaml - Authentication and RBAC configuration
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dynamo-frontend
+  namespace: dynamo-production
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/dynamo-frontend-role
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dynamo-frontend-role
+  namespace: dynamo-production
+rules:
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dynamo-frontend-binding
+  namespace: dynamo-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dynamo-frontend-role
+subjects:
+- kind: ServiceAccount
+  name: dynamo-frontend
+  namespace: dynamo-production
+
+---
+# API authentication configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamo-auth-config
+  namespace: dynamo-production
+data:
+  auth.yaml: |
+    authentication:
+      enabled: true
+      methods:
+        - jwt
+        - api_key
+        - oauth2
+    
+    jwt:
+      secret_key: "${JWT_SECRET_KEY}"
+      algorithm: "HS256"
+      expiration_hours: 24
+      issuer: "dynamo-production"
+    
+    api_key:
+      header_name: "X-API-Key"
+      validation_endpoint: "https://auth.company.com/validate"
+      cache_ttl_seconds: 300
+    
+    oauth2:
+      provider: "okta"
+      client_id: "${OAUTH2_CLIENT_ID}"
+      client_secret: "${OAUTH2_CLIENT_SECRET}"
+      authorization_url: "https://company.okta.com/oauth2/authorize"
+      token_url: "https://company.okta.com/oauth2/token"
+    
+    rate_limiting:
+      enabled: true
+      requests_per_minute: 1000
+      burst_size: 100
+      
+    authorization:
+      enabled: true
+      default_policy: "deny"
+      policies:
+        - name: "admin_full_access"
+          subjects: ["role:admin"]
+          resources: ["*"]
+          actions: ["*"]
+        
+        - name: "user_inference_access"
+          subjects: ["role:user"]
+          resources: ["/v1/chat/completions", "/v1/completions"]
+          actions: ["POST"]
+          conditions:
+            max_tokens: 2048
+            rate_limit: 100
+```
+
+### Secret Management
+```yaml
+# secrets-management.yaml - Secure secret handling
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dynamo-secrets
+  namespace: dynamo-production
+  annotations:
+    # AWS Secrets Manager integration
+    secrets-store.csi.x-k8s.io/secretProviderClass: "dynamo-secrets"
+type: Opaque
+stringData:
+  # Database credentials
+  DATABASE_URL: "postgresql://user:${DB_PASSWORD}@postgres:5432/dynamo"
+  
+  # HuggingFace Hub token
+  HUGGINGFACE_HUB_TOKEN: "${HF_TOKEN}"
+  
+  # API keys
+  OPENAI_API_KEY: "${OPENAI_KEY}"
+  
+  # Encryption keys
+  ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+  
+  # JWT secrets
+  JWT_SECRET_KEY: "${JWT_SECRET}"
+
+---
+# External Secrets Operator configuration
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: aws-secrets-manager
+  namespace: dynamo-production
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: us-west-2
+      auth:
+        secretRef:
+          accessKeyID:
+            name: aws-credentials
+            key: access-key-id
+          secretAccessKey:
+            name: aws-credentials
+            key: secret-access-key
+
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: dynamo-external-secrets
+  namespace: dynamo-production
+spec:
+  refreshInterval: 300s  # 5 minutes
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: SecretStore
+  target:
+    name: dynamo-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: DATABASE_URL
+    remoteRef:
+      key: dynamo/production/database
+      property: url
+  - secretKey: HUGGINGFACE_HUB_TOKEN
+    remoteRef:
+      key: dynamo/production/huggingface
+      property: token
+```
+
+## High Availability Configuration
+
+### Multi-Zone Deployment
+```yaml
+# ha-deployment.yaml - High availability configuration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamo-frontend-ha
+  namespace: dynamo-production
+spec:
+  replicas: 6  # 2 per AZ
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: dynamo-frontend
+  template:
+    metadata:
+      labels:
+        app: dynamo-frontend
+    spec:
+      # Anti-affinity to spread across zones
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - dynamo-frontend
+            topologyKey: topology.kubernetes.io/zone
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - dynamo-frontend
+              topologyKey: kubernetes.io/hostname
+      
+      # Topology spread constraints
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: dynamo-frontend
+      
+      containers:
+      - name: frontend
+        image: nvcr.io/nvidia/dynamo:latest
+        imagePullPolicy: Always
+        
+        # Resource requests and limits
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
+        
+        # Environment variables
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+              
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: tls-certs
+          mountPath: /tls
+        - name: tmp
+          mountPath: /tmp
+          
+      volumes:
+      - name: config
+        configMap:
+          name: dynamo-config
+      - name: tls-certs
+        secret:
+          secretName: dynamo-tls-certs
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dynamo-frontend-pdb
+  namespace: dynamo-production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: dynamo-frontend
+
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dynamo-frontend-hpa
+  namespace: dynamo-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dynamo-frontend-ha
+  minReplicas: 6
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+```
+
+### Load Balancing and Traffic Management
+```yaml
+# traffic-management.yaml - Advanced traffic management
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamo-frontend-service
+  namespace: dynamo-production
+  annotations:
+    # AWS Load Balancer Controller annotations
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health/ready"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-unhealthy-threshold: "3"
+spec:
+  type: LoadBalancer
+  selector:
+    app: dynamo-frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8443
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Ingress with advanced routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dynamo-ingress
+  namespace: dynamo-production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # Connection limits
+    nginx.ingress.kubernetes.io/limit-connections: "100"
+    
+    # Request size limits
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    
+    # Custom headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" always;
+      
+spec:
+  tls:
+  - hosts:
+    - api.dynamo.company.com
+    - dynamo.company.com
+    secretName: dynamo-tls-cert
+  
+  rules:
+  - host: api.dynamo.company.com
+    http:
+      paths:
+      - path: /v1
+        pathType: Prefix
+        backend:
+          service:
+            name: dynamo-frontend-service
+            port:
+              number: 80
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: dynamo-frontend-service
+            port:
+              number: 80
+  
+  - host: dynamo.company.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: dynamo-frontend-service
+            port:
+              number: 80
+
+---
+# Circuit breaker configuration (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: dynamo-circuit-breaker
+  namespace: dynamo-production
+spec:
+  host: dynamo-frontend-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+```
+
+## Monitoring and Observability
+
+### Comprehensive Monitoring Stack
+```yaml
+# monitoring-stack.yaml - Production monitoring configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'production'
+        environment: 'prod'
+    
+    rule_files:
+    - "/etc/prometheus/rules/*.yml"
+    
+    scrape_configs:
+    # Dynamo frontend metrics
+    - job_name: 'dynamo-frontend'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - dynamo-production
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: dynamo-frontend
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+    
+    # Dynamo worker metrics
+    - job_name: 'dynamo-workers'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - dynamo-production
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: dynamo-worker
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+    
+    # Infrastructure metrics
+    - job_name: 'node-exporter'
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.*):10250'
+        replacement: '${1}:9100'
+        target_label: __address__
+    
+    - job_name: 'kube-state-metrics'
+      static_configs:
+      - targets: ['kube-state-metrics:8080']
+    
+    # GPU metrics
+    - job_name: 'dcgm-exporter'
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: keep
+        regex: dcgm-exporter
+
+---
+# Alert rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: monitoring
+data:
+  dynamo.yml: |
+    groups:
+    - name: dynamo.rules
+      interval: 30s
+      rules:
+      
+      # High latency alert
+      - alert: DynamoHighLatency
+        expr: histogram_quantile(0.99, rate(dynamo_request_duration_seconds_bucket[5m])) > 2
+        for: 2m
+        labels:
+          severity: warning
+          service: dynamo
+        annotations:
+          summary: "High latency detected in Dynamo"
+          description: "P99 latency is {{ $value }}s for the last 5 minutes"
+      
+      # High error rate
+      - alert: DynamoHighErrorRate
+        expr: rate(dynamo_requests_total{status=~"5.."}[5m]) / rate(dynamo_requests_total[5m]) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          service: dynamo
+        annotations:
+          summary: "High error rate in Dynamo"
+          description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+      
+      # Low throughput
+      - alert: DynamoLowThroughput
+        expr: rate(dynamo_requests_total[5m]) < 10
+        for: 5m
+        labels:
+          severity: warning
+          service: dynamo
+        annotations:
+          summary: "Low throughput in Dynamo"
+          description: "Request rate is {{ $value }} req/sec for the last 5 minutes"
+      
+      # GPU utilization
+      - alert: DynamoGPUHighUtilization
+        expr: DCGM_FI_DEV_GPU_UTIL > 95
+        for: 5m
+        labels:
+          severity: warning
+          service: dynamo
+        annotations:
+          summary: "High GPU utilization"
+          description: "GPU {{ $labels.gpu }} utilization is {{ $value }}%"
+      
+      # Memory usage
+      - alert: DynamoHighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+          service: dynamo
+        annotations:
+          summary: "High memory usage"
+          description: "Container {{ $labels.container }} memory usage is {{ $value | humanizePercentage }}"
+      
+      # Pod crash looping
+      - alert: DynamoPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total{namespace="dynamo-production"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: dynamo
+        annotations:
+          summary: "Pod is crash looping"
+          description: "Pod {{ $labels.pod }} is crash looping"
+
+---
+# Grafana dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamo-grafana-dashboard
+  namespace: monitoring
+data:
+  dynamo-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Dynamo Production Dashboard",
+        "tags": ["dynamo", "production"],
+        "timezone": "UTC",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(dynamo_requests_total[5m])) by (instance)",
+                "legendFormat": "{{ instance }}"
+              }
+            ],
+            "yAxes": [{
+              "label": "requests/sec"
+            }],
+            "alert": {
+              "conditions": [
+                {
+                  "query": {
+                    "queryType": "",
+                    "refId": "A"
+                  },
+                  "reducer": {
+                    "params": [],
+                    "type": "last"
+                  },
+                  "evaluator": {
+                    "params": [100],
+                    "type": "lt"
+                  }
+                }
+              ],
+              "executionErrorState": "alerting",
+              "noDataState": "no_data",
+              "frequency": "10s",
+              "handler": 1,
+              "name": "Low Request Rate"
+            }
+          },
+          {
+            "id": 2,
+            "title": "Response Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, rate(dynamo_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(dynamo_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(dynamo_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "P99"
+              }
+            ],
+            "yAxes": [{
+              "label": "seconds"
+            }]
+          },
+          {
+            "id": 3,
+            "title": "Error Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(dynamo_requests_total{status=~\"5..\"}[5m]) / rate(dynamo_requests_total[5m]) * 100",
+                "legendFormat": "Error Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 1},
+                    {"color": "red", "value": 5}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 4,
+            "title": "GPU Utilization",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "DCGM_FI_DEV_GPU_UTIL",
+                "legendFormat": "GPU {{ gpu }}"
+              }
+            ],
+            "yAxes": [{
+              "label": "percentage",
+              "max": 100,
+              "min": 0
+            }]
+          },
+          {
+            "id": 5,
+            "title": "Active Connections",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "dynamo_active_connections",
+                "legendFormat": "{{ instance }}"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "KV Cache Hit Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "dynamo_cache_hit_rate * 100",
+                "legendFormat": "Cache Hit Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 70},
+                    {"color": "green", "value": 85}
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }
+```
+
+## Disaster Recovery and Business Continuity
+
+### Backup and Recovery Strategy
+```bash
+#!/bin/bash
+# backup-strategy.sh - Comprehensive backup and recovery
+
+# Configuration
+BACKUP_RETENTION_DAYS=30
+BACKUP_S3_BUCKET="dynamo-backups-production"
+BACKUP_ENCRYPTION_KEY="arn:aws:kms:us-west-2:account:key/key-id"
+
+# Database backup
+backup_database() {
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="dynamo_db_backup_${timestamp}.sql.gz"
+    
+    echo "Starting database backup..."
+    pg_dump -h postgres-primary -U dynamo -d dynamo_production | gzip > /tmp/${backup_file}
+    
+    # Upload to S3 with encryption
+    aws s3 cp /tmp/${backup_file} s3://${BACKUP_S3_BUCKET}/database/${backup_file} \
+        --server-side-encryption aws:kms \
+        --ssm-kms-key-id ${BACKUP_ENCRYPTION_KEY}
+    
+    # Clean up local file
+    rm /tmp/${backup_file}
+    
+    echo "Database backup completed: ${backup_file}"
+}
+
+# Model cache backup
+backup_model_cache() {
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    echo "Starting model cache backup..."
+    aws s3 sync /models s3://${BACKUP_S3_BUCKET}/models/${timestamp} \
+        --server-side-encryption aws:kms \
+        --ssm-kms-key-id ${BACKUP_ENCRYPTION_KEY} \
+        --delete
+    
+    echo "Model cache backup completed"
+}
+
+# Configuration backup
+backup_configurations() {
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local config_backup_dir="/tmp/config_backup_${timestamp}"
+    
+    echo "Starting configuration backup..."
+    mkdir -p ${config_backup_dir}
+    
+    # Export Kubernetes resources
+    kubectl get all,configmap,secret,pv,pvc,ingress,networkpolicy \
+        -n dynamo-production -o yaml > ${config_backup_dir}/k8s-resources.yaml
+    
+    # Export Helm values
+    helm get values dynamo-platform -n dynamo-production > ${config_backup_dir}/helm-values.yaml
+    
+    # Backup certificates
+    kubectl get secrets -n dynamo-production -l type=kubernetes.io/tls -o yaml > ${config_backup_dir}/tls-secrets.yaml
+    
+    # Create archive
+    tar -czf ${config_backup_dir}.tar.gz -C /tmp config_backup_${timestamp}
+    
+    # Upload to S3
+    aws s3 cp ${config_backup_dir}.tar.gz s3://${BACKUP_S3_BUCKET}/configs/ \
+        --server-side-encryption aws:kms \
+        --ssm-kms-key-id ${BACKUP_ENCRYPTION_KEY}
+    
+    # Clean up
+    rm -rf ${config_backup_dir} ${config_backup_dir}.tar.gz
+    
+    echo "Configuration backup completed"
+}
+
+# Cleanup old backups
+cleanup_old_backups() {
+    echo "Cleaning up backups older than ${BACKUP_RETENTION_DAYS} days..."
+    
+    # Database backups
+    aws s3 ls s3://${BACKUP_S3_BUCKET}/database/ | \
+    while read -r line; do
+        createDate=`echo $line|awk {'print $1" "$2'}`
+        createDate=`date -d"$createDate" +%s`
+        olderThan=`date -d"-${BACKUP_RETENTION_DAYS} days" +%s`
+        if [[ $createDate -lt $olderThan ]]; then
+            fileName=`echo $line|awk {'print $4'}`
+            if [[ $fileName != "" ]]; then
+                aws s3 rm s3://${BACKUP_S3_BUCKET}/database/$fileName
+                echo "Deleted old backup: $fileName"
+            fi
+        fi
+    done
+    
+    echo "Backup cleanup completed"
+}
+
+# Disaster recovery test
+test_disaster_recovery() {
+    echo "Starting disaster recovery test..."
+    
+    # Create test namespace
+    kubectl create namespace dynamo-dr-test
+    
+    # Deploy minimal Dynamo instance
+    helm install dynamo-dr-test dynamo/dynamo-platform \
+        --namespace dynamo-dr-test \
+        --values dr-test-values.yaml \
+        --timeout 600s
+    
+    # Run health checks
+    kubectl wait --for=condition=ready pod -l app=dynamo-frontend -n dynamo-dr-test --timeout=300s
+    
+    # Test API endpoint
+    kubectl port-forward -n dynamo-dr-test svc/dynamo-frontend-service 8080:80 &
+    PORT_FORWARD_PID=$!
+    
+    sleep 10
+    
+    # Simple API test
+    curl -X POST http://localhost:8080/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -d '{
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "test"}],
+            "max_tokens": 10
+        }'
+    
+    # Clean up
+    kill $PORT_FORWARD_PID
+    helm uninstall dynamo-dr-test -n dynamo-dr-test
+    kubectl delete namespace dynamo-dr-test
+    
+    echo "Disaster recovery test completed"
+}
+
+# Main backup execution
+main() {
+    case "$1" in
+        "database")
+            backup_database
+            ;;
+        "models")
+            backup_model_cache
+            ;;
+        "config")
+            backup_configurations
+            ;;
+        "cleanup")
+            cleanup_old_backups
+            ;;
+        "test-dr")
+            test_disaster_recovery
+            ;;
+        "full")
+            backup_database
+            backup_model_cache
+            backup_configurations
+            cleanup_old_backups
+            ;;
+        *)
+            echo "Usage: $0 {database|models|config|cleanup|test-dr|full}"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
+```
+
+### Multi-Region Deployment Strategy
+```yaml
+# multi-region-deployment.yaml - Cross-region deployment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-region-config
+  namespace: dynamo-production
+data:
+  regions.yaml: |
+    primary_region: "us-west-2"
+    secondary_regions:
+      - "us-east-1"
+      - "eu-west-1"
+    
+    disaster_recovery:
+      rto_minutes: 15  # Recovery Time Objective
+      rpo_minutes: 5   # Recovery Point Objective
+      
+    data_replication:
+      database:
+        type: "synchronous"
+        backup_frequency: "5m"
+        retention_days: 30
+        
+      model_cache:
+        type: "asynchronous"
+        sync_frequency: "1h"
+        bandwidth_limit_mbps: 1000
+        
+      configurations:
+        type: "synchronous"
+        backup_frequency: "1m"
+    
+    traffic_distribution:
+      primary_region_weight: 70
+      secondary_region_weights:
+        us-east-1: 20
+        eu-west-1: 10
+      
+      failover_strategy: "automatic"
+      health_check_frequency: "30s"
+      unhealthy_threshold: 3
+
+---
+# Global load balancer configuration (AWS Route 53)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: route53-config
+  namespace: dynamo-production
+data:
+  dns-config.json: |
+    {
+      "hosted_zone_id": "Z123456789ABC",
+      "domain": "api.dynamo.company.com",
+      "records": [
+        {
+          "name": "api.dynamo.company.com",
+          "type": "A",
+          "alias": true,
+          "routing_policy": "weighted",
+          "targets": [
+            {
+              "region": "us-west-2",
+              "target": "dynamo-usw2-alb.amazonaws.com",
+              "weight": 70,
+              "health_check_id": "hc-usw2-dynamo"
+            },
+            {
+              "region": "us-east-1",
+              "target": "dynamo-use1-alb.amazonaws.com",
+              "weight": 20,
+              "health_check_id": "hc-use1-dynamo"
+            },
+            {
+              "region": "eu-west-1",
+              "target": "dynamo-euw1-alb.amazonaws.com",
+              "weight": 10,
+              "health_check_id": "hc-euw1-dynamo"
+            }
+          ]
+        }
+      ],
+      "health_checks": [
+        {
+          "id": "hc-usw2-dynamo",
+          "type": "HTTPS",
+          "resource_path": "/health/ready",
+          "failure_threshold": 3,
+          "request_interval": 30
+        },
+        {
+          "id": "hc-use1-dynamo",
+          "type": "HTTPS",
+          "resource_path": "/health/ready",
+          "failure_threshold": 3,
+          "request_interval": 30
+        },
+        {
+          "id": "hc-euw1-dynamo",
+          "type": "HTTPS",
+          "resource_path": "/health/ready",
+          "failure_threshold": 3,
+          "request_interval": 30
+        }
+      ]
+    }
+```
+
+This comprehensive production deployment guide ensures enterprise-grade reliability, security, and operational excellence for NVIDIA Dynamo deployments.

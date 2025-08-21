@@ -1,0 +1,998 @@
+---
+description: NVIDIA Dynamo Performance Optimization and Tuning - Advanced techniques for maximizing throughput, minimizing latency, and optimizing resource utilization
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo performance optimization and advanced tuning techniques.
+
+## Performance Optimization Framework
+
+NVIDIA Dynamo performance optimization spans multiple layers: hardware utilization, memory management, network optimization, and workload-specific tuning.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                Performance Optimization Stack                   │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │ Application │  │  Workload   │  │   Model     │  │Request  │  │
+│  │    Layer    │  │ Scheduling  │  │ Serving     │  │Routing  │  │
+│  │             │  │             │  │             │  │         │  │
+│  │• Batching   │  │• SLA-aware  │  │• Engine     │  │• KV     │  │
+│  │• Caching    │  │  Planning   │  │  Selection  │  │  Aware  │  │
+│  │• Prefetch   │  │• Load Bal   │  │• Disagg     │  │• Load   │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Runtime Layer                               │  │
+│  │  • Memory Tiers  • KV Cache  • NIXL Transfer  • Monitoring │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                Infrastructure Layer                         │  │
+│  │   • GPU Util   • Network   • Storage I/O   • CPU Cores    │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Hardware-Level Optimizations
+
+### GPU Optimization
+```bash
+# GPU performance tuning
+# Set GPU clocks to maximum
+sudo nvidia-smi -pm 1  # Enable persistence mode
+sudo nvidia-smi -ac 1215,1410  # Set memory and graphics clocks (adjust for your GPU)
+
+# Enable GPU ECC if supported
+sudo nvidia-smi -e 1
+
+# Set power limit to maximum
+sudo nvidia-smi -pl 400  # 400W (adjust based on your GPU)
+
+# Configure GPU memory allocation
+export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512,expandable_segments:True"
+
+# Enable CUDA caching
+export CUDA_CACHE_MAXSIZE=2147483648  # 2GB cache
+
+# Optimize CUDA context caching
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+```
+
+### Memory System Tuning
+```bash
+# System memory optimization
+echo 'vm.swappiness=1' >> /etc/sysctl.conf
+echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
+echo 'vm.dirty_ratio=15' >> /etc/sysctl.conf
+echo 'vm.dirty_background_ratio=5' >> /etc/sysctl.conf
+
+# Huge pages configuration for large model loading
+echo 'vm.nr_hugepages=8192' >> /etc/sysctl.conf  # 16GB of 2MB huge pages
+echo never > /sys/kernel/mm/transparent_hugepage/enabled
+
+# Network buffer tuning
+echo 'net.core.rmem_max=134217728' >> /etc/sysctl.conf
+echo 'net.core.wmem_max=134217728' >> /etc/sysctl.conf
+echo 'net.ipv4.tcp_rmem=4096 65536 134217728' >> /etc/sysctl.conf
+echo 'net.ipv4.tcp_wmem=4096 65536 134217728' >> /etc/sysctl.conf
+
+# Apply changes
+sysctl -p
+```
+
+### NVMe Storage Optimization
+```bash
+# NVMe performance tuning
+# Set I/O scheduler to none for NVMe
+echo none > /sys/block/nvme0n1/queue/scheduler
+
+# Increase queue depth
+echo mq-deadline > /sys/block/nvme0n1/queue/scheduler
+echo 32 > /sys/block/nvme0n1/queue/nr_requests
+
+# Disable write cache for consistency (if needed)
+echo write through > /sys/block/nvme0n1/queue/write_cache
+
+# Mount options for performance
+mount -o noatime,nodiratime,data=writeback /dev/nvme0n1p1 /fast/kv_cache
+```
+
+## Model-Specific Optimizations
+
+### vLLM Performance Tuning
+```python
+# vllm_optimized_config.py - Production vLLM configuration
+vllm_performance_config = {
+    # Core Model Settings
+    "model": "meta-llama/Llama-3.1-70B-Instruct",
+    "dtype": "bfloat16",  # Use bfloat16 for better performance on modern GPUs
+    "max_model_len": 8192,
+    "trust_remote_code": True,
+    
+    # GPU Configuration
+    "tensor_parallel_size": 4,
+    "pipeline_parallel_size": 1,
+    "gpu_memory_utilization": 0.95,  # Aggressive memory use
+    
+    # Performance Features
+    "enable_chunked_prefill": True,
+    "max_chunked_prefill_tokens": 8192,
+    "use_v2_block_manager": True,
+    "enable_prefix_caching": True,
+    "block_size": 32,  # Optimized for memory efficiency
+    
+    # Batching Optimization
+    "max_num_batched_tokens": 16384,  # Large batch size for throughput
+    "max_num_seqs": 512,  # High sequence count
+    "max_paddings": 512,
+    
+    # Advanced Features
+    "kv_cache_dtype": "auto",  # Let vLLM choose optimal dtype
+    "quantization": None,  # Disable quantization for max performance
+    "enforce_eager": False,  # Use CUDA graphs for speed
+    "max_context_len_to_capture": 8192,
+    
+    # Scheduling
+    "scheduler_delay_factor": 0.0,
+    "enable_chunked_prefill": True,
+    
+    # Memory Management
+    "swap_space": 8,  # 8GB swap space
+    "cpu_offload_gb": 0,  # Keep everything on GPU for speed
+}
+
+# Advanced vLLM startup command
+vllm_cmd = f"""
+python -m dynamo.vllm \\
+  --model {vllm_performance_config["model"]} \\
+  --dtype {vllm_performance_config["dtype"]} \\
+  --max-model-len {vllm_performance_config["max_model_len"]} \\
+  --tensor-parallel-size {vllm_performance_config["tensor_parallel_size"]} \\
+  --gpu-memory-utilization {vllm_performance_config["gpu_memory_utilization"]} \\
+  --enable-chunked-prefill \\
+  --max-chunked-prefill-tokens {vllm_performance_config["max_chunked_prefill_tokens"]} \\
+  --use-v2-block-manager \\
+  --enable-prefix-caching \\
+  --block-size {vllm_performance_config["block_size"]} \\
+  --max-num-batched-tokens {vllm_performance_config["max_num_batched_tokens"]} \\
+  --max-num-seqs {vllm_performance_config["max_num_seqs"]} \\
+  --kv-cache-dtype auto \\
+  --enforce-eager false \\
+  --swap-space {vllm_performance_config["swap_space"]} \\
+  --scheduler-delay-factor {vllm_performance_config["scheduler_delay_factor"]}
+"""
+```
+
+### SGLang Performance Optimization
+```python
+# sglang_optimized_config.py - High-performance SGLang configuration
+sglang_performance_config = {
+    # Model Configuration
+    "model_path": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+    "tokenizer_path": None,
+    "trust_remote_code": True,
+    "context_length": 32768,
+    
+    # Memory Optimization
+    "mem_fraction_static": 0.85,  # Static allocation for speed
+    "max_running_requests": 4096,  # High concurrency
+    "max_total_tokens": 131072,   # Large token budget
+    
+    # Performance Features
+    "enable_torch_compile": True,  # JIT compilation
+    "tp_size": 4,                 # Tensor parallelism
+    "dp_size": 1,                 # Data parallelism
+    
+    # Advanced Memory Management
+    "chunked_prefill_size": 16384,  # Large prefill chunks
+    "max_prefill_tokens": 65536,   # High prefill capacity
+    "enable_mixed_chunk": True,    # Mixed prefill/decode
+    
+    # Radix Cache Optimization
+    "disable_radix_cache": False,
+    "radix_cache_config": {
+        "enable": True,
+        "max_size": 2 * 1024 * 1024 * 1024,  # 2GB radix cache
+        "eviction_policy": "lru"
+    },
+    
+    # Attention Optimization  
+    "attention_reduce_in_fp32": False,  # Use fp16 for speed
+    "flashinfer_workspace_size": 512 * 1024 * 1024,  # 512MB workspace
+    
+    # Networking (for multi-node)
+    "nnodes": 2,
+    "nproc_per_node": 4,
+    "node_rank": 0,
+    "master_addr": "localhost",
+    "master_port": 29500,
+    
+    # Monitoring
+    "disable_log_stats": False,
+    "show_time_cost": True,
+    "log_level": "info",
+}
+
+# Optimized SGLang launch command
+sglang_cmd = f"""
+python -m dynamo.sglang.worker \\
+  --model-path {sglang_performance_config["model_path"]} \\
+  --mem-fraction-static {sglang_performance_config["mem_fraction_static"]} \\
+  --max-running-requests {sglang_performance_config["max_running_requests"]} \\
+  --max-total-tokens {sglang_performance_config["max_total_tokens"]} \\
+  --enable-torch-compile \\
+  --tp-size {sglang_performance_config["tp_size"]} \\
+  --chunked-prefill-size {sglang_performance_config["chunked_prefill_size"]} \\
+  --max-prefill-tokens {sglang_performance_config["max_prefill_tokens"]} \\
+  --enable-mixed-chunk \\
+  --context-length {sglang_performance_config["context_length"]} \\
+  --trust-remote-code
+"""
+```
+
+### TensorRT-LLM Optimization
+```bash
+# trtllm_optimized_build.sh - Optimized TensorRT-LLM engine build
+#!/bin/bash
+
+MODEL_PATH="meta-llama/Llama-3.1-70B-Instruct"
+OUTPUT_DIR="/models/llama-70b-optimized"
+MAX_BATCH_SIZE=32
+MAX_INPUT_LEN=4096
+MAX_OUTPUT_LEN=2048
+TP_SIZE=4
+
+python -m dynamo.trtllm.build \
+  --model_path $MODEL_PATH \
+  --output_dir $OUTPUT_DIR \
+  --dtype float16 \
+  --max_input_len $MAX_INPUT_LEN \
+  --max_output_len $MAX_OUTPUT_LEN \
+  --max_batch_size $MAX_BATCH_SIZE \
+  --max_beam_width 1 \
+  --tp_size $TP_SIZE \
+  --pp_size 1 \
+  --use_gpt_attention_plugin float16 \
+  --use_gemm_plugin float16 \
+  --use_layernorm_plugin float16 \
+  --use_rmsnorm_plugin float16 \
+  --enable_context_fmha \
+  --paged_kv_cache enable \
+  --remove_input_padding enable \
+  --use_custom_all_reduce disable \
+  --multi_block_mode enable \
+  --enable_xqa enable \
+  --tokens_per_block 128 \
+  --max_prompt_embedding_table_size 0 \
+  --gather_context_logits \
+  --gather_generation_logits \
+  --strongly_typed \
+  --builder_opt 4 \
+  --max_num_tokens $((MAX_BATCH_SIZE * MAX_INPUT_LEN)) \
+  --use_fused_mlp enable \
+  --reduce_fusion disable \
+  --enable_fp8 \
+  --fp8_kv_cache \
+  --multiple_profiles enable \
+  --gpt_attention_plugin float16 \
+  --context_fmha enable \
+  --paged_context_fmha enable
+
+# Launch optimized TensorRT-LLM worker
+python -m dynamo.trtllm \
+  --engine-dir $OUTPUT_DIR \
+  --tokenizer $MODEL_PATH \
+  --max-batch-size $MAX_BATCH_SIZE \
+  --max-input-len $MAX_INPUT_LEN \
+  --max-output-len $MAX_OUTPUT_LEN \
+  --max-attention-window-size 4096 \
+  --sink-token-length 4 \
+  --world-size $TP_SIZE \
+  --tp-size $TP_SIZE \
+  --pp-size 1 \
+  --enable-chunked-context \
+  --streaming-llm-param sink_token_length:4,window_size:2048 \
+  --kv-cache-free-gpu-mem-fraction 0.9 \
+  --enable-kv-cache-reuse \
+  --exclude-input-in-output \
+  --enable-trt-overlap
+```
+
+## Advanced Batching Strategies
+
+### Dynamic Batching Optimization
+```python
+# dynamic_batching.py - Advanced batching strategies
+from typing import List, Dict, Optional, Tuple
+import time
+import asyncio
+from dataclasses import dataclass
+from collections import deque
+import heapq
+
+@dataclass
+class BatchRequest:
+    """Request with batching metadata"""
+    request_id: str
+    prompt: str
+    max_tokens: int
+    temperature: float
+    arrival_time: float
+    priority: int
+    estimated_duration: float
+    compatible_groups: List[str]
+
+class AdaptiveBatcher:
+    """Advanced batching with dynamic optimization"""
+    
+    def __init__(self,
+                 max_batch_size: int = 32,
+                 max_wait_time_ms: float = 10.0,
+                 target_latency_ms: float = 100.0):
+        
+        self.max_batch_size = max_batch_size
+        self.max_wait_time_ms = max_wait_time_ms
+        self.target_latency_ms = target_latency_ms
+        
+        # Request queues by priority
+        self.priority_queues = {
+            1: deque(),  # High priority (real-time)
+            2: deque(),  # Medium priority (interactive)
+            3: deque(),  # Low priority (batch)
+        }
+        
+        # Batching statistics
+        self.batch_stats = {
+            "avg_batch_size": 0.0,
+            "avg_wait_time": 0.0,
+            "throughput_rps": 0.0,
+            "p99_latency": 0.0,
+        }
+        
+        # Compatibility groups for similar requests
+        self.compatibility_groups = {
+            "short_generation": {"max_tokens": (1, 50), "temperature": (0.0, 0.3)},
+            "medium_generation": {"max_tokens": (51, 200), "temperature": (0.3, 0.8)},
+            "long_generation": {"max_tokens": (201, 2048), "temperature": (0.8, 2.0)},
+            "creative": {"temperature": (1.0, 2.0)},
+            "factual": {"temperature": (0.0, 0.5)},
+        }
+        
+        # Performance tracking
+        self.recent_batches = deque(maxlen=1000)
+        self.latency_samples = deque(maxlen=1000)
+    
+    def classify_request(self, request: BatchRequest) -> List[str]:
+        """Classify request into compatibility groups"""
+        groups = []
+        
+        for group_name, criteria in self.compatibility_groups.items():
+            matches = True
+            
+            for param, (min_val, max_val) in criteria.items():
+                value = getattr(request, param, None)
+                if value is not None and not (min_val <= value <= max_val):
+                    matches = False
+                    break
+            
+            if matches:
+                groups.append(group_name)
+        
+        return groups
+    
+    def add_request(self, request: BatchRequest):
+        """Add request to appropriate queue"""
+        # Classify request
+        request.compatible_groups = self.classify_request(request)
+        
+        # Estimate processing duration based on max_tokens
+        request.estimated_duration = self._estimate_duration(request)
+        
+        # Add to priority queue
+        priority = min(max(request.priority, 1), 3)
+        self.priority_queues[priority].append(request)
+    
+    def create_optimal_batch(self) -> List[BatchRequest]:
+        """Create optimal batch using advanced strategies"""
+        current_time = time.time() * 1000  # milliseconds
+        batch = []
+        
+        # Strategy 1: Priority-based selection
+        for priority in [1, 2, 3]:  # High to low priority
+            queue = self.priority_queues[priority]
+            
+            while queue and len(batch) < self.max_batch_size:
+                request = queue[0]
+                
+                # Check wait time constraint
+                wait_time = current_time - (request.arrival_time * 1000)
+                if priority == 1 and wait_time > self.max_wait_time_ms * 0.5:
+                    # High priority requests get expedited processing
+                    batch.append(queue.popleft())
+                elif wait_time > self.max_wait_time_ms:
+                    batch.append(queue.popleft())
+                elif len(batch) == 0 and wait_time > self.max_wait_time_ms * 0.1:
+                    # Start batch if any request is waiting too long
+                    batch.append(queue.popleft())
+                else:
+                    break
+        
+        # Strategy 2: Compatibility-based grouping
+        if len(batch) < self.max_batch_size:
+            batch = self._optimize_batch_compatibility(batch)
+        
+        # Strategy 3: Duration-based balancing
+        batch = self._balance_batch_duration(batch)
+        
+        return batch
+    
+    def _estimate_duration(self, request: BatchRequest) -> float:
+        """Estimate request processing duration"""
+        # Base duration from max_tokens
+        base_duration = request.max_tokens * 0.01  # 10ms per token (rough estimate)
+        
+        # Temperature adjustment (higher temp = more computation)
+        temp_multiplier = 1.0 + (request.temperature - 1.0) * 0.1
+        
+        # Length adjustment
+        prompt_length = len(request.prompt)
+        length_multiplier = 1.0 + (prompt_length / 1000) * 0.05
+        
+        return base_duration * temp_multiplier * length_multiplier
+    
+    def _optimize_batch_compatibility(self, initial_batch: List[BatchRequest]) -> List[BatchRequest]:
+        """Optimize batch for compatibility"""
+        if not initial_batch:
+            return initial_batch
+        
+        # Find common groups in initial batch
+        common_groups = set(initial_batch[0].compatible_groups)
+        for request in initial_batch[1:]:
+            common_groups &= set(request.compatible_groups)
+        
+        # Try to add more compatible requests
+        batch = initial_batch.copy()
+        
+        for priority in [1, 2, 3]:
+            queue = list(self.priority_queues[priority])
+            
+            for request in queue:
+                if len(batch) >= self.max_batch_size:
+                    break
+                
+                # Check if request is compatible
+                if common_groups & set(request.compatible_groups):
+                    batch.append(request)
+                    self.priority_queues[priority].remove(request)
+        
+        return batch
+    
+    def _balance_batch_duration(self, batch: List[BatchRequest]) -> List[BatchRequest]:
+        """Balance batch for similar processing durations"""
+        if len(batch) <= 1:
+            return batch
+        
+        # Calculate duration variance
+        durations = [req.estimated_duration for req in batch]
+        avg_duration = sum(durations) / len(durations)
+        variance = sum((d - avg_duration) ** 2 for d in durations) / len(durations)
+        
+        # If variance is high, try to balance
+        if variance > avg_duration * 0.5:  # High variance threshold
+            # Sort by duration
+            batch.sort(key=lambda req: req.estimated_duration)
+            
+            # Remove outliers if batch is large enough
+            if len(batch) > 8:
+                # Remove longest requests if they're much longer than average
+                while (len(batch) > 4 and 
+                       batch[-1].estimated_duration > avg_duration * 2):
+                    outlier = batch.pop()
+                    # Put back in appropriate queue
+                    self.priority_queues[outlier.priority].appendleft(outlier)
+        
+        return batch
+    
+    async def process_batch(self, batch: List[BatchRequest]) -> Dict[str, float]:
+        """Process batch and collect performance metrics"""
+        if not batch:
+            return {}
+        
+        start_time = time.time()
+        batch_size = len(batch)
+        
+        # Simulate batch processing (replace with actual inference)
+        estimated_processing_time = max(req.estimated_duration for req in batch)
+        await asyncio.sleep(estimated_processing_time / 1000)  # Convert to seconds
+        
+        end_time = time.time()
+        actual_duration = (end_time - start_time) * 1000  # milliseconds
+        
+        # Update statistics
+        self.recent_batches.append({
+            "batch_size": batch_size,
+            "duration_ms": actual_duration,
+            "timestamp": end_time
+        })
+        
+        # Calculate wait times
+        for request in batch:
+            wait_time = start_time * 1000 - request.arrival_time * 1000
+            total_latency = wait_time + actual_duration
+            self.latency_samples.append(total_latency)
+        
+        # Update running statistics
+        self._update_statistics()
+        
+        return {
+            "batch_size": batch_size,
+            "processing_time_ms": actual_duration,
+            "throughput_rps": batch_size / (actual_duration / 1000),
+            "avg_wait_time_ms": sum((start_time * 1000 - req.arrival_time * 1000) for req in batch) / batch_size
+        }
+    
+    def _update_statistics(self):
+        """Update running performance statistics"""
+        if not self.recent_batches:
+            return
+        
+        # Calculate averages
+        recent = list(self.recent_batches)[-100:]  # Last 100 batches
+        
+        self.batch_stats["avg_batch_size"] = sum(b["batch_size"] for b in recent) / len(recent)
+        self.batch_stats["avg_wait_time"] = sum(b["duration_ms"] for b in recent) / len(recent)
+        
+        # Calculate throughput (requests per second)
+        if len(recent) >= 2:
+            time_window = recent[-1]["timestamp"] - recent[0]["timestamp"]
+            total_requests = sum(b["batch_size"] for b in recent)
+            self.batch_stats["throughput_rps"] = total_requests / max(time_window, 1)
+        
+        # Calculate P99 latency
+        if self.latency_samples:
+            sorted_latencies = sorted(self.latency_samples)
+            p99_index = int(len(sorted_latencies) * 0.99)
+            self.batch_stats["p99_latency"] = sorted_latencies[p99_index]
+    
+    def get_queue_statistics(self) -> Dict:
+        """Get current queue statistics"""
+        return {
+            "queue_lengths": {
+                priority: len(queue) 
+                for priority, queue in self.priority_queues.items()
+            },
+            "total_queued": sum(len(q) for q in self.priority_queues.values()),
+            "performance": self.batch_stats.copy()
+        }
+    
+    def adapt_parameters(self):
+        """Adaptively tune batching parameters based on performance"""
+        # Increase batch size if latency is good and throughput can be improved
+        if (self.batch_stats["p99_latency"] < self.target_latency_ms * 0.8 and
+            self.batch_stats["avg_batch_size"] < self.max_batch_size):
+            self.max_batch_size = min(self.max_batch_size + 2, 64)
+        
+        # Decrease wait time if latency is too high
+        elif self.batch_stats["p99_latency"] > self.target_latency_ms * 1.2:
+            self.max_wait_time_ms = max(self.max_wait_time_ms * 0.9, 1.0)
+        
+        # Increase wait time if batch sizes are too small
+        elif self.batch_stats["avg_batch_size"] < 4:
+            self.max_wait_time_ms = min(self.max_wait_time_ms * 1.1, 50.0)
+
+# Usage example
+async def run_adaptive_batching():
+    batcher = AdaptiveBatcher(max_batch_size=32, max_wait_time_ms=10.0)
+    
+    # Add some test requests
+    for i in range(10):
+        request = BatchRequest(
+            request_id=f"req_{i}",
+            prompt=f"Test prompt {i}",
+            max_tokens=100 + i * 10,
+            temperature=0.7,
+            arrival_time=time.time(),
+            priority=1 if i < 3 else 2,
+            estimated_duration=0,
+            compatible_groups=[]
+        )
+        batcher.add_request(request)
+    
+    # Process batches
+    while any(len(q) > 0 for q in batcher.priority_queues.values()):
+        batch = batcher.create_optimal_batch()
+        if batch:
+            metrics = await batcher.process_batch(batch)
+            print(f"Processed batch: {metrics}")
+            batcher.adapt_parameters()
+        else:
+            await asyncio.sleep(0.001)  # Small delay if no batch ready
+    
+    print(f"Final statistics: {batcher.get_queue_statistics()}")
+
+# asyncio.run(run_adaptive_batching())
+```
+
+## Network and Communication Optimization
+
+### NIXL Configuration
+```python
+# nixl_optimization.py - NIXL transfer optimization
+nixl_optimized_config = {
+    # Transport Configuration
+    "transport_protocol": "rdma",  # rdma, tcp, or auto
+    "rdma_device": "mlx5_0",      # InfiniBand/RoCE device
+    "rdma_port": 1,               # IB port number
+    
+    # Transfer Parameters
+    "batch_size": 128,            # Blocks per transfer batch
+    "buffer_size_mb": 256,        # Transfer buffer size
+    "max_concurrent_transfers": 8, # Parallel transfer streams
+    
+    # Compression
+    "compression_enabled": True,
+    "compression_algorithm": "lz4",  # lz4, zstd, or snappy
+    "compression_level": 1,         # Balance speed vs ratio
+    "compression_threshold_kb": 64,  # Only compress large blocks
+    
+    # Memory Management
+    "use_pinned_memory": True,     # GPU-accessible memory
+    "memory_pool_size_gb": 4,      # Pre-allocated transfer pool
+    "async_transfers": True,       # Non-blocking transfers
+    
+    # Performance Tuning
+    "prefetch_distance": 2,        # Transfer prefetch depth
+    "coalescing_window_us": 100,   # Micro-batch coalescing
+    "retry_attempts": 3,           # Transfer retry count
+    "timeout_seconds": 30,         # Transfer timeout
+    
+    # Monitoring
+    "enable_metrics": True,
+    "metrics_interval_ms": 1000,
+    "bandwidth_target_gbps": 25,   # Target bandwidth
+}
+
+# Environment variables for NIXL optimization
+nixl_env_vars = {
+    "NIXL_TRANSPORT": "rdma",
+    "NIXL_RDMA_DEVICE": "mlx5_0",
+    "NIXL_BATCH_SIZE": "128",
+    "NIXL_COMPRESSION": "lz4",
+    "NIXL_ASYNC": "1",
+    "NIXL_PINNED_MEMORY": "1",
+    "NIXL_LOG_LEVEL": "info"
+}
+```
+
+### Network Stack Tuning
+```bash
+# network_optimization.sh - System-level network optimization
+#!/bin/bash
+
+# TCP/IP stack optimization
+echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
+echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
+
+# Buffer sizes for high-bandwidth transfers
+echo 'net.core.rmem_max=134217728' >> /etc/sysctl.conf  # 128MB
+echo 'net.core.wmem_max=134217728' >> /etc/sysctl.conf  # 128MB
+echo 'net.ipv4.tcp_rmem=4096 87380 134217728' >> /etc/sysctl.conf
+echo 'net.ipv4.tcp_wmem=4096 65536 134217728' >> /etc/sysctl.conf
+
+# Connection tracking and network performance
+echo 'net.netfilter.nf_conntrack_max=1048576' >> /etc/sysctl.conf
+echo 'net.core.netdev_max_backlog=5000' >> /etc/sysctl.conf
+echo 'net.core.netdev_budget=600' >> /etc/sysctl.conf
+
+# InfiniBand/RoCE optimization (if applicable)
+echo 'net.core.rmem_default=262144' >> /etc/sysctl.conf
+echo 'net.core.wmem_default=262144' >> /etc/sysctl.conf
+
+# Apply settings
+sysctl -p
+
+# IRQ affinity for network interfaces (adjust for your topology)
+echo 2 > /proc/irq/24/smp_affinity  # Bind NIC IRQ to CPU 1
+echo 4 > /proc/irq/25/smp_affinity  # Bind NIC IRQ to CPU 2
+```
+
+## Monitoring and Profiling
+
+### Advanced Performance Monitoring
+```python
+# performance_monitor.py - Comprehensive performance monitoring
+import psutil
+import GPUtil
+import time
+import json
+from typing import Dict, List, Optional
+from dataclasses import dataclass, asdict
+from collections import deque
+import threading
+
+@dataclass
+class PerformanceSnapshot:
+    timestamp: float
+    
+    # System metrics
+    cpu_percent: float
+    memory_percent: float
+    memory_available_gb: float
+    
+    # GPU metrics
+    gpu_utilization: List[float]
+    gpu_memory_used: List[float]
+    gpu_memory_total: List[float]
+    gpu_temperature: List[float]
+    
+    # Dynamo-specific metrics
+    requests_per_second: float
+    avg_latency_ms: float
+    p99_latency_ms: float
+    cache_hit_rate: float
+    
+    # Network metrics
+    network_bytes_sent: int
+    network_bytes_recv: int
+    
+    # Storage metrics
+    disk_read_mb: float
+    disk_write_mb: float
+
+class PerformanceMonitor:
+    """Advanced performance monitoring system"""
+    
+    def __init__(self, 
+                 history_size: int = 3600,  # 1 hour at 1s intervals
+                 monitoring_interval: float = 1.0):
+        
+        self.history_size = history_size
+        self.monitoring_interval = monitoring_interval
+        
+        # Performance history
+        self.snapshots = deque(maxlen=history_size)
+        
+        # Monitoring thread
+        self.monitoring_active = False
+        self.monitor_thread = None
+        
+        # Baseline metrics for delta calculations
+        self.baseline_network = psutil.net_io_counters()
+        self.baseline_disk = psutil.disk_io_counters()
+        self.baseline_time = time.time()
+    
+    def start_monitoring(self):
+        """Start continuous performance monitoring"""
+        if self.monitoring_active:
+            return
+        
+        self.monitoring_active = True
+        self.monitor_thread = threading.Thread(target=self._monitoring_loop)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+    
+    def stop_monitoring(self):
+        """Stop performance monitoring"""
+        self.monitoring_active = False
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=5)
+    
+    def _monitoring_loop(self):
+        """Continuous monitoring loop"""
+        while self.monitoring_active:
+            try:
+                snapshot = self.capture_snapshot()
+                self.snapshots.append(snapshot)
+                time.sleep(self.monitoring_interval)
+            except Exception as e:
+                print(f"Error in monitoring loop: {e}")
+                time.sleep(self.monitoring_interval)
+    
+    def capture_snapshot(self) -> PerformanceSnapshot:
+        """Capture current performance snapshot"""
+        current_time = time.time()
+        
+        # System metrics
+        cpu_percent = psutil.cpu_percent(interval=None)
+        memory = psutil.virtual_memory()
+        
+        # GPU metrics
+        gpu_utilization = []
+        gpu_memory_used = []
+        gpu_memory_total = []
+        gpu_temperature = []
+        
+        try:
+            gpus = GPUtil.getGPUs()
+            for gpu in gpus:
+                gpu_utilization.append(gpu.load * 100)
+                gpu_memory_used.append(gpu.memoryUsed / 1024)  # GB
+                gpu_memory_total.append(gpu.memoryTotal / 1024)  # GB
+                gpu_temperature.append(gpu.temperature)
+        except Exception as e:
+            print(f"Error reading GPU metrics: {e}")
+        
+        # Network metrics (delta since baseline)
+        current_network = psutil.net_io_counters()
+        network_bytes_sent = current_network.bytes_sent - self.baseline_network.bytes_sent
+        network_bytes_recv = current_network.bytes_recv - self.baseline_network.bytes_recv
+        
+        # Disk metrics (delta since baseline)
+        current_disk = psutil.disk_io_counters()
+        time_delta = current_time - self.baseline_time
+        if current_disk and self.baseline_disk and time_delta > 0:
+            disk_read_mb = (current_disk.read_bytes - self.baseline_disk.read_bytes) / (1024 * 1024)
+            disk_write_mb = (current_disk.write_bytes - self.baseline_disk.write_bytes) / (1024 * 1024)
+        else:
+            disk_read_mb = 0.0
+            disk_write_mb = 0.0
+        
+        # Dynamo-specific metrics (mock values - replace with actual metrics)
+        requests_per_second = 100.0  # Replace with actual RPS
+        avg_latency_ms = 50.0       # Replace with actual latency
+        p99_latency_ms = 150.0      # Replace with actual P99
+        cache_hit_rate = 0.85       # Replace with actual cache hit rate
+        
+        return PerformanceSnapshot(
+            timestamp=current_time,
+            cpu_percent=cpu_percent,
+            memory_percent=memory.percent,
+            memory_available_gb=memory.available / (1024**3),
+            gpu_utilization=gpu_utilization,
+            gpu_memory_used=gpu_memory_used,
+            gpu_memory_total=gpu_memory_total,
+            gpu_temperature=gpu_temperature,
+            requests_per_second=requests_per_second,
+            avg_latency_ms=avg_latency_ms,
+            p99_latency_ms=p99_latency_ms,
+            cache_hit_rate=cache_hit_rate,
+            network_bytes_sent=network_bytes_sent,
+            network_bytes_recv=network_bytes_recv,
+            disk_read_mb=disk_read_mb,
+            disk_write_mb=disk_write_mb
+        )
+    
+    def get_performance_summary(self, window_minutes: int = 10) -> Dict:
+        """Get performance summary over specified window"""
+        if not self.snapshots:
+            return {"error": "No performance data available"}
+        
+        # Filter snapshots within window
+        cutoff_time = time.time() - (window_minutes * 60)
+        recent_snapshots = [s for s in self.snapshots if s.timestamp >= cutoff_time]
+        
+        if not recent_snapshots:
+            return {"error": f"No data available for last {window_minutes} minutes"}
+        
+        # Calculate averages and statistics
+        summary = {
+            "window_minutes": window_minutes,
+            "sample_count": len(recent_snapshots),
+            "cpu": {
+                "avg_percent": sum(s.cpu_percent for s in recent_snapshots) / len(recent_snapshots),
+                "max_percent": max(s.cpu_percent for s in recent_snapshots),
+                "min_percent": min(s.cpu_percent for s in recent_snapshots),
+            },
+            "memory": {
+                "avg_percent": sum(s.memory_percent for s in recent_snapshots) / len(recent_snapshots),
+                "avg_available_gb": sum(s.memory_available_gb for s in recent_snapshots) / len(recent_snapshots),
+            },
+            "dynamo": {
+                "avg_rps": sum(s.requests_per_second for s in recent_snapshots) / len(recent_snapshots),
+                "avg_latency_ms": sum(s.avg_latency_ms for s in recent_snapshots) / len(recent_snapshots),
+                "avg_p99_latency_ms": sum(s.p99_latency_ms for s in recent_snapshots) / len(recent_snapshots),
+                "avg_cache_hit_rate": sum(s.cache_hit_rate for s in recent_snapshots) / len(recent_snapshots),
+            }
+        }
+        
+        # GPU statistics (if available)
+        if recent_snapshots[0].gpu_utilization:
+            gpu_count = len(recent_snapshots[0].gpu_utilization)
+            summary["gpu"] = {}
+            
+            for gpu_id in range(gpu_count):
+                gpu_utils = [s.gpu_utilization[gpu_id] for s in recent_snapshots if len(s.gpu_utilization) > gpu_id]
+                gpu_temps = [s.gpu_temperature[gpu_id] for s in recent_snapshots if len(s.gpu_temperature) > gpu_id]
+                gpu_mem_used = [s.gpu_memory_used[gpu_id] for s in recent_snapshots if len(s.gpu_memory_used) > gpu_id]
+                
+                summary["gpu"][f"gpu_{gpu_id}"] = {
+                    "avg_utilization": sum(gpu_utils) / len(gpu_utils) if gpu_utils else 0,
+                    "max_utilization": max(gpu_utils) if gpu_utils else 0,
+                    "avg_temperature": sum(gpu_temps) / len(gpu_temps) if gpu_temps else 0,
+                    "avg_memory_used_gb": sum(gpu_mem_used) / len(gpu_mem_used) if gpu_mem_used else 0,
+                }
+        
+        return summary
+    
+    def detect_performance_anomalies(self, threshold_std: float = 2.0) -> List[Dict]:
+        """Detect performance anomalies using statistical analysis"""
+        if len(self.snapshots) < 30:  # Need minimum samples
+            return []
+        
+        anomalies = []
+        recent_snapshots = list(self.snapshots)[-300:]  # Last 5 minutes
+        
+        # Check CPU anomalies
+        cpu_values = [s.cpu_percent for s in recent_snapshots]
+        cpu_mean = sum(cpu_values) / len(cpu_values)
+        cpu_std = (sum((x - cpu_mean) ** 2 for x in cpu_values) / len(cpu_values)) ** 0.5
+        
+        for i, snapshot in enumerate(recent_snapshots[-10:]):  # Check last 10 samples
+            if abs(snapshot.cpu_percent - cpu_mean) > threshold_std * cpu_std:
+                anomalies.append({
+                    "type": "cpu_anomaly",
+                    "timestamp": snapshot.timestamp,
+                    "value": snapshot.cpu_percent,
+                    "mean": cpu_mean,
+                    "std_dev": cpu_std,
+                    "severity": "high" if abs(snapshot.cpu_percent - cpu_mean) > 3 * cpu_std else "medium"
+                })
+        
+        # Check latency anomalies
+        latency_values = [s.avg_latency_ms for s in recent_snapshots]
+        latency_mean = sum(latency_values) / len(latency_values)
+        latency_std = (sum((x - latency_mean) ** 2 for x in latency_values) / len(latency_values)) ** 0.5
+        
+        for snapshot in recent_snapshots[-10:]:
+            if snapshot.avg_latency_ms > latency_mean + threshold_std * latency_std:
+                anomalies.append({
+                    "type": "latency_anomaly",
+                    "timestamp": snapshot.timestamp,
+                    "value": snapshot.avg_latency_ms,
+                    "mean": latency_mean,
+                    "std_dev": latency_std,
+                    "severity": "high" if snapshot.avg_latency_ms > latency_mean + 3 * latency_std else "medium"
+                })
+        
+        return anomalies
+    
+    def export_performance_data(self, 
+                                 output_file: str,
+                                 format: str = "json",
+                                 window_minutes: Optional[int] = None):
+        """Export performance data to file"""
+        snapshots_to_export = self.snapshots
+        
+        if window_minutes:
+            cutoff_time = time.time() - (window_minutes * 60)
+            snapshots_to_export = [s for s in self.snapshots if s.timestamp >= cutoff_time]
+        
+        data = [asdict(snapshot) for snapshot in snapshots_to_export]
+        
+        if format.lower() == "json":
+            with open(output_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        elif format.lower() == "csv":
+            import csv
+            if data:
+                fieldnames = data[0].keys()
+                with open(output_file, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(data)
+
+# Usage
+monitor = PerformanceMonitor(monitoring_interval=1.0)
+monitor.start_monitoring()
+
+# Let it collect data for a while
+time.sleep(30)
+
+# Get performance summary
+summary = monitor.get_performance_summary(window_minutes=1)
+print(json.dumps(summary, indent=2))
+
+# Check for anomalies
+anomalies = monitor.detect_performance_anomalies()
+if anomalies:
+    print(f"Found {len(anomalies)} performance anomalies")
+
+# Export data
+# monitor.export_performance_data("performance_data.json", window_minutes=5)
+
+monitor.stop_monitoring()
+```
+
+This comprehensive performance optimization guide provides advanced techniques for maximizing NVIDIA Dynamo performance across all system layers.

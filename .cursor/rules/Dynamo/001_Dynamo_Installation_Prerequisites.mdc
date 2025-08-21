@@ -1,0 +1,287 @@
+---
+description: NVIDIA Dynamo Installation Prerequisites - Complete setup guide for system dependencies and requirements
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo installation and system prerequisites management.
+
+## System Requirements Overview
+
+NVIDIA Dynamo is a high-throughput, low-latency inference framework for distributed LLM serving that requires specific system configurations and dependencies.
+
+### Supported Platforms
+- **OS**: Ubuntu 24.04 LTS (recommended), Ubuntu 22.04 LTS
+- **Architecture**: x86_64 (primary), ARM64 (limited support)
+- **GPU**: NVIDIA GPUs with CUDA 12.8+ support
+- **Memory**: Minimum 16GB RAM, 32GB+ recommended for multi-node setups
+- **Storage**: SSD recommended for KV cache offloading
+
+## Core Dependencies Installation
+
+### 1. Python Environment Setup
+```bash
+# Install UV package manager (recommended by NVIDIA Dynamo team)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc
+
+# Create and activate virtual environment
+uv venv dynamo-env --python 3.12
+source dynamo-env/bin/activate
+```
+
+### 2. System Libraries (Ubuntu)
+```bash
+# Essential build dependencies
+sudo apt update
+sudo apt install -y build-essential cmake git wget curl
+
+# NVIDIA dependencies
+sudo apt install -y nvidia-driver-535 nvidia-container-runtime
+
+# Network and communication libraries
+sudo apt install -y libnuma-dev libhwloc-dev libudev-dev pkg-config
+sudo apt install -y libclang-dev protobuf-compiler python3-dev
+
+# RDMA and InfiniBand support (for multi-node deployments)
+sudo apt install -y ibverbs-providers ibverbs-utils libibumad-dev
+sudo apt install -y libibverbs-dev librdmacm-dev rdma-core
+```
+
+### 3. Rust Installation (Required for Development)
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+rustup update stable
+```
+
+## Infrastructure Services
+
+### ETCD Setup
+```bash
+# Download and install etcd v3.5.21
+ETCD_VERSION="v3.5.21"
+ARCH=$(uname -m)
+wget https://github.com/etcd-io/etcd/releases/download/${ETCD_VERSION}/etcd-${ETCD_VERSION}-linux-${ARCH}.tar.gz
+tar -xvf etcd-${ETCD_VERSION}-linux-${ARCH}.tar.gz
+sudo mv etcd-${ETCD_VERSION}-linux-${ARCH}/etcd* /usr/local/bin/
+rm -rf etcd-${ETCD_VERSION}-*
+
+# Start etcd service
+etcd --data-dir=/tmp/etcd-data &
+```
+
+### NATS Server Setup
+```bash
+# Download and install NATS server v2.10.28
+NATS_VERSION="v2.10.28"
+ARCH=$(dpkg --print-architecture)
+wget https://github.com/nats-io/nats-server/releases/download/${NATS_VERSION}/nats-server-${NATS_VERSION}-${ARCH}.deb
+sudo dpkg -i nats-server-${NATS_VERSION}-${ARCH}.deb
+rm nats-server-${NATS_VERSION}-${ARCH}.deb
+
+# Start NATS with JetStream
+nats-server -js --trace -m 8222 &
+```
+
+### Docker Compose Alternative
+```bash
+# Quick setup using docker-compose (recommended for development)
+cd /path/to/dynamo/repository
+docker compose -f deploy/docker-compose.yml up -d
+
+# Verify services are running
+docker compose -f deploy/docker-compose.yml ps
+curl http://localhost:8222/varz  # NATS health check
+curl http://localhost:2379/health  # etcd health check
+```
+
+## CUDA and GPU Setup
+
+### CUDA Installation Verification
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Verify CUDA installation
+nvcc --version
+
+# Check CUDA library paths
+echo $CUDA_HOME
+echo $LD_LIBRARY_PATH
+```
+
+### GPU Memory Configuration
+```bash
+# Set GPU visibility (example for specific GPUs)
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+# For development with limited GPU memory
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+```
+
+## Engine-Specific Prerequisites
+
+### vLLM Prerequisites
+```bash
+# Install vLLM-optimized Dynamo
+uv pip install "ai-dynamo[vllm]"
+
+# Verify installation
+python -c "import vllm; print(vllm.__version__)"
+```
+
+### SGLang Prerequisites  
+```bash
+# Install libnuma for SGLang
+sudo apt install -y libnuma-dev
+
+# Install SGLang-optimized Dynamo
+uv pip install "ai-dynamo[sglang]"
+```
+
+### TensorRT-LLM Prerequisites
+```bash
+# Install PyTorch with CUDA 12.8 support
+uv pip install torch==2.7.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# Install CUDA Python bindings
+uv pip install "cuda-python>=12,<13"
+
+# Install OpenMPI for distributed inference
+sudo apt-get install -y libopenmpi-dev
+
+# Install TensorRT-LLM-optimized Dynamo
+uv pip install "ai-dynamo[trtllm]"
+```
+
+## Development Environment Setup
+
+### Building from Source
+```bash
+# Clone Dynamo repository
+git clone https://github.com/ai-dynamo/dynamo.git
+cd dynamo
+
+# Install build dependencies
+uv pip install pip maturin
+
+# Build Rust bindings
+cd lib/bindings/python
+maturin develop --uv
+
+# Install wheel with development paths
+cd $PROJECT_ROOT
+uv pip install .
+export PYTHONPATH="${PYTHONPATH}:$(pwd)/components/frontend/src:$(pwd)/components/planner/src:$(pwd)/components/backends/vllm/src:$(pwd)/components/backends/sglang/src:$(pwd)/components/backends/trtllm/src:$(pwd)/components/backends/llama_cpp/src:$(pwd)/components/backends/mocker/src"
+```
+
+## Verification and Testing
+
+### Installation Verification
+```bash
+# Test basic Dynamo installation
+python -m dynamo.frontend --help
+python -m dynamo.vllm --help
+python -m dynamo.sglang.worker --help
+
+# Check component discovery
+python -c "
+import dynamo
+from dynamo.runtime import DistributedRuntime
+print('Dynamo installation verified successfully')
+"
+```
+
+### Network Connectivity Test
+```bash
+# Test NATS connectivity
+python -c "
+import nats
+import asyncio
+
+async def test_nats():
+    nc = await nats.connect('nats://localhost:4222')
+    await nc.close()
+    print('NATS connectivity: OK')
+
+asyncio.run(test_nats())
+"
+
+# Test etcd connectivity  
+python -c "
+import etcd3
+client = etcd3.client(host='localhost', port=2379)
+client.put('test', 'value')
+print('etcd connectivity: OK')
+"
+```
+
+## Environment Variables
+
+### Essential Environment Variables
+```bash
+# Dynamo configuration
+export DYN_LOG=info  # debug, info, warn, error
+export DYNAMO_HOME=/opt/dynamo
+
+# CUDA configuration
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export NVIDIA_VISIBLE_DEVICES=all
+
+# Network configuration
+export DYNAMO_NATS_URL=nats://localhost:4222
+export DYNAMO_ETCD_ENDPOINTS=http://localhost:2379
+
+# Memory optimization
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+export TOKENIZERS_PARALLELISM=false
+```
+
+## Troubleshooting Common Issues
+
+### Permission Issues
+```bash
+# Fix CUDA library permissions
+sudo chmod 755 /usr/local/cuda/lib64/*
+sudo ldconfig
+
+# Fix Docker socket permissions
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Memory Issues
+```bash
+# Increase system limits for etcd/NATS
+echo 'fs.file-max = 2097152' | sudo tee -a /etc/sysctl.conf
+echo 'vm.max_map_count = 262144' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+### Network Issues
+```bash
+# Check port availability
+netstat -tulpn | grep -E ':(2379|2380|4222|6222|8222)'
+
+# Test network connectivity
+telnet localhost 2379
+telnet localhost 4222
+```
+
+## Installation Verification Checklist
+
+- [ ] Ubuntu 24.04 LTS installed
+- [ ] NVIDIA drivers (535+) installed
+- [ ] CUDA 12.8+ available
+- [ ] Python 3.12 environment active
+- [ ] UV package manager installed
+- [ ] System dependencies installed
+- [ ] etcd service running on port 2379
+- [ ] NATS service running on port 4222
+- [ ] Dynamo package installed
+- [ ] Engine-specific packages installed
+- [ ] Environment variables configured
+- [ ] Network connectivity verified
+- [ ] Basic commands functional
+
+This prerequisite setup ensures a robust foundation for NVIDIA Dynamo deployment across development, testing, and production environments.

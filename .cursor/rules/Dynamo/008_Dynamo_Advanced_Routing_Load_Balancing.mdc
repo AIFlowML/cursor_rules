@@ -1,0 +1,1051 @@
+---
+description: NVIDIA Dynamo Advanced Routing and Load Balancing - KV-aware routing, intelligent load distribution, and traffic optimization strategies
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo advanced routing algorithms and load balancing strategies.
+
+## Routing Architecture Overview
+
+NVIDIA Dynamo's routing system provides intelligent request distribution with KV cache awareness, semantic understanding, and adaptive load balancing across multiple engines and nodes.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Advanced Routing Stack                       │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │   Request   │  │  Semantic   │  │ KV Cache    │  │ Load    │  │
+│  │ Analysis    │  │ Analysis    │  │ Analysis    │  │Analysis │  │
+│  │             │  │             │  │             │  │         │  │
+│  │• Content    │  │• Embeddings │  │• Prefix     │  │• Queue  │  │
+│  │• Length     │  │• Similarity │  │  Matching   │  │  Length │  │
+│  │• Priority   │  │• Context    │  │• Hit Rates  │  │• Util   │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Routing Decision Engine                        │  │
+│  │   Multi-factor scoring • Constraints • Predictions         │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │    vLLM     │  │   SGLang    │  │ TensorRT    │  │ Custom  │  │
+│  │  Workers    │  │  Workers    │  │   -LLM      │  │Workers  │  │
+│  │             │  │             │  │ Workers     │  │         │  │
+│  │• Pool A     │  │• Pool B     │  │• Pool C     │  │• Pool D │  │
+│  │• 8 nodes    │  │• 4 nodes    │  │• 2 nodes    │  │• 2 nodes│  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## KV Cache-Aware Routing
+
+### Advanced KV Cache Analysis
+```python
+# kv_aware_router.py - Sophisticated KV cache-aware routing
+from typing import Dict, List, Optional, Tuple, Set
+import time
+import hashlib
+import numpy as np
+from dataclasses import dataclass, field
+from collections import defaultdict, deque
+from enum import Enum
+import asyncio
+import math
+
+class CacheHitProbability(Enum):
+    VERY_HIGH = 0.95  # Almost certain hit
+    HIGH = 0.80      # Likely hit
+    MEDIUM = 0.60    # Possible hit
+    LOW = 0.30       # Unlikely hit
+    VERY_LOW = 0.10  # Almost certain miss
+
+@dataclass
+class KVCacheState:
+    """Represents KV cache state for a worker"""
+    worker_id: str
+    cached_prefixes: Set[str] = field(default_factory=set)
+    prefix_access_times: Dict[str, float] = field(default_factory=dict)
+    prefix_frequencies: Dict[str, int] = field(default_factory=dict)
+    memory_utilization: float = 0.0
+    active_requests: int = 0
+    last_updated: float = field(default_factory=time.time)
+    
+    # Performance metrics
+    avg_hit_rate: float = 0.0
+    avg_response_time: float = 0.0
+    cache_evictions_per_hour: float = 0.0
+
+@dataclass
+class RoutingRequest:
+    """Enhanced request with routing metadata"""
+    request_id: str
+    prompt: str
+    max_tokens: int
+    temperature: float
+    model: str
+    priority: int = 1
+    
+    # Routing analysis
+    prompt_hash: str = ""
+    prompt_embedding: Optional[np.ndarray] = None
+    prefix_candidates: List[str] = field(default_factory=list)
+    estimated_tokens: int = 0
+    semantic_category: str = "general"
+    
+    # SLA requirements
+    max_latency_ms: float = 5000
+    min_throughput_rps: float = 1.0
+    
+    arrival_time: float = field(default_factory=time.time)
+
+class AdvancedKVRouter:
+    """Advanced KV cache-aware router with multi-factor analysis"""
+    
+    def __init__(self,
+                 cache_hit_weight: float = 0.4,
+                 load_balance_weight: float = 0.3,
+                 semantic_weight: float = 0.2,
+                 latency_weight: float = 0.1,
+                 prefix_length_threshold: int = 50):
+        
+        self.cache_hit_weight = cache_hit_weight
+        self.load_balance_weight = load_balance_weight
+        self.semantic_weight = semantic_weight
+        self.latency_weight = latency_weight
+        self.prefix_length_threshold = prefix_length_threshold
+        
+        # Worker state tracking
+        self.worker_states: Dict[str, KVCacheState] = {}
+        
+        # Prefix analysis
+        self.global_prefix_registry = defaultdict(set)  # prefix -> set of workers
+        self.prefix_similarity_cache = {}
+        
+        # Performance tracking
+        self.routing_decisions = deque(maxlen=10000)
+        self.hit_rate_history = deque(maxlen=1000)
+        
+        # Semantic analysis
+        self.semantic_embedder = None  # Initialize with actual embedder
+        self.category_classifiers = {
+            "code": ["def ", "class ", "import ", "function"],
+            "qa": ["what is", "how to", "explain", "?"],
+            "creative": ["write a", "create a", "imagine", "story"],
+            "analysis": ["analyze", "compare", "evaluate", "assess"],
+        }
+    
+    def update_worker_state(self, worker_id: str, state: KVCacheState):
+        """Update worker's KV cache state"""
+        self.worker_states[worker_id] = state
+        
+        # Update global prefix registry
+        for prefix in state.cached_prefixes:
+            self.global_prefix_registry[prefix].add(worker_id)
+    
+    def analyze_request(self, request: RoutingRequest) -> RoutingRequest:
+        """Comprehensive request analysis for routing"""
+        
+        # Generate prompt hash
+        request.prompt_hash = hashlib.sha256(request.prompt.encode()).hexdigest()
+        
+        # Extract potential prefixes
+        request.prefix_candidates = self._extract_prefix_candidates(request.prompt)
+        
+        # Estimate token count
+        request.estimated_tokens = self._estimate_token_count(request.prompt, request.max_tokens)
+        
+        # Semantic categorization
+        request.semantic_category = self._categorize_request(request.prompt)
+        
+        # Generate semantic embedding (if embedder available)
+        if self.semantic_embedder:
+            request.prompt_embedding = self._generate_embedding(request.prompt)
+        
+        return request
+    
+    def route_request(self, request: RoutingRequest) -> Tuple[str, Dict[str, float]]:
+        """Route request to optimal worker with detailed scoring"""
+        
+        # Analyze request
+        request = self.analyze_request(request)
+        
+        # Score all available workers
+        worker_scores = {}
+        score_breakdown = {}
+        
+        for worker_id, worker_state in self.worker_states.items():
+            scores = self._calculate_worker_scores(request, worker_state)
+            
+            # Weighted final score
+            final_score = (
+                scores["cache_hit"] * self.cache_hit_weight +
+                scores["load_balance"] * self.load_balance_weight +
+                scores["semantic"] * self.semantic_weight +
+                scores["latency"] * self.latency_weight
+            )
+            
+            worker_scores[worker_id] = final_score
+            score_breakdown[worker_id] = scores
+        
+        # Select best worker
+        if not worker_scores:
+            raise ValueError("No available workers for routing")
+        
+        best_worker = max(worker_scores.keys(), key=lambda w: worker_scores[w])
+        
+        # Record routing decision
+        self._record_routing_decision(request, best_worker, score_breakdown[best_worker])
+        
+        return best_worker, score_breakdown[best_worker]
+    
+    def _extract_prefix_candidates(self, prompt: str) -> List[str]:
+        """Extract potential cache-able prefixes from prompt"""
+        candidates = []
+        
+        # Fixed-length prefixes
+        for length in [50, 100, 200, 500]:
+            if len(prompt) >= length:
+                prefix = prompt[:length]
+                candidates.append(hashlib.sha256(prefix.encode()).hexdigest())
+        
+        # Semantic boundaries (sentences, paragraphs)
+        sentences = prompt.split('. ')
+        for i in range(1, len(sentences)):
+            prefix = '. '.join(sentences[:i])
+            if len(prefix) >= self.prefix_length_threshold:
+                candidates.append(hashlib.sha256(prefix.encode()).hexdigest())
+        
+        # Line-based prefixes (for code)
+        if self._is_code_like(prompt):
+            lines = prompt.split('\n')
+            for i in range(1, len(lines)):
+                prefix = '\n'.join(lines[:i])
+                if len(prefix) >= self.prefix_length_threshold:
+                    candidates.append(hashlib.sha256(prefix.encode()).hexdigest())
+        
+        return candidates[:10]  # Limit to top 10 candidates
+    
+    def _calculate_worker_scores(self, request: RoutingRequest, worker_state: KVCacheState) -> Dict[str, float]:
+        """Calculate detailed scores for worker selection"""
+        
+        scores = {}
+        
+        # Cache hit probability score
+        cache_score = self._calculate_cache_hit_score(request, worker_state)
+        scores["cache_hit"] = cache_score
+        
+        # Load balancing score
+        load_score = self._calculate_load_balance_score(worker_state)
+        scores["load_balance"] = load_score
+        
+        # Semantic similarity score
+        semantic_score = self._calculate_semantic_score(request, worker_state)
+        scores["semantic"] = semantic_score
+        
+        # Latency prediction score
+        latency_score = self._calculate_latency_score(request, worker_state)
+        scores["latency"] = latency_score
+        
+        # Constraint violations (penalty)
+        constraint_score = self._calculate_constraint_score(request, worker_state)
+        scores["constraints"] = constraint_score
+        
+        return scores
+    
+    def _calculate_cache_hit_score(self, request: RoutingRequest, worker_state: KVCacheState) -> float:
+        """Calculate probability of cache hit"""
+        
+        hit_score = 0.0
+        
+        # Check for exact prefix matches
+        for prefix_hash in request.prefix_candidates:
+            if prefix_hash in worker_state.cached_prefixes:
+                # Weight by recency and frequency
+                access_time = worker_state.prefix_access_times.get(prefix_hash, 0)
+                frequency = worker_state.prefix_frequencies.get(prefix_hash, 0)
+                
+                recency_factor = max(0, 1 - (time.time() - access_time) / 3600)  # 1 hour decay
+                frequency_factor = min(1, frequency / 10)  # Normalize to max 10 accesses
+                
+                prefix_score = 0.8 * recency_factor + 0.2 * frequency_factor
+                hit_score = max(hit_score, prefix_score)
+        
+        # Boost score based on worker's overall hit rate
+        hit_rate_boost = worker_state.avg_hit_rate * 0.2
+        
+        return min(1.0, hit_score + hit_rate_boost)
+    
+    def _calculate_load_balance_score(self, worker_state: KVCacheState) -> float:
+        """Calculate load balancing score (higher = less loaded)"""
+        
+        # Memory utilization factor
+        memory_factor = max(0, 1 - worker_state.memory_utilization)
+        
+        # Active requests factor
+        # Assume max 100 concurrent requests per worker
+        request_factor = max(0, 1 - worker_state.active_requests / 100)
+        
+        # Combine factors
+        load_score = 0.6 * memory_factor + 0.4 * request_factor
+        
+        return load_score
+    
+    def _calculate_semantic_score(self, request: RoutingRequest, worker_state: KVCacheState) -> float:
+        """Calculate semantic similarity score"""
+        
+        if not request.prompt_embedding:
+            return 0.5  # Neutral score if no embedding
+        
+        # In a real implementation, we'd track semantic embeddings of cached content
+        # For now, use category-based scoring
+        
+        # Simple heuristic: workers that recently processed similar categories
+        # get higher scores
+        category_match_score = 0.5  # Default
+        
+        # Boost for matching semantic category (simplified)
+        if hasattr(worker_state, 'recent_categories'):
+            recent_categories = getattr(worker_state, 'recent_categories', [])
+            if request.semantic_category in recent_categories:
+                category_match_score = 0.8
+        
+        return category_match_score
+    
+    def _calculate_latency_score(self, request: RoutingRequest, worker_state: KVCacheState) -> float:
+        """Calculate expected latency score (higher = lower latency)"""
+        
+        # Base latency from worker's average response time
+        avg_latency = worker_state.avg_response_time
+        
+        # Adjust for current load
+        load_penalty = worker_state.active_requests * 100  # ms per active request
+        
+        # Estimate total latency
+        estimated_latency = avg_latency + load_penalty
+        
+        # Score based on whether it meets SLA requirements
+        if estimated_latency <= request.max_latency_ms:
+            # Better score for lower latency
+            latency_score = max(0, 1 - estimated_latency / request.max_latency_ms)
+        else:
+            # Penalty for SLA violation
+            latency_score = 0.1
+        
+        return latency_score
+    
+    def _calculate_constraint_score(self, request: RoutingRequest, worker_state: KVCacheState) -> float:
+        """Calculate constraint satisfaction score"""
+        
+        # Memory constraint
+        estimated_memory_need = request.estimated_tokens * 0.001  # Rough estimate
+        if worker_state.memory_utilization + estimated_memory_need > 0.95:
+            return 0.0  # Hard constraint violation
+        
+        # Queue length constraint (rough throughput estimation)
+        if worker_state.active_requests > 50:  # Arbitrary threshold
+            return 0.3  # Soft constraint violation
+        
+        return 1.0  # No constraint violations
+    
+    def _estimate_token_count(self, prompt: str, max_tokens: int) -> int:
+        """Estimate total token count for memory planning"""
+        # Rough estimation: 4 characters per token
+        prompt_tokens = len(prompt) // 4
+        return prompt_tokens + max_tokens
+    
+    def _categorize_request(self, prompt: str) -> str:
+        """Categorize request for semantic routing"""
+        prompt_lower = prompt.lower()
+        
+        for category, keywords in self.category_classifiers.items():
+            if any(keyword in prompt_lower for keyword in keywords):
+                return category
+        
+        return "general"
+    
+    def _is_code_like(self, prompt: str) -> bool:
+        """Heuristic to detect if prompt is code-related"""
+        code_indicators = ["def ", "class ", "import ", "function", "{", "}", "//", "/*"]
+        return any(indicator in prompt for indicator in code_indicators)
+    
+    def _generate_embedding(self, text: str) -> np.ndarray:
+        """Generate semantic embedding (mock implementation)"""
+        # In real implementation, use sentence transformers or similar
+        return np.random.rand(768)  # Mock 768-dimensional embedding
+    
+    def _record_routing_decision(self, request: RoutingRequest, chosen_worker: str, scores: Dict[str, float]):
+        """Record routing decision for analysis"""
+        decision = {
+            "timestamp": time.time(),
+            "request_id": request.request_id,
+            "chosen_worker": chosen_worker,
+            "scores": scores,
+            "request_category": request.semantic_category,
+            "estimated_tokens": request.estimated_tokens
+        }
+        self.routing_decisions.append(decision)
+    
+    def get_routing_statistics(self) -> Dict:
+        """Get routing performance statistics"""
+        if not self.routing_decisions:
+            return {"error": "No routing decisions recorded"}
+        
+        recent_decisions = list(self.routing_decisions)[-1000:]  # Last 1000 decisions
+        
+        # Worker distribution
+        worker_counts = defaultdict(int)
+        for decision in recent_decisions:
+            worker_counts[decision["chosen_worker"]] += 1
+        
+        # Average scores
+        avg_scores = defaultdict(list)
+        for decision in recent_decisions:
+            for score_type, value in decision["scores"].items():
+                avg_scores[score_type].append(value)
+        
+        avg_scores_final = {
+            score_type: sum(values) / len(values)
+            for score_type, values in avg_scores.items()
+        }
+        
+        # Category distribution
+        category_counts = defaultdict(int)
+        for decision in recent_decisions:
+            category_counts[decision["request_category"]] += 1
+        
+        return {
+            "total_decisions": len(recent_decisions),
+            "worker_distribution": dict(worker_counts),
+            "average_scores": avg_scores_final,
+            "category_distribution": dict(category_counts),
+            "routing_weights": {
+                "cache_hit": self.cache_hit_weight,
+                "load_balance": self.load_balance_weight,
+                "semantic": self.semantic_weight,
+                "latency": self.latency_weight
+            }
+        }
+    
+    def optimize_routing_weights(self):
+        """Dynamically optimize routing weights based on performance"""
+        if len(self.routing_decisions) < 100:
+            return  # Need sufficient data
+        
+        recent_decisions = list(self.routing_decisions)[-500:]
+        
+        # Analyze correlation between scores and actual performance
+        # (This would require feedback from actual request execution)
+        
+        # Simple heuristic: increase weight of best-performing factors
+        # In real implementation, use reinforcement learning or Bayesian optimization
+        
+        avg_cache_hit_rate = sum(d["scores"]["cache_hit"] for d in recent_decisions) / len(recent_decisions)
+        avg_load_balance = sum(d["scores"]["load_balance"] for d in recent_decisions) / len(recent_decisions)
+        
+        # Adjust weights based on performance (simplified)
+        if avg_cache_hit_rate > 0.8:
+            self.cache_hit_weight = min(0.6, self.cache_hit_weight * 1.1)
+        elif avg_cache_hit_rate < 0.4:
+            self.cache_hit_weight = max(0.2, self.cache_hit_weight * 0.9)
+
+# Advanced prefix matching with fuzzy similarity
+class FuzzyPrefixMatcher:
+    """Advanced prefix matching with similarity analysis"""
+    
+    def __init__(self, similarity_threshold: float = 0.85):
+        self.similarity_threshold = similarity_threshold
+        self.prefix_embeddings = {}  # prefix_hash -> embedding
+        
+    def find_similar_prefixes(self, 
+                               query_prefix: str, 
+                               cached_prefixes: Set[str],
+                               embedding_func) -> List[Tuple[str, float]]:
+        """Find similar cached prefixes with similarity scores"""
+        
+        query_embedding = embedding_func(query_prefix)
+        similarities = []
+        
+        for cached_prefix in cached_prefixes:
+            if cached_prefix not in self.prefix_embeddings:
+                # Generate and cache embedding
+                self.prefix_embeddings[cached_prefix] = embedding_func(cached_prefix)
+            
+            cached_embedding = self.prefix_embeddings[cached_prefix]
+            similarity = self._cosine_similarity(query_embedding, cached_embedding)
+            
+            if similarity >= self.similarity_threshold:
+                similarities.append((cached_prefix, similarity))
+        
+        # Sort by similarity descending
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities
+    
+    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        """Calculate cosine similarity between embeddings"""
+        dot_product = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        
+        return dot_product / (norm_a * norm_b)
+
+# Usage example
+router = AdvancedKVRouter()
+
+# Mock worker states
+worker1 = KVCacheState(
+    worker_id="worker-1",
+    cached_prefixes={"prefix_123", "prefix_456"},
+    memory_utilization=0.7,
+    active_requests=10,
+    avg_hit_rate=0.85,
+    avg_response_time=150
+)
+
+worker2 = KVCacheState(
+    worker_id="worker-2", 
+    cached_prefixes={"prefix_789", "prefix_abc"},
+    memory_utilization=0.4,
+    active_requests=5,
+    avg_hit_rate=0.70,
+    avg_response_time=200
+)
+
+router.update_worker_state("worker-1", worker1)
+router.update_worker_state("worker-2", worker2)
+
+# Route a request
+request = RoutingRequest(
+    request_id="req_001",
+    prompt="Define a function that calculates fibonacci numbers",
+    max_tokens=150,
+    temperature=0.7,
+    model="llama-8b",
+    max_latency_ms=1000
+)
+
+chosen_worker, scores = router.route_request(request)
+print(f"Routed to: {chosen_worker}")
+print(f"Scores: {scores}")
+```
+
+## Load Balancing Algorithms
+
+### Adaptive Load Balancing
+```python
+# adaptive_load_balancer.py - Advanced load balancing with multiple algorithms
+from typing import Dict, List, Optional, Callable
+import time
+import math
+import random
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from enum import Enum
+import threading
+
+class LoadBalancingAlgorithm(Enum):
+    ROUND_ROBIN = "round_robin"
+    WEIGHTED_ROUND_ROBIN = "weighted_round_robin"
+    LEAST_CONNECTIONS = "least_connections"
+    LEAST_RESPONSE_TIME = "least_response_time"
+    RESOURCE_AWARE = "resource_aware"
+    PREDICTIVE = "predictive"
+    ADAPTIVE = "adaptive"
+
+@dataclass
+class WorkerMetrics:
+    """Comprehensive worker performance metrics"""
+    worker_id: str
+    
+    # Load metrics
+    active_connections: int = 0
+    queue_length: int = 0
+    cpu_utilization: float = 0.0
+    memory_utilization: float = 0.0
+    gpu_utilization: float = 0.0
+    
+    # Performance metrics
+    avg_response_time_ms: float = 0.0
+    p95_response_time_ms: float = 0.0
+    p99_response_time_ms: float = 0.0
+    success_rate: float = 1.0
+    
+    # Capacity metrics
+    max_connections: int = 100
+    max_queue_size: int = 1000
+    processing_capacity_rps: float = 10.0
+    
+    # Historical data
+    response_times: deque = None
+    throughput_history: deque = None
+    error_history: deque = None
+    
+    # Weights and scores
+    static_weight: float = 1.0
+    dynamic_weight: float = 1.0
+    health_score: float = 1.0
+    
+    def __post_init__(self):
+        if self.response_times is None:
+            self.response_times = deque(maxlen=1000)
+        if self.throughput_history is None:
+            self.throughput_history = deque(maxlen=100)
+        if self.error_history is None:
+            self.error_history = deque(maxlen=100)
+
+class AdaptiveLoadBalancer:
+    """Advanced load balancer with multiple algorithms and adaptive selection"""
+    
+    def __init__(self, 
+                 algorithm: LoadBalancingAlgorithm = LoadBalancingAlgorithm.ADAPTIVE,
+                 health_check_interval: float = 30.0,
+                 metrics_window_size: int = 100):
+        
+        self.algorithm = algorithm
+        self.health_check_interval = health_check_interval
+        self.metrics_window_size = metrics_window_size
+        
+        # Worker management
+        self.workers: Dict[str, WorkerMetrics] = {}
+        self.healthy_workers: Set[str] = set()
+        
+        # Algorithm state
+        self.round_robin_index = 0
+        self.algorithm_performance = defaultdict(list)  # algorithm -> performance scores
+        
+        # Adaptive algorithm selection
+        self.adaptive_window = 300  # 5 minutes
+        self.algorithm_switch_threshold = 0.15  # 15% improvement needed
+        self.last_algorithm_evaluation = time.time()
+        
+        # Prediction models (simplified)
+        self.load_predictors = {}
+        
+        # Monitoring
+        self.load_balancing_stats = {
+            "total_requests": 0,
+            "algorithm_switches": 0,
+            "avg_response_time": 0.0,
+            "worker_utilization": {},
+        }
+        
+        # Health checking thread
+        self.health_check_active = True
+        self.health_check_thread = threading.Thread(target=self._health_check_loop)
+        self.health_check_thread.daemon = True
+        self.health_check_thread.start()
+    
+    def add_worker(self, worker_metrics: WorkerMetrics):
+        """Add a worker to the load balancer"""
+        self.workers[worker_metrics.worker_id] = worker_metrics
+        self.healthy_workers.add(worker_metrics.worker_id)
+    
+    def remove_worker(self, worker_id: str):
+        """Remove a worker from the load balancer"""
+        if worker_id in self.workers:
+            del self.workers[worker_id]
+        self.healthy_workers.discard(worker_id)
+    
+    def select_worker(self, 
+                      request_metadata: Optional[Dict] = None) -> Optional[str]:
+        """Select optimal worker based on current algorithm"""
+        
+        if not self.healthy_workers:
+            return None
+        
+        # Update algorithm if adaptive
+        if self.algorithm == LoadBalancingAlgorithm.ADAPTIVE:
+            self._evaluate_and_switch_algorithm()
+        
+        # Route based on current algorithm
+        if self.algorithm == LoadBalancingAlgorithm.ROUND_ROBIN:
+            worker_id = self._round_robin_select()
+        elif self.algorithm == LoadBalancingAlgorithm.WEIGHTED_ROUND_ROBIN:
+            worker_id = self._weighted_round_robin_select()
+        elif self.algorithm == LoadBalancingAlgorithm.LEAST_CONNECTIONS:
+            worker_id = self._least_connections_select()
+        elif self.algorithm == LoadBalancingAlgorithm.LEAST_RESPONSE_TIME:
+            worker_id = self._least_response_time_select()
+        elif self.algorithm == LoadBalancingAlgorithm.RESOURCE_AWARE:
+            worker_id = self._resource_aware_select()
+        elif self.algorithm == LoadBalancingAlgorithm.PREDICTIVE:
+            worker_id = self._predictive_select(request_metadata)
+        elif self.algorithm == LoadBalancingAlgorithm.ADAPTIVE:
+            # Should not reach here, but fallback to resource-aware
+            worker_id = self._resource_aware_select()
+        else:
+            worker_id = list(self.healthy_workers)[0]  # Fallback
+        
+        # Update statistics
+        if worker_id:
+            self.load_balancing_stats["total_requests"] += 1
+            self._record_worker_selection(worker_id)
+        
+        return worker_id
+    
+    def _round_robin_select(self) -> str:
+        """Simple round robin selection"""
+        healthy_list = list(self.healthy_workers)
+        if not healthy_list:
+            return None
+        
+        selected = healthy_list[self.round_robin_index % len(healthy_list)]
+        self.round_robin_index = (self.round_robin_index + 1) % len(healthy_list)
+        return selected
+    
+    def _weighted_round_robin_select(self) -> str:
+        """Weighted round robin based on static weights"""
+        if not self.healthy_workers:
+            return None
+        
+        # Create weighted list
+        weighted_workers = []
+        for worker_id in self.healthy_workers:
+            worker = self.workers[worker_id]
+            weight = int(worker.static_weight * 10)  # Scale for integer weights
+            weighted_workers.extend([worker_id] * weight)
+        
+        if not weighted_workers:
+            return list(self.healthy_workers)[0]
+        
+        selected = weighted_workers[self.round_robin_index % len(weighted_workers)]
+        self.round_robin_index = (self.round_robin_index + 1) % len(weighted_workers)
+        return selected
+    
+    def _least_connections_select(self) -> str:
+        """Select worker with least active connections"""
+        min_connections = float('inf')
+        selected_worker = None
+        
+        for worker_id in self.healthy_workers:
+            worker = self.workers[worker_id]
+            if worker.active_connections < min_connections:
+                min_connections = worker.active_connections
+                selected_worker = worker_id
+        
+        return selected_worker
+    
+    def _least_response_time_select(self) -> str:
+        """Select worker with lowest average response time"""
+        min_response_time = float('inf')
+        selected_worker = None
+        
+        for worker_id in self.healthy_workers:
+            worker = self.workers[worker_id]
+            if worker.avg_response_time_ms < min_response_time:
+                min_response_time = worker.avg_response_time_ms
+                selected_worker = worker_id
+        
+        return selected_worker
+    
+    def _resource_aware_select(self) -> str:
+        """Select worker based on comprehensive resource utilization"""
+        best_score = -1
+        selected_worker = None
+        
+        for worker_id in self.healthy_workers:
+            worker = self.workers[worker_id]
+            
+            # Calculate composite resource score (higher = better)
+            cpu_score = max(0, 1 - worker.cpu_utilization)
+            memory_score = max(0, 1 - worker.memory_utilization)
+            gpu_score = max(0, 1 - worker.gpu_utilization)
+            
+            connection_score = max(0, 1 - worker.active_connections / worker.max_connections)
+            queue_score = max(0, 1 - worker.queue_length / worker.max_queue_size)
+            
+            # Weighted composite score
+            composite_score = (
+                0.25 * cpu_score +
+                0.25 * memory_score +
+                0.20 * gpu_score +
+                0.15 * connection_score +
+                0.15 * queue_score
+            ) * worker.health_score
+            
+            if composite_score > best_score:
+                best_score = composite_score
+                selected_worker = worker_id
+        
+        return selected_worker
+    
+    def _predictive_select(self, request_metadata: Optional[Dict]) -> str:
+        """Select worker using predictive modeling"""
+        if not request_metadata:
+            return self._resource_aware_select()
+        
+        # Simple prediction based on request characteristics
+        estimated_processing_time = self._estimate_processing_time(request_metadata)
+        
+        best_score = float('inf')
+        selected_worker = None
+        
+        for worker_id in self.healthy_workers:
+            worker = self.workers[worker_id]
+            
+            # Predict queue wait time
+            queue_wait = worker.queue_length * worker.avg_response_time_ms / 1000
+            
+            # Predict total response time
+            predicted_response_time = queue_wait + estimated_processing_time
+            
+            # Factor in worker reliability
+            reliability_factor = worker.success_rate * worker.health_score
+            
+            # Final score (lower is better)
+            score = predicted_response_time / reliability_factor
+            
+            if score < best_score:
+                best_score = score
+                selected_worker = worker_id
+        
+        return selected_worker
+    
+    def _estimate_processing_time(self, request_metadata: Dict) -> float:
+        """Estimate processing time based on request characteristics"""
+        # Simple heuristic based on token count and model complexity
+        max_tokens = request_metadata.get("max_tokens", 100)
+        prompt_length = request_metadata.get("prompt_length", 100)
+        
+        # Base processing time (ms per token)
+        base_time_per_token = 10
+        
+        # Adjust for prompt length (longer prompts = more prefill time)
+        prefill_time = prompt_length * 0.1
+        
+        # Generation time
+        generation_time = max_tokens * base_time_per_token
+        
+        return prefill_time + generation_time
+    
+    def _evaluate_and_switch_algorithm(self):
+        """Evaluate current algorithm performance and switch if beneficial"""
+        current_time = time.time()
+        
+        if current_time - self.last_algorithm_evaluation < self.adaptive_window:
+            return  # Too soon to evaluate
+        
+        # Calculate current algorithm performance
+        current_perf = self._calculate_algorithm_performance()
+        current_alg = self._get_current_non_adaptive_algorithm()
+        
+        # Test other algorithms (simulation)
+        algorithm_scores = {}
+        for test_alg in LoadBalancingAlgorithm:
+            if test_alg == LoadBalancingAlgorithm.ADAPTIVE:
+                continue
+            
+            score = self._simulate_algorithm_performance(test_alg)
+            algorithm_scores[test_alg] = score
+        
+        # Find best performing algorithm
+        best_alg = max(algorithm_scores.keys(), key=lambda a: algorithm_scores[a])
+        best_score = algorithm_scores[best_alg]
+        
+        # Switch if improvement is significant
+        if best_score > current_perf * (1 + self.algorithm_switch_threshold):
+            print(f"Switching from {current_alg} to {best_alg} (improvement: {best_score/current_perf:.2%})")
+            self._switch_to_algorithm(best_alg)
+            self.load_balancing_stats["algorithm_switches"] += 1
+        
+        self.last_algorithm_evaluation = current_time
+    
+    def _calculate_algorithm_performance(self) -> float:
+        """Calculate current algorithm performance score"""
+        if not self.healthy_workers:
+            return 0.0
+        
+        # Factors: response time, load distribution, resource utilization
+        avg_response_time = sum(w.avg_response_time_ms for w in self.workers.values()) / len(self.workers)
+        
+        # Load distribution variance (lower is better)
+        loads = [w.active_connections for w in self.workers.values()]
+        load_variance = np.var(loads) if loads else 0
+        
+        # Resource utilization efficiency
+        avg_cpu_util = sum(w.cpu_utilization for w in self.workers.values()) / len(self.workers)
+        
+        # Performance score (higher is better)
+        score = 1000 / max(avg_response_time, 1) * (1 / max(load_variance + 1, 1)) * max(avg_cpu_util, 0.1)
+        
+        return score
+    
+    def _simulate_algorithm_performance(self, algorithm: LoadBalancingAlgorithm) -> float:
+        """Simulate algorithm performance (simplified)"""
+        # In a real implementation, this would use historical data
+        # to simulate how the algorithm would have performed
+        
+        # Simplified scoring based on algorithm characteristics
+        algorithm_scores = {
+            LoadBalancingAlgorithm.ROUND_ROBIN: 0.6,
+            LoadBalancingAlgorithm.WEIGHTED_ROUND_ROBIN: 0.7,
+            LoadBalancingAlgorithm.LEAST_CONNECTIONS: 0.8,
+            LoadBalancingAlgorithm.LEAST_RESPONSE_TIME: 0.75,
+            LoadBalancingAlgorithm.RESOURCE_AWARE: 0.9,
+            LoadBalancingAlgorithm.PREDICTIVE: 0.85,
+        }
+        
+        base_score = algorithm_scores.get(algorithm, 0.5)
+        
+        # Adjust based on current system state
+        if len(self.healthy_workers) > 10:  # Large cluster
+            if algorithm == LoadBalancingAlgorithm.RESOURCE_AWARE:
+                base_score += 0.1  # Better for large clusters
+        
+        # Add some noise to simulate real-world variance
+        noise = random.uniform(-0.1, 0.1)
+        
+        return max(0, base_score + noise)
+    
+    def _get_current_non_adaptive_algorithm(self) -> LoadBalancingAlgorithm:
+        """Get the current algorithm if not adaptive"""
+        if hasattr(self, '_current_algorithm'):
+            return self._current_algorithm
+        return LoadBalancingAlgorithm.RESOURCE_AWARE  # Default
+    
+    def _switch_to_algorithm(self, algorithm: LoadBalancingAlgorithm):
+        """Switch to a specific algorithm"""
+        self._current_algorithm = algorithm
+        # Reset algorithm-specific state
+        self.round_robin_index = 0
+    
+    def _record_worker_selection(self, worker_id: str):
+        """Record worker selection for statistics"""
+        if worker_id not in self.load_balancing_stats["worker_utilization"]:
+            self.load_balancing_stats["worker_utilization"][worker_id] = 0
+        
+        self.load_balancing_stats["worker_utilization"][worker_id] += 1
+    
+    def update_worker_metrics(self, worker_id: str, metrics_update: Dict):
+        """Update worker metrics"""
+        if worker_id not in self.workers:
+            return
+        
+        worker = self.workers[worker_id]
+        
+        # Update metrics
+        for key, value in metrics_update.items():
+            if hasattr(worker, key):
+                setattr(worker, key, value)
+        
+        # Update health score
+        self._update_health_score(worker)
+    
+    def _update_health_score(self, worker: WorkerMetrics):
+        """Update worker health score based on various factors"""
+        # Factors: success rate, resource utilization, response time stability
+        
+        success_factor = worker.success_rate
+        
+        # Resource utilization factor (prefer moderate utilization)
+        cpu_factor = 1 - abs(worker.cpu_utilization - 0.7)  # Target 70% CPU
+        memory_factor = 1 - abs(worker.memory_utilization - 0.6)  # Target 60% memory
+        
+        # Response time stability
+        if len(worker.response_times) > 10:
+            rt_variance = np.var(list(worker.response_times))
+            rt_stability = max(0, 1 - rt_variance / 10000)  # Normalize variance
+        else:
+            rt_stability = 0.5  # Neutral if not enough data
+        
+        # Composite health score
+        worker.health_score = (
+            0.4 * success_factor +
+            0.2 * max(0, cpu_factor) +
+            0.2 * max(0, memory_factor) +
+            0.2 * rt_stability
+        )
+        
+        # Update healthy workers set
+        if worker.health_score > 0.5:
+            self.healthy_workers.add(worker.worker_id)
+        else:
+            self.healthy_workers.discard(worker.worker_id)
+    
+    def _health_check_loop(self):
+        """Continuous health checking loop"""
+        while self.health_check_active:
+            try:
+                current_time = time.time()
+                
+                for worker_id, worker in self.workers.items():
+                    # Simple health check based on last update time
+                    if hasattr(worker, 'last_update_time'):
+                        if current_time - worker.last_update_time > self.health_check_interval * 2:
+                            # Worker hasn't reported in too long
+                            worker.health_score = min(worker.health_score, 0.3)
+                            self.healthy_workers.discard(worker_id)
+                
+                time.sleep(self.health_check_interval)
+                
+            except Exception as e:
+                print(f"Error in health check loop: {e}")
+                time.sleep(self.health_check_interval)
+    
+    def get_statistics(self) -> Dict:
+        """Get load balancer statistics"""
+        stats = self.load_balancing_stats.copy()
+        
+        stats.update({
+            "current_algorithm": self.algorithm.value,
+            "healthy_workers": len(self.healthy_workers),
+            "total_workers": len(self.workers),
+            "worker_health_scores": {
+                worker_id: worker.health_score
+                for worker_id, worker in self.workers.items()
+            },
+            "avg_worker_utilization": {
+                "cpu": sum(w.cpu_utilization for w in self.workers.values()) / len(self.workers) if self.workers else 0,
+                "memory": sum(w.memory_utilization for w in self.workers.values()) / len(self.workers) if self.workers else 0,
+                "gpu": sum(w.gpu_utilization for w in self.workers.values()) / len(self.workers) if self.workers else 0,
+            }
+        })
+        
+        return stats
+    
+    def shutdown(self):
+        """Shutdown the load balancer"""
+        self.health_check_active = False
+        if self.health_check_thread.is_alive():
+            self.health_check_thread.join(timeout=5)
+
+# Usage example
+load_balancer = AdaptiveLoadBalancer(algorithm=LoadBalancingAlgorithm.ADAPTIVE)
+
+# Add workers
+for i in range(5):
+    worker = WorkerMetrics(
+        worker_id=f"worker-{i}",
+        max_connections=100,
+        processing_capacity_rps=15.0,
+        static_weight=1.0,
+        cpu_utilization=random.uniform(0.3, 0.8),
+        memory_utilization=random.uniform(0.4, 0.7),
+        avg_response_time_ms=random.uniform(100, 300)
+    )
+    load_balancer.add_worker(worker)
+
+# Select workers for requests
+for _ in range(100):
+    request_metadata = {
+        "max_tokens": random.randint(50, 500),
+        "prompt_length": random.randint(100, 2000)
+    }
+    
+    selected_worker = load_balancer.select_worker(request_metadata)
+    if selected_worker:
+        print(f"Selected: {selected_worker}")
+    
+    # Simulate some processing time
+    time.sleep(0.01)
+
+# Get statistics
+stats = load_balancer.get_statistics()
+print(f"Load balancer statistics: {stats}")
+
+load_balancer.shutdown()
+```
+
+This comprehensive routing and load balancing guide provides advanced traffic distribution strategies optimized for NVIDIA Dynamo's unique architecture and requirements.

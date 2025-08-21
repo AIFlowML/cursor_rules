@@ -1,0 +1,1059 @@
+---
+description: NVIDIA Dynamo API Integration and Client SDKs - Complete guide for API usage, client libraries, and integration patterns
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo API integration and client SDK development.
+
+## API Architecture Overview
+
+NVIDIA Dynamo provides OpenAI-compatible APIs with extended functionality for advanced LLM serving, caching, and distributed inference capabilities.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Dynamo API Ecosystem                        │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │   Client    │  │    API      │  │   Admin     │  │  Mgmt   │  │
+│  │    SDKs     │  │ Endpoints   │  │    APIs     │  │  APIs   │  │
+│  │             │  │             │  │             │  │         │  │
+│  │• Python     │  │• Chat       │  │• Workers    │  │• Models │  │
+│  │• JavaScript │  │• Completions│  │• Health     │  │• Cache  │  │
+│  │• Go         │  │• Embeddings │  │• Metrics    │  │• Config │  │
+│  │• Java       │  │• Models     │  │• Logs       │  │• Users  │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │               API Gateway Layer                             │  │
+│  │  • Authentication  • Rate Limiting  • Validation  • Proxy  │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Dynamo Core                                 │  │
+│  │     Frontend → Router → Workers → Cache → Storage          │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Core API Endpoints
+
+### Chat Completions API
+```python
+# chat_completions_api.py - Enhanced chat completions with Dynamo features
+from typing import Dict, List, Optional, Union, AsyncIterator, Iterator
+import httpx
+import json
+import asyncio
+from dataclasses import dataclass, field
+from enum import Enum
+import time
+import logging
+
+class Role(Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    FUNCTION = "function"
+    TOOL = "tool"
+
+@dataclass
+class Message:
+    role: Role
+    content: str
+    name: Optional[str] = None
+    function_call: Optional[Dict] = None
+    tool_calls: Optional[List[Dict]] = None
+
+@dataclass
+class ChatCompletionRequest:
+    """Enhanced chat completion request with Dynamo-specific features"""
+    model: str
+    messages: List[Message]
+    
+    # OpenAI-compatible parameters
+    max_tokens: Optional[int] = 150
+    temperature: Optional[float] = 1.0
+    top_p: Optional[float] = 1.0
+    n: Optional[int] = 1
+    stream: Optional[bool] = False
+    stop: Optional[Union[str, List[str]]] = None
+    presence_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = 0.0
+    logit_bias: Optional[Dict[str, float]] = None
+    user: Optional[str] = None
+    
+    # Dynamo-specific parameters
+    engine: Optional[str] = None  # vllm, sglang, trtllm
+    worker_id: Optional[str] = None  # Specific worker targeting
+    cache_strategy: Optional[str] = "auto"  # auto, aggressive, conservative, disabled
+    priority: Optional[int] = 1  # 1 (high) to 3 (low)
+    routing_hints: Optional[Dict[str, str]] = field(default_factory=dict)
+    
+    # Advanced features
+    guided_generation: Optional[Dict] = None  # JSON schema, regex, grammar
+    prefix_caching: Optional[bool] = True
+    kv_cache_ttl: Optional[int] = 3600  # seconds
+    response_format: Optional[Dict] = None  # JSON mode
+    
+    # Performance tuning
+    batch_size: Optional[int] = None  # For batched requests
+    timeout_ms: Optional[int] = 30000
+    
+    # Observability
+    trace_id: Optional[str] = None
+    tags: Optional[Dict[str, str]] = field(default_factory=dict)
+
+@dataclass
+class ChatCompletionResponse:
+    """Enhanced chat completion response"""
+    id: str
+    object: str
+    created: int
+    model: str
+    choices: List[Dict]
+    usage: Dict[str, int]
+    
+    # Dynamo-specific metadata
+    engine_used: Optional[str] = None
+    worker_id: Optional[str] = None
+    cache_hit: Optional[bool] = None
+    processing_time_ms: Optional[float] = None
+    queue_time_ms: Optional[float] = None
+    
+    # Performance metrics
+    tokens_per_second: Optional[float] = None
+    ttft_ms: Optional[float] = None  # Time to first token
+    
+    # System info
+    system_fingerprint: Optional[str] = None
+
+class DynamoChatAPI:
+    """Enhanced Chat Completions API client for Dynamo"""
+    
+    def __init__(self,
+                 base_url: str = "http://localhost:8080",
+                 api_key: Optional[str] = None,
+                 timeout: float = 30.0,
+                 max_retries: int = 3,
+                 retry_delay: float = 1.0):
+        
+        self.base_url = base_url.rstrip('/')
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        
+        # Setup HTTP client
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
+        self.client = httpx.Client(
+            base_url=base_url,
+            headers=headers,
+            timeout=timeout
+        )
+        
+        self.async_client = httpx.AsyncClient(
+            base_url=base_url,
+            headers=headers,
+            timeout=timeout
+        )
+        
+        # Request tracking
+        self.request_history = []
+    
+    def create(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        """Create chat completion (synchronous)"""
+        
+        # Convert request to dict
+        request_data = self._prepare_request(request)
+        
+        # Execute request with retries
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.client.post(
+                    "/v1/chat/completions",
+                    json=request_data
+                )
+                response.raise_for_status()
+                
+                # Parse response
+                return self._parse_response(response.json())
+                
+            except httpx.HTTPError as e:
+                if attempt == self.max_retries:
+                    raise e
+                
+                # Exponential backoff
+                time.sleep(self.retry_delay * (2 ** attempt))
+                
+        raise RuntimeError(f"Failed after {self.max_retries} retries")
+    
+    async def acreate(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        """Create chat completion (asynchronous)"""
+        
+        request_data = self._prepare_request(request)
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self.async_client.post(
+                    "/v1/chat/completions",
+                    json=request_data
+                )
+                response.raise_for_status()
+                
+                return self._parse_response(response.json())
+                
+            except httpx.HTTPError as e:
+                if attempt == self.max_retries:
+                    raise e
+                
+                await asyncio.sleep(self.retry_delay * (2 ** attempt))
+        
+        raise RuntimeError(f"Failed after {self.max_retries} retries")
+    
+    def stream(self, request: ChatCompletionRequest) -> Iterator[Dict]:
+        """Stream chat completion (synchronous)"""
+        
+        request.stream = True
+        request_data = self._prepare_request(request)
+        
+        with self.client.stream(
+            "POST", 
+            "/v1/chat/completions",
+            json=request_data
+        ) as response:
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]  # Remove "data: " prefix
+                    
+                    if data.strip() == "[DONE]":
+                        break
+                    
+                    try:
+                        chunk = json.loads(data)
+                        yield chunk
+                    except json.JSONDecodeError:
+                        continue
+    
+    async def astream(self, request: ChatCompletionRequest) -> AsyncIterator[Dict]:
+        """Stream chat completion (asynchronous)"""
+        
+        request.stream = True
+        request_data = self._prepare_request(request)
+        
+        async with self.async_client.stream(
+            "POST",
+            "/v1/chat/completions", 
+            json=request_data
+        ) as response:
+            response.raise_for_status()
+            
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    
+                    if data.strip() == "[DONE]":
+                        break
+                    
+                    try:
+                        chunk = json.loads(data)
+                        yield chunk
+                    except json.JSONDecodeError:
+                        continue
+    
+    def _prepare_request(self, request: ChatCompletionRequest) -> Dict:
+        """Prepare request data"""
+        
+        # Convert messages
+        messages = []
+        for msg in request.messages:
+            message_dict = {
+                "role": msg.role.value,
+                "content": msg.content
+            }
+            
+            if msg.name:
+                message_dict["name"] = msg.name
+            if msg.function_call:
+                message_dict["function_call"] = msg.function_call
+            if msg.tool_calls:
+                message_dict["tool_calls"] = msg.tool_calls
+            
+            messages.append(message_dict)
+        
+        # Build request data
+        data = {
+            "model": request.model,
+            "messages": messages,
+        }
+        
+        # Add optional parameters
+        optional_params = [
+            "max_tokens", "temperature", "top_p", "n", "stream", "stop",
+            "presence_penalty", "frequency_penalty", "logit_bias", "user",
+            "engine", "worker_id", "cache_strategy", "priority", "routing_hints",
+            "guided_generation", "prefix_caching", "kv_cache_ttl",
+            "response_format", "batch_size", "timeout_ms", "trace_id", "tags"
+        ]
+        
+        for param in optional_params:
+            value = getattr(request, param, None)
+            if value is not None:
+                data[param] = value
+        
+        return data
+    
+    def _parse_response(self, response_data: Dict) -> ChatCompletionResponse:
+        """Parse response data"""
+        
+        return ChatCompletionResponse(
+            id=response_data["id"],
+            object=response_data["object"],
+            created=response_data["created"],
+            model=response_data["model"],
+            choices=response_data["choices"],
+            usage=response_data["usage"],
+            
+            # Dynamo-specific fields
+            engine_used=response_data.get("engine_used"),
+            worker_id=response_data.get("worker_id"),
+            cache_hit=response_data.get("cache_hit"),
+            processing_time_ms=response_data.get("processing_time_ms"),
+            queue_time_ms=response_data.get("queue_time_ms"),
+            tokens_per_second=response_data.get("tokens_per_second"),
+            ttft_ms=response_data.get("ttft_ms"),
+            system_fingerprint=response_data.get("system_fingerprint")
+        )
+    
+    def close(self):
+        """Close HTTP clients"""
+        self.client.close()
+        
+    async def aclose(self):
+        """Close async HTTP client"""
+        await self.async_client.aclose()
+
+# Usage example
+client = DynamoChatAPI(
+    base_url="http://localhost:8080",
+    api_key="your-api-key"
+)
+
+# Create request
+request = ChatCompletionRequest(
+    model="meta-llama/Llama-3.1-8B-Instruct",
+    messages=[
+        Message(Role.SYSTEM, "You are a helpful assistant."),
+        Message(Role.USER, "Explain quantum computing in simple terms.")
+    ],
+    max_tokens=300,
+    temperature=0.7,
+    
+    # Dynamo-specific parameters
+    engine="vllm",
+    cache_strategy="aggressive",
+    priority=1,
+    prefix_caching=True,
+    tags={"experiment": "quantum_explanation"}
+)
+
+# Synchronous request
+response = client.create(request)
+print(f"Response: {response.choices[0]['message']['content']}")
+print(f"Cache hit: {response.cache_hit}")
+print(f"Processing time: {response.processing_time_ms}ms")
+
+# Streaming request
+print("\nStreaming response:")
+for chunk in client.stream(request):
+    if "choices" in chunk and chunk["choices"]:
+        delta = chunk["choices"][0].get("delta", {})
+        if "content" in delta:
+            print(delta["content"], end="", flush=True)
+
+client.close()
+```
+
+### Advanced Embeddings API
+```python
+# embeddings_api.py - Enhanced embeddings API with advanced features
+from typing import List, Optional, Union, Dict
+import numpy as np
+from dataclasses import dataclass
+import httpx
+
+@dataclass
+class EmbeddingRequest:
+    """Enhanced embedding request"""
+    input: Union[str, List[str]]
+    model: str
+    
+    # Standard parameters
+    encoding_format: Optional[str] = "float"  # float, base64
+    dimensions: Optional[int] = None  # For dimension reduction
+    user: Optional[str] = None
+    
+    # Dynamo-specific parameters
+    engine: Optional[str] = None  # sentence-transformers, openai-clip
+    batch_size: Optional[int] = 32
+    normalize: Optional[bool] = True
+    pooling_strategy: Optional[str] = "mean"  # mean, max, cls
+    truncate: Optional[str] = "end"  # end, start
+    
+    # Advanced features
+    instruction: Optional[str] = None  # For instruction-based embeddings
+    domain_adaptation: Optional[str] = None  # Domain-specific embeddings
+    cache_embeddings: Optional[bool] = True
+    
+    # Performance tuning
+    precision: Optional[str] = "float32"  # float32, float16, int8
+    device: Optional[str] = "auto"  # auto, cuda, cpu
+
+@dataclass 
+class EmbeddingResponse:
+    """Enhanced embedding response"""
+    object: str
+    data: List[Dict]
+    model: str
+    usage: Dict[str, int]
+    
+    # Dynamo-specific metadata
+    engine_used: Optional[str] = None
+    processing_time_ms: Optional[float] = None
+    cache_hit_rate: Optional[float] = None
+    embedding_dimensions: Optional[int] = None
+
+class DynamoEmbeddingsAPI:
+    """Enhanced Embeddings API client"""
+    
+    def __init__(self, 
+                 base_url: str = "http://localhost:8080",
+                 api_key: Optional[str] = None,
+                 timeout: float = 30.0):
+        
+        self.base_url = base_url.rstrip('/')
+        
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        
+        self.client = httpx.Client(
+            base_url=base_url,
+            headers=headers,
+            timeout=timeout
+        )
+    
+    def create(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Create embeddings"""
+        
+        # Prepare request data
+        data = {
+            "input": request.input,
+            "model": request.model
+        }
+        
+        # Add optional parameters
+        optional_params = [
+            "encoding_format", "dimensions", "user", "engine", "batch_size",
+            "normalize", "pooling_strategy", "truncate", "instruction",
+            "domain_adaptation", "cache_embeddings", "precision", "device"
+        ]
+        
+        for param in optional_params:
+            value = getattr(request, param, None)
+            if value is not None:
+                data[param] = value
+        
+        # Execute request
+        response = self.client.post("/v1/embeddings", json=data)
+        response.raise_for_status()
+        response_data = response.json()
+        
+        # Parse response
+        return EmbeddingResponse(
+            object=response_data["object"],
+            data=response_data["data"],
+            model=response_data["model"],
+            usage=response_data["usage"],
+            engine_used=response_data.get("engine_used"),
+            processing_time_ms=response_data.get("processing_time_ms"),
+            cache_hit_rate=response_data.get("cache_hit_rate"),
+            embedding_dimensions=response_data.get("embedding_dimensions")
+        )
+    
+    def similarity_search(self,
+                          query_embedding: List[float],
+                          candidate_embeddings: List[List[float]],
+                          top_k: int = 5,
+                          similarity_metric: str = "cosine") -> List[Dict]:
+        """Perform similarity search"""
+        
+        data = {
+            "query_embedding": query_embedding,
+            "candidate_embeddings": candidate_embeddings,
+            "top_k": top_k,
+            "similarity_metric": similarity_metric
+        }
+        
+        response = self.client.post("/v1/embeddings/similarity", json=data)
+        response.raise_for_status()
+        
+        return response.json()["results"]
+    
+    def close(self):
+        """Close HTTP client"""
+        self.client.close()
+
+# Usage example
+embeddings_client = DynamoEmbeddingsAPI()
+
+# Create embeddings
+embedding_request = EmbeddingRequest(
+    input=["Hello world", "How are you?", "Machine learning is fascinating"],
+    model="sentence-transformers/all-MiniLM-L6-v2",
+    engine="sentence-transformers",
+    normalize=True,
+    batch_size=16
+)
+
+response = embeddings_client.create(embedding_request)
+print(f"Generated {len(response.data)} embeddings")
+print(f"Dimensions: {response.embedding_dimensions}")
+print(f"Cache hit rate: {response.cache_hit_rate}")
+
+embeddings_client.close()
+```
+
+## Comprehensive Python SDK
+
+### Full-Featured Dynamo Client
+```python
+# dynamo_sdk.py - Comprehensive Python SDK for Dynamo
+from typing import Dict, List, Optional, Union, AsyncIterator, Iterator, Any
+import httpx
+import asyncio
+import json
+import logging
+import time
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from contextlib import asynccontextmanager, contextmanager
+import uuid
+
+class APIVersion(Enum):
+    V1 = "v1"
+    V2 = "v2"  # Future version
+
+class EngineType(Enum):
+    VLLM = "vllm"
+    SGLANG = "sglang"
+    TENSORRT_LLM = "trtllm"
+    LLAMA_CPP = "llama_cpp"
+    AUTO = "auto"
+
+@dataclass
+class ClientConfig:
+    """Comprehensive client configuration"""
+    base_url: str = "http://localhost:8080"
+    api_key: Optional[str] = None
+    api_version: APIVersion = APIVersion.V1
+    
+    # Connection settings
+    timeout: float = 30.0
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    max_connections: int = 100
+    
+    # Authentication
+    auth_method: str = "bearer"  # bearer, api_key, oauth
+    oauth_token: Optional[str] = None
+    
+    # Default request settings
+    default_engine: EngineType = EngineType.AUTO
+    default_temperature: float = 0.7
+    default_max_tokens: int = 150
+    default_timeout_ms: int = 30000
+    
+    # Advanced features
+    enable_caching: bool = True
+    enable_streaming: bool = True
+    enable_retries: bool = True
+    enable_metrics: bool = True
+    
+    # Observability
+    enable_tracing: bool = False
+    trace_headers: Dict[str, str] = field(default_factory=dict)
+    
+    # Rate limiting
+    rate_limit_rpm: Optional[int] = None  # Requests per minute
+    rate_limit_tpm: Optional[int] = None  # Tokens per minute
+
+class DynamoClient:
+    """Comprehensive Dynamo Python SDK"""
+    
+    def __init__(self, config: ClientConfig = None, **kwargs):
+        # Use provided config or create from kwargs
+        if config is None:
+            config = ClientConfig(**kwargs)
+        
+        self.config = config
+        
+        # Setup HTTP clients
+        self._setup_clients()
+        
+        # API interfaces
+        self.chat = ChatCompletionsInterface(self)
+        self.completions = CompletionsInterface(self)
+        self.embeddings = EmbeddingsInterface(self)
+        self.models = ModelsInterface(self)
+        self.admin = AdminInterface(self)
+        
+        # Client state
+        self._request_count = 0
+        self._token_count = 0
+        self._last_request_time = 0
+        
+        # Metrics tracking
+        self.metrics = {
+            "requests_sent": 0,
+            "tokens_processed": 0,
+            "errors_encountered": 0,
+            "cache_hits": 0,
+            "avg_response_time": 0.0
+        }
+    
+    def _setup_clients(self):
+        """Setup HTTP clients"""
+        
+        # Headers
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": f"dynamo-python-sdk/1.0.0"
+        }
+        
+        # Authentication
+        if self.config.api_key:
+            if self.config.auth_method == "bearer":
+                headers["Authorization"] = f"Bearer {self.config.api_key}"
+            elif self.config.auth_method == "api_key":
+                headers["X-API-Key"] = self.config.api_key
+        
+        if self.config.oauth_token:
+            headers["Authorization"] = f"Bearer {self.config.oauth_token}"
+        
+        # Add trace headers
+        headers.update(self.config.trace_headers)
+        
+        # Sync client
+        self.client = httpx.Client(
+            base_url=self.config.base_url,
+            headers=headers,
+            timeout=self.config.timeout,
+            limits=httpx.Limits(max_connections=self.config.max_connections)
+        )
+        
+        # Async client
+        self.async_client = httpx.AsyncClient(
+            base_url=self.config.base_url,
+            headers=headers,
+            timeout=self.config.timeout,
+            limits=httpx.Limits(max_connections=self.config.max_connections)
+        )
+    
+    async def __aenter__(self):
+        """Async context manager entry"""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        await self.aclose()
+    
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.close()
+    
+    def _make_request(self, 
+                      method: str, 
+                      endpoint: str, 
+                      data: Optional[Dict] = None,
+                      params: Optional[Dict] = None,
+                      stream: bool = False) -> httpx.Response:
+        """Make HTTP request with retries and rate limiting"""
+        
+        # Rate limiting
+        self._check_rate_limits()
+        
+        # Add trace ID if enabled
+        if self.config.enable_tracing and data:
+            data["trace_id"] = str(uuid.uuid4())
+        
+        # Execute with retries
+        for attempt in range(self.config.max_retries + 1):
+            try:
+                start_time = time.time()
+                
+                if stream:
+                    response = self.client.stream(method, endpoint, json=data, params=params)
+                else:
+                    response = self.client.request(method, endpoint, json=data, params=params)
+                
+                response.raise_for_status()
+                
+                # Update metrics
+                response_time = time.time() - start_time
+                self._update_metrics(response_time, data)
+                
+                return response
+                
+            except httpx.HTTPError as e:
+                if attempt == self.config.max_retries:
+                    self.metrics["errors_encountered"] += 1
+                    raise e
+                
+                # Exponential backoff
+                time.sleep(self.config.retry_delay * (2 ** attempt))
+        
+        raise RuntimeError(f"Request failed after {self.config.max_retries} retries")
+    
+    async def _make_async_request(self,
+                                  method: str,
+                                  endpoint: str,
+                                  data: Optional[Dict] = None,
+                                  params: Optional[Dict] = None,
+                                  stream: bool = False) -> httpx.Response:
+        """Make async HTTP request"""
+        
+        # Rate limiting
+        await self._check_async_rate_limits()
+        
+        # Add trace ID if enabled
+        if self.config.enable_tracing and data:
+            data["trace_id"] = str(uuid.uuid4())
+        
+        # Execute with retries
+        for attempt in range(self.config.max_retries + 1):
+            try:
+                start_time = time.time()
+                
+                if stream:
+                    response = self.async_client.stream(method, endpoint, json=data, params=params)
+                else:
+                    response = await self.async_client.request(method, endpoint, json=data, params=params)
+                
+                if not stream:
+                    response.raise_for_status()
+                
+                # Update metrics
+                response_time = time.time() - start_time
+                self._update_metrics(response_time, data)
+                
+                return response
+                
+            except httpx.HTTPError as e:
+                if attempt == self.config.max_retries:
+                    self.metrics["errors_encountered"] += 1
+                    raise e
+                
+                await asyncio.sleep(self.config.retry_delay * (2 ** attempt))
+        
+        raise RuntimeError(f"Request failed after {self.config.max_retries} retries")
+    
+    def _check_rate_limits(self):
+        """Check and enforce rate limits"""
+        current_time = time.time()
+        
+        # Simple rate limiting implementation
+        if self.config.rate_limit_rpm:
+            time_since_last = current_time - self._last_request_time
+            min_interval = 60.0 / self.config.rate_limit_rpm
+            
+            if time_since_last < min_interval:
+                time.sleep(min_interval - time_since_last)
+        
+        self._last_request_time = time.time()
+    
+    async def _check_async_rate_limits(self):
+        """Async rate limiting"""
+        current_time = time.time()
+        
+        if self.config.rate_limit_rpm:
+            time_since_last = current_time - self._last_request_time
+            min_interval = 60.0 / self.config.rate_limit_rpm
+            
+            if time_since_last < min_interval:
+                await asyncio.sleep(min_interval - time_since_last)
+        
+        self._last_request_time = time.time()
+    
+    def _update_metrics(self, response_time: float, request_data: Optional[Dict]):
+        """Update client metrics"""
+        
+        self.metrics["requests_sent"] += 1
+        
+        # Update average response time
+        current_avg = self.metrics["avg_response_time"]
+        request_count = self.metrics["requests_sent"]
+        new_avg = ((current_avg * (request_count - 1)) + response_time) / request_count
+        self.metrics["avg_response_time"] = new_avg
+        
+        # Estimate tokens (rough approximation)
+        if request_data:
+            estimated_tokens = 0
+            if "messages" in request_data:
+                for msg in request_data["messages"]:
+                    estimated_tokens += len(msg.get("content", "")) // 4
+            elif "input" in request_data:
+                if isinstance(request_data["input"], str):
+                    estimated_tokens = len(request_data["input"]) // 4
+                elif isinstance(request_data["input"], list):
+                    estimated_tokens = sum(len(str(item)) // 4 for item in request_data["input"])
+            
+            self.metrics["tokens_processed"] += estimated_tokens
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get client metrics"""
+        return self.metrics.copy()
+    
+    def close(self):
+        """Close HTTP clients"""
+        self.client.close()
+    
+    async def aclose(self):
+        """Close async HTTP client"""
+        await self.async_client.aclose()
+
+class ChatCompletionsInterface:
+    """Chat completions API interface"""
+    
+    def __init__(self, client: DynamoClient):
+        self.client = client
+    
+    def create(self, **kwargs) -> ChatCompletionResponse:
+        """Create chat completion"""
+        endpoint = f"/{self.client.config.api_version.value}/chat/completions"
+        
+        # Apply defaults
+        request_data = self._apply_defaults(kwargs)
+        
+        response = self.client._make_request("POST", endpoint, request_data)
+        return ChatCompletionResponse(**response.json())
+    
+    async def acreate(self, **kwargs) -> ChatCompletionResponse:
+        """Create chat completion (async)"""
+        endpoint = f"/{self.client.config.api_version.value}/chat/completions"
+        
+        request_data = self._apply_defaults(kwargs)
+        
+        response = await self.client._make_async_request("POST", endpoint, request_data)
+        return ChatCompletionResponse(**response.json())
+    
+    def stream(self, **kwargs) -> Iterator[Dict]:
+        """Stream chat completion"""
+        kwargs["stream"] = True
+        endpoint = f"/{self.client.config.api_version.value}/chat/completions"
+        
+        request_data = self._apply_defaults(kwargs)
+        
+        with self.client._make_request("POST", endpoint, request_data, stream=True) as response:
+            response.raise_for_status()
+            
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    
+                    if data.strip() == "[DONE]":
+                        break
+                    
+                    try:
+                        yield json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+    
+    async def astream(self, **kwargs) -> AsyncIterator[Dict]:
+        """Stream chat completion (async)"""
+        kwargs["stream"] = True
+        endpoint = f"/{self.client.config.api_version.value}/chat/completions"
+        
+        request_data = self._apply_defaults(kwargs)
+        
+        async with await self.client._make_async_request("POST", endpoint, request_data, stream=True) as response:
+            response.raise_for_status()
+            
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    
+                    if data.strip() == "[DONE]":
+                        break
+                    
+                    try:
+                        yield json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+    
+    def _apply_defaults(self, kwargs: Dict) -> Dict:
+        """Apply default configuration"""
+        defaults = {
+            "engine": self.client.config.default_engine.value,
+            "temperature": self.client.config.default_temperature,
+            "max_tokens": self.client.config.default_max_tokens,
+            "timeout_ms": self.client.config.default_timeout_ms,
+            "prefix_caching": self.client.config.enable_caching,
+        }
+        
+        # Apply defaults only if not specified
+        for key, value in defaults.items():
+            if key not in kwargs:
+                kwargs[key] = value
+        
+        return kwargs
+
+class EmbeddingsInterface:
+    """Embeddings API interface"""
+    
+    def __init__(self, client: DynamoClient):
+        self.client = client
+    
+    def create(self, **kwargs) -> EmbeddingResponse:
+        """Create embeddings"""
+        endpoint = f"/{self.client.config.api_version.value}/embeddings"
+        
+        response = self.client._make_request("POST", endpoint, kwargs)
+        return EmbeddingResponse(**response.json())
+    
+    async def acreate(self, **kwargs) -> EmbeddingResponse:
+        """Create embeddings (async)"""
+        endpoint = f"/{self.client.config.api_version.value}/embeddings"
+        
+        response = await self.client._make_async_request("POST", endpoint, kwargs)
+        return EmbeddingResponse(**response.json())
+
+class CompletionsInterface:
+    """Text completions API interface"""
+    
+    def __init__(self, client: DynamoClient):
+        self.client = client
+    
+    def create(self, **kwargs) -> Dict:
+        """Create text completion"""
+        endpoint = f"/{self.client.config.api_version.value}/completions"
+        
+        response = self.client._make_request("POST", endpoint, kwargs)
+        return response.json()
+
+class ModelsInterface:
+    """Models API interface"""
+    
+    def __init__(self, client: DynamoClient):
+        self.client = client
+    
+    def list(self) -> Dict:
+        """List available models"""
+        endpoint = f"/{self.client.config.api_version.value}/models"
+        
+        response = self.client._make_request("GET", endpoint)
+        return response.json()
+    
+    def retrieve(self, model_id: str) -> Dict:
+        """Retrieve model information"""
+        endpoint = f"/{self.client.config.api_version.value}/models/{model_id}"
+        
+        response = self.client._make_request("GET", endpoint)
+        return response.json()
+
+class AdminInterface:
+    """Administrative API interface"""
+    
+    def __init__(self, client: DynamoClient):
+        self.client = client
+    
+    def health(self) -> Dict:
+        """Get system health"""
+        response = self.client._make_request("GET", "/health")
+        return response.json()
+    
+    def metrics(self) -> Dict:
+        """Get system metrics"""
+        response = self.client._make_request("GET", "/metrics")
+        return response.json()
+    
+    def workers(self) -> Dict:
+        """List workers"""
+        response = self.client._make_request("GET", "/admin/workers")
+        return response.json()
+    
+    def worker_status(self, worker_id: str) -> Dict:
+        """Get worker status"""
+        response = self.client._make_request("GET", f"/admin/workers/{worker_id}")
+        return response.json()
+
+# Usage Examples
+async def main():
+    """Example usage of the Dynamo SDK"""
+    
+    # Configure client
+    config = ClientConfig(
+        base_url="http://localhost:8080",
+        api_key="your-api-key",
+        default_engine=EngineType.VLLM,
+        enable_caching=True,
+        enable_tracing=True,
+        rate_limit_rpm=100
+    )
+    
+    # Create client
+    async with DynamoClient(config) as client:
+        
+        # Chat completion
+        response = await client.chat.acreate(
+            model="meta-llama/Llama-3.1-8B-Instruct",
+            messages=[
+                {"role": "user", "content": "Explain machine learning"}
+            ],
+            max_tokens=200,
+            temperature=0.7
+        )
+        
+        print(f"Response: {response.choices[0]['message']['content']}")
+        print(f"Cache hit: {response.cache_hit}")
+        
+        # Streaming chat
+        print("\nStreaming response:")
+        async for chunk in client.chat.astream(
+            model="meta-llama/Llama-3.1-8B-Instruct",
+            messages=[{"role": "user", "content": "Write a short poem"}],
+            max_tokens=100
+        ):
+            if "choices" in chunk:
+                delta = chunk["choices"][0].get("delta", {})
+                if "content" in delta:
+                    print(delta["content"], end="", flush=True)
+        
+        # Embeddings
+        embeddings_response = await client.embeddings.acreate(
+            input=["Hello world", "How are you?"],
+            model="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        
+        print(f"\nEmbeddings: {len(embeddings_response.data)} vectors generated")
+        
+        # List models
+        models = await client.models.list()
+        print(f"Available models: {len(models['data'])}")
+        
+        # Get metrics
+        metrics = client.get_metrics()
+        print(f"Client metrics: {metrics}")
+
+# Run example
+# asyncio.run(main())
+```
+
+This comprehensive API integration and SDK guide provides enterprise-grade client libraries with advanced features, error handling, and observability for seamless NVIDIA Dynamo integration.

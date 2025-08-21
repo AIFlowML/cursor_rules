@@ -1,0 +1,1477 @@
+---
+description: NVIDIA Dynamo Monitoring, Debugging and Troubleshooting - Complete observability, diagnostics, and issue resolution guide
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo monitoring, debugging, and troubleshooting methodologies.
+
+## Comprehensive Monitoring Architecture
+
+NVIDIA Dynamo monitoring spans multiple layers: application metrics, infrastructure health, performance analytics, and business intelligence.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 Observability Stack                            │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │   Metrics   │  │   Logging   │  │   Tracing   │  │ Alerts  │  │
+│  │             │  │             │  │             │  │         │  │
+│  │• Prometheus │  │• Structured │  │• OpenTelem  │  │• Rules  │  │
+│  │• Grafana    │  │• JSON logs  │  │• Jaeger     │  │• PagerD │  │
+│  │• Custom     │  │• ELK Stack  │  │• Zipkin     │  │• Slack  │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Data Collection Layer                          │  │
+│  │  • Exporters • Log Agents • Trace Collectors • Webhooks   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Dynamo Services                             │  │
+│  │   Frontend → Router → Planner → Workers → Infrastructure   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Advanced Metrics Collection
+
+### Comprehensive Metrics Framework
+```python
+# dynamo_metrics.py - Advanced metrics collection system
+from typing import Dict, List, Optional, Any, Callable
+import time
+import json
+import threading
+from dataclasses import dataclass, field
+from collections import defaultdict, deque
+from enum import Enum
+import asyncio
+from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegistry, generate_latest
+import logging
+import psutil
+import GPUtil
+
+class MetricType(Enum):
+    COUNTER = "counter"
+    GAUGE = "gauge"
+    HISTOGRAM = "histogram"
+    SUMMARY = "summary"
+
+@dataclass
+class MetricDefinition:
+    """Definition of a custom metric"""
+    name: str
+    metric_type: MetricType
+    description: str
+    labels: List[str] = field(default_factory=list)
+    buckets: Optional[List[float]] = None  # For histograms
+    objectives: Optional[Dict[float, float]] = None  # For summaries
+
+class DynamoMetricsCollector:
+    """Advanced metrics collection system for Dynamo"""
+    
+    def __init__(self, 
+                 collection_interval: float = 15.0,
+                 enable_custom_metrics: bool = True):
+        
+        self.collection_interval = collection_interval
+        self.enable_custom_metrics = enable_custom_metrics
+        
+        # Prometheus registry
+        self.registry = CollectorRegistry()
+        
+        # Core metrics
+        self._initialize_core_metrics()
+        
+        # Custom metrics
+        self.custom_metrics = {}
+        self.metric_callbacks = {}
+        
+        # Data storage
+        self.metrics_history = defaultdict(lambda: deque(maxlen=1000))
+        self.last_collection_time = time.time()
+        
+        # Collection state
+        self.collection_active = False
+        self.collection_thread = None
+        
+        # Performance tracking
+        self.collection_stats = {
+            "total_collections": 0,
+            "failed_collections": 0,
+            "avg_collection_time_ms": 0.0,
+            "last_error": None
+        }
+    
+    def _initialize_core_metrics(self):
+        """Initialize core Dynamo metrics"""
+        
+        # Request metrics
+        self.request_total = Counter(
+            'dynamo_requests_total',
+            'Total number of requests',
+            ['method', 'endpoint', 'status', 'model', 'engine'],
+            registry=self.registry
+        )
+        
+        self.request_duration = Histogram(
+            'dynamo_request_duration_seconds',
+            'Request duration in seconds',
+            ['method', 'endpoint', 'model', 'engine'],
+            buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, float('inf')],
+            registry=self.registry
+        )
+        
+        self.active_requests = Gauge(
+            'dynamo_active_requests',
+            'Number of active requests',
+            ['engine', 'worker_id'],
+            registry=self.registry
+        )
+        
+        # Token metrics
+        self.tokens_processed = Counter(
+            'dynamo_tokens_processed_total',
+            'Total tokens processed',
+            ['type', 'model', 'engine'],  # type: input, output
+            registry=self.registry
+        )
+        
+        self.tokens_per_second = Gauge(
+            'dynamo_tokens_per_second',
+            'Current tokens per second throughput',
+            ['type', 'model', 'engine'],
+            registry=self.registry
+        )
+        
+        # Cache metrics
+        self.cache_hits = Counter(
+            'dynamo_cache_hits_total',
+            'KV cache hits',
+            ['worker_id', 'cache_type'],
+            registry=self.registry
+        )
+        
+        self.cache_misses = Counter(
+            'dynamo_cache_misses_total', 
+            'KV cache misses',
+            ['worker_id', 'cache_type'],
+            registry=self.registry
+        )
+        
+        self.cache_utilization = Gauge(
+            'dynamo_cache_utilization_percent',
+            'Cache utilization percentage',
+            ['worker_id', 'cache_type', 'tier'],
+            registry=self.registry
+        )
+        
+        # Resource metrics
+        self.gpu_utilization = Gauge(
+            'dynamo_gpu_utilization_percent',
+            'GPU utilization percentage',
+            ['worker_id', 'gpu_id', 'gpu_name'],
+            registry=self.registry
+        )
+        
+        self.gpu_memory_usage = Gauge(
+            'dynamo_gpu_memory_usage_bytes',
+            'GPU memory usage in bytes',
+            ['worker_id', 'gpu_id', 'memory_type'],  # memory_type: used, total, free
+            registry=self.registry
+        )
+        
+        self.cpu_utilization = Gauge(
+            'dynamo_cpu_utilization_percent',
+            'CPU utilization percentage',
+            ['worker_id', 'core_id'],
+            registry=self.registry
+        )
+        
+        self.memory_usage = Gauge(
+            'dynamo_memory_usage_bytes',
+            'Memory usage in bytes',
+            ['worker_id', 'memory_type'],  # memory_type: used, available, total
+            registry=self.registry
+        )
+        
+        # Network metrics
+        self.network_bytes = Counter(
+            'dynamo_network_bytes_total',
+            'Network bytes transferred',
+            ['direction', 'interface', 'protocol'],  # direction: sent, received
+            registry=self.registry
+        )
+        
+        self.network_latency = Histogram(
+            'dynamo_network_latency_seconds',
+            'Network latency between components',
+            ['source', 'destination', 'protocol'],
+            buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+            registry=self.registry
+        )
+        
+        # Error metrics
+        self.errors_total = Counter(
+            'dynamo_errors_total',
+            'Total errors by type',
+            ['error_type', 'component', 'severity'],
+            registry=self.registry
+        )
+        
+        # Model metrics
+        self.model_load_time = Histogram(
+            'dynamo_model_load_time_seconds',
+            'Model loading time',
+            ['model', 'engine', 'worker_id'],
+            buckets=[1, 5, 10, 30, 60, 120, 300, 600],
+            registry=self.registry
+        )
+        
+        self.model_inference_time = Histogram(
+            'dynamo_model_inference_time_seconds',
+            'Model inference time',
+            ['model', 'engine', 'batch_size'],
+            buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
+            registry=self.registry
+        )
+    
+    def start_collection(self):
+        """Start metrics collection"""
+        if self.collection_active:
+            return
+        
+        self.collection_active = True
+        self.collection_thread = threading.Thread(target=self._collection_loop)
+        self.collection_thread.daemon = True
+        self.collection_thread.start()
+    
+    def stop_collection(self):
+        """Stop metrics collection"""
+        self.collection_active = False
+        if self.collection_thread and self.collection_thread.is_alive():
+            self.collection_thread.join(timeout=10)
+    
+    def _collection_loop(self):
+        """Main metrics collection loop"""
+        while self.collection_active:
+            try:
+                collection_start = time.time()
+                
+                # Collect system metrics
+                self._collect_system_metrics()
+                
+                # Collect GPU metrics
+                self._collect_gpu_metrics()
+                
+                # Collect custom metrics
+                if self.enable_custom_metrics:
+                    self._collect_custom_metrics()
+                
+                # Update collection statistics
+                collection_time = (time.time() - collection_start) * 1000
+                self.collection_stats["total_collections"] += 1
+                
+                # Update average collection time
+                total_collections = self.collection_stats["total_collections"]
+                current_avg = self.collection_stats["avg_collection_time_ms"]
+                new_avg = ((current_avg * (total_collections - 1)) + collection_time) / total_collections
+                self.collection_stats["avg_collection_time_ms"] = new_avg
+                
+                self.last_collection_time = time.time()
+                
+                # Sleep until next collection
+                time.sleep(self.collection_interval)
+                
+            except Exception as e:
+                self.collection_stats["failed_collections"] += 1
+                self.collection_stats["last_error"] = str(e)
+                logging.error(f"Metrics collection error: {e}")
+                time.sleep(self.collection_interval)
+    
+    def _collect_system_metrics(self):
+        """Collect system-level metrics"""
+        try:
+            # CPU metrics
+            cpu_percent = psutil.cpu_percent(interval=None, percpu=True)
+            for i, cpu_usage in enumerate(cpu_percent):
+                self.cpu_utilization.labels(
+                    worker_id="system",
+                    core_id=str(i)
+                ).set(cpu_usage)
+            
+            # Memory metrics
+            memory = psutil.virtual_memory()
+            self.memory_usage.labels(
+                worker_id="system",
+                memory_type="used"
+            ).set(memory.used)
+            
+            self.memory_usage.labels(
+                worker_id="system", 
+                memory_type="available"
+            ).set(memory.available)
+            
+            self.memory_usage.labels(
+                worker_id="system",
+                memory_type="total"
+            ).set(memory.total)
+            
+            # Network metrics
+            net_io = psutil.net_io_counters()
+            self.network_bytes.labels(
+                direction="sent",
+                interface="total",
+                protocol="all"
+            ).inc(net_io.bytes_sent - getattr(self, '_last_bytes_sent', 0))
+            
+            self.network_bytes.labels(
+                direction="received",
+                interface="total", 
+                protocol="all"
+            ).inc(net_io.bytes_recv - getattr(self, '_last_bytes_recv', 0))
+            
+            # Store for next delta calculation
+            self._last_bytes_sent = net_io.bytes_sent
+            self._last_bytes_recv = net_io.bytes_recv
+            
+        except Exception as e:
+            logging.error(f"System metrics collection error: {e}")
+    
+    def _collect_gpu_metrics(self):
+        """Collect GPU metrics"""
+        try:
+            gpus = GPUtil.getGPUs()
+            for gpu in gpus:
+                # GPU utilization
+                self.gpu_utilization.labels(
+                    worker_id="system",
+                    gpu_id=str(gpu.id),
+                    gpu_name=gpu.name
+                ).set(gpu.load * 100)
+                
+                # GPU memory
+                self.gpu_memory_usage.labels(
+                    worker_id="system",
+                    gpu_id=str(gpu.id),
+                    memory_type="used"
+                ).set(gpu.memoryUsed * 1024 * 1024)  # MB to bytes
+                
+                self.gpu_memory_usage.labels(
+                    worker_id="system",
+                    gpu_id=str(gpu.id),
+                    memory_type="total"
+                ).set(gpu.memoryTotal * 1024 * 1024)  # MB to bytes
+                
+                self.gpu_memory_usage.labels(
+                    worker_id="system", 
+                    gpu_id=str(gpu.id),
+                    memory_type="free"
+                ).set(gpu.memoryFree * 1024 * 1024)  # MB to bytes
+                
+        except Exception as e:
+            logging.error(f"GPU metrics collection error: {e}")
+    
+    def _collect_custom_metrics(self):
+        """Collect custom metrics via callbacks"""
+        for metric_name, callback in self.metric_callbacks.items():
+            try:
+                callback()
+            except Exception as e:
+                logging.error(f"Custom metric {metric_name} collection error: {e}")
+    
+    def register_custom_metric(self, 
+                               definition: MetricDefinition,
+                               callback: Optional[Callable] = None):
+        """Register a custom metric"""
+        
+        if definition.metric_type == MetricType.COUNTER:
+            metric = Counter(
+                definition.name,
+                definition.description,
+                definition.labels,
+                registry=self.registry
+            )
+        elif definition.metric_type == MetricType.GAUGE:
+            metric = Gauge(
+                definition.name,
+                definition.description,
+                definition.labels,
+                registry=self.registry
+            )
+        elif definition.metric_type == MetricType.HISTOGRAM:
+            metric = Histogram(
+                definition.name,
+                definition.description,
+                definition.labels,
+                buckets=definition.buckets or [0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, float('inf')],
+                registry=self.registry
+            )
+        elif definition.metric_type == MetricType.SUMMARY:
+            metric = Summary(
+                definition.name,
+                definition.description,
+                definition.labels,
+                registry=self.registry
+            )
+        else:
+            raise ValueError(f"Unsupported metric type: {definition.metric_type}")
+        
+        self.custom_metrics[definition.name] = metric
+        
+        if callback:
+            self.metric_callbacks[definition.name] = callback
+    
+    def record_request(self,
+                       method: str,
+                       endpoint: str,
+                       status: str,
+                       model: str,
+                       engine: str,
+                       duration: float):
+        """Record a request metric"""
+        self.request_total.labels(
+            method=method,
+            endpoint=endpoint,
+            status=status,
+            model=model,
+            engine=engine
+        ).inc()
+        
+        self.request_duration.labels(
+            method=method,
+            endpoint=endpoint,
+            model=model,
+            engine=engine
+        ).observe(duration)
+    
+    def record_tokens(self,
+                      token_type: str,  # input, output
+                      model: str,
+                      engine: str,
+                      count: int):
+        """Record token processing metrics"""
+        self.tokens_processed.labels(
+            type=token_type,
+            model=model,
+            engine=engine
+        ).inc(count)
+    
+    def record_cache_hit(self,
+                         worker_id: str,
+                         cache_type: str):
+        """Record cache hit"""
+        self.cache_hits.labels(
+            worker_id=worker_id,
+            cache_type=cache_type
+        ).inc()
+    
+    def record_cache_miss(self,
+                          worker_id: str,
+                          cache_type: str):
+        """Record cache miss"""
+        self.cache_misses.labels(
+            worker_id=worker_id,
+            cache_type=cache_type
+        ).inc()
+    
+    def record_error(self,
+                     error_type: str,
+                     component: str,
+                     severity: str):
+        """Record an error"""
+        self.errors_total.labels(
+            error_type=error_type,
+            component=component,
+            severity=severity
+        ).inc()
+    
+    def get_metrics_output(self) -> str:
+        """Get Prometheus format metrics output"""
+        return generate_latest(self.registry).decode('utf-8')
+    
+    def get_collection_stats(self) -> Dict:
+        """Get collection statistics"""
+        return self.collection_stats.copy()
+    
+    def export_metrics(self, format: str = "prometheus") -> str:
+        """Export metrics in specified format"""
+        if format == "prometheus":
+            return self.get_metrics_output()
+        elif format == "json":
+            # Convert Prometheus metrics to JSON (simplified)
+            return json.dumps(self.collection_stats)
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
+
+# Usage
+metrics_collector = DynamoMetricsCollector(collection_interval=15.0)
+
+# Register custom metrics
+custom_metric = MetricDefinition(
+    name="dynamo_queue_length",
+    metric_type=MetricType.GAUGE,
+    description="Current queue length",
+    labels=["worker_id", "queue_type"]
+)
+
+def collect_queue_metrics():
+    # Mock queue length collection
+    queue_length = 42
+    metrics_collector.custom_metrics["dynamo_queue_length"].labels(
+        worker_id="worker-1",
+        queue_type="inference"
+    ).set(queue_length)
+
+metrics_collector.register_custom_metric(custom_metric, collect_queue_metrics)
+
+# Start collection
+metrics_collector.start_collection()
+
+# Record some metrics
+metrics_collector.record_request("POST", "/v1/completions", "200", "llama-8b", "vllm", 0.5)
+metrics_collector.record_tokens("input", "llama-8b", "vllm", 100)
+metrics_collector.record_cache_hit("worker-1", "kv_cache")
+
+# Get metrics output
+# metrics_output = metrics_collector.get_metrics_output()
+# print(metrics_output[:500])  # First 500 characters
+
+# Stop collection
+# metrics_collector.stop_collection()
+```
+
+## Advanced Logging System
+
+### Structured Logging Framework
+```python
+# dynamo_logging.py - Advanced structured logging system
+import logging
+import json
+import time
+import traceback
+import sys
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, asdict
+from enum import Enum
+from datetime import datetime
+import threading
+from collections import deque, defaultdict
+
+class LogLevel(Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+class LogCategory(Enum):
+    REQUEST = "request"
+    RESPONSE = "response"
+    SYSTEM = "system"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    ERROR = "error"
+    AUDIT = "audit"
+
+@dataclass
+class LogContext:
+    """Enhanced log context with structured data"""
+    timestamp: float
+    level: str
+    category: str
+    component: str
+    worker_id: Optional[str] = None
+    request_id: Optional[str] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    model: Optional[str] = None
+    engine: Optional[str] = None
+    
+    # Performance data
+    duration_ms: Optional[float] = None
+    tokens_processed: Optional[int] = None
+    memory_usage_mb: Optional[float] = None
+    gpu_utilization: Optional[float] = None
+    
+    # Additional context
+    tags: Dict[str, str] = None
+    metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.tags is None:
+            self.tags = {}
+        if self.metadata is None:
+            self.metadata = {}
+
+class DynamoLogger:
+    """Advanced structured logger for Dynamo"""
+    
+    def __init__(self,
+                 name: str,
+                 log_level: LogLevel = LogLevel.INFO,
+                 enable_console: bool = True,
+                 enable_file: bool = True,
+                 enable_json: bool = True,
+                 log_file_path: Optional[str] = None,
+                 max_log_size_mb: int = 100,
+                 backup_count: int = 5):
+        
+        self.name = name
+        self.log_level = log_level
+        self.enable_console = enable_console
+        self.enable_file = enable_file
+        self.enable_json = enable_json
+        
+        # Create logger
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(getattr(logging, log_level.value))
+        
+        # Clear existing handlers
+        self.logger.handlers.clear()
+        
+        # Setup handlers
+        self._setup_handlers(log_file_path, max_log_size_mb, backup_count)
+        
+        # Context tracking
+        self._context_stack = threading.local()
+        self._global_context = {}
+        
+        # Log analytics
+        self.log_stats = {
+            "total_logs": 0,
+            "logs_by_level": defaultdict(int),
+            "logs_by_category": defaultdict(int),
+            "error_count": 0,
+            "warning_count": 0,
+        }
+        
+        # Log buffer for analysis
+        self.recent_logs = deque(maxlen=1000)
+        
+        # Performance tracking
+        self.performance_logs = deque(maxlen=500)
+    
+    def _setup_handlers(self, log_file_path: str, max_size_mb: int, backup_count: int):
+        """Setup logging handlers"""
+        
+        # Console handler
+        if self.enable_console:
+            console_handler = logging.StreamHandler(sys.stdout)
+            if self.enable_json:
+                console_handler.setFormatter(JsonFormatter())
+            else:
+                console_handler.setFormatter(StructuredFormatter())
+            self.logger.addHandler(console_handler)
+        
+        # File handler
+        if self.enable_file:
+            from logging.handlers import RotatingFileHandler
+            
+            file_path = log_file_path or f"/var/log/dynamo/{self.name}.log"
+            
+            # Ensure directory exists
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            file_handler = RotatingFileHandler(
+                file_path,
+                maxBytes=max_size_mb * 1024 * 1024,
+                backupCount=backup_count
+            )
+            
+            if self.enable_json:
+                file_handler.setFormatter(JsonFormatter())
+            else:
+                file_handler.setFormatter(StructuredFormatter())
+            
+            self.logger.addHandler(file_handler)
+    
+    def set_context(self, **kwargs):
+        """Set logging context for current thread"""
+        if not hasattr(self._context_stack, 'context'):
+            self._context_stack.context = {}
+        
+        self._context_stack.context.update(kwargs)
+    
+    def clear_context(self):
+        """Clear logging context for current thread"""
+        if hasattr(self._context_stack, 'context'):
+            self._context_stack.context.clear()
+    
+    def set_global_context(self, **kwargs):
+        """Set global logging context"""
+        self._global_context.update(kwargs)
+    
+    def _get_current_context(self) -> Dict[str, Any]:
+        """Get current logging context"""
+        context = self._global_context.copy()
+        
+        if hasattr(self._context_stack, 'context'):
+            context.update(self._context_stack.context)
+        
+        return context
+    
+    def _create_log_record(self,
+                           level: LogLevel,
+                           category: LogCategory,
+                           message: str,
+                           **kwargs) -> LogContext:
+        """Create structured log record"""
+        
+        current_context = self._get_current_context()
+        
+        # Create log context
+        log_context = LogContext(
+            timestamp=time.time(),
+            level=level.value,
+            category=category.value,
+            component=self.name,
+            **current_context
+        )
+        
+        # Add any additional kwargs
+        for key, value in kwargs.items():
+            if hasattr(log_context, key):
+                setattr(log_context, key, value)
+            else:
+                log_context.metadata[key] = value
+        
+        # Store message in metadata
+        log_context.metadata['message'] = message
+        
+        return log_context
+    
+    def _log(self,
+             level: LogLevel,
+             category: LogCategory,
+             message: str,
+             **kwargs):
+        """Internal logging method"""
+        
+        # Create log record
+        log_context = self._create_log_record(level, category, message, **kwargs)
+        
+        # Update statistics
+        self.log_stats["total_logs"] += 1
+        self.log_stats["logs_by_level"][level.value] += 1
+        self.log_stats["logs_by_category"][category.value] += 1
+        
+        if level in [LogLevel.ERROR, LogLevel.CRITICAL]:
+            self.log_stats["error_count"] += 1
+        elif level == LogLevel.WARNING:
+            self.log_stats["warning_count"] += 1
+        
+        # Store in recent logs
+        self.recent_logs.append(log_context)
+        
+        # Store performance logs separately
+        if category == LogCategory.PERFORMANCE:
+            self.performance_logs.append(log_context)
+        
+        # Log using Python logger
+        log_level = getattr(logging, level.value)
+        
+        # Create extra data for formatter
+        extra_data = {
+            'log_context': log_context,
+            'structured_data': asdict(log_context)
+        }
+        
+        self.logger.log(log_level, message, extra=extra_data)
+    
+    # Convenience methods
+    def debug(self, message: str, category: LogCategory = LogCategory.SYSTEM, **kwargs):
+        self._log(LogLevel.DEBUG, category, message, **kwargs)
+    
+    def info(self, message: str, category: LogCategory = LogCategory.SYSTEM, **kwargs):
+        self._log(LogLevel.INFO, category, message, **kwargs)
+    
+    def warning(self, message: str, category: LogCategory = LogCategory.SYSTEM, **kwargs):
+        self._log(LogLevel.WARNING, category, message, **kwargs)
+    
+    def error(self, message: str, category: LogCategory = LogCategory.ERROR, **kwargs):
+        # Add stack trace for errors
+        if 'exception' not in kwargs and 'stack_trace' not in kwargs:
+            kwargs['stack_trace'] = traceback.format_exc()
+        
+        self._log(LogLevel.ERROR, category, message, **kwargs)
+    
+    def critical(self, message: str, category: LogCategory = LogCategory.ERROR, **kwargs):
+        # Add stack trace for critical errors
+        if 'exception' not in kwargs and 'stack_trace' not in kwargs:
+            kwargs['stack_trace'] = traceback.format_exc()
+        
+        self._log(LogLevel.CRITICAL, category, message, **kwargs)
+    
+    # Specialized logging methods
+    def log_request(self,
+                    request_id: str,
+                    method: str,
+                    endpoint: str,
+                    model: str,
+                    user_id: Optional[str] = None,
+                    **kwargs):
+        """Log request start"""
+        self.info(
+            f"Request started: {method} {endpoint}",
+            category=LogCategory.REQUEST,
+            request_id=request_id,
+            model=model,
+            user_id=user_id,
+            method=method,
+            endpoint=endpoint,
+            **kwargs
+        )
+    
+    def log_response(self,
+                     request_id: str,
+                     status_code: int,
+                     duration_ms: float,
+                     tokens_processed: Optional[int] = None,
+                     **kwargs):
+        """Log request completion"""
+        level = LogLevel.INFO if status_code < 400 else LogLevel.ERROR
+        
+        self._log(
+            level,
+            LogCategory.RESPONSE,
+            f"Request completed: {status_code} in {duration_ms:.2f}ms",
+            request_id=request_id,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            tokens_processed=tokens_processed,
+            **kwargs
+        )
+    
+    def log_performance(self,
+                        operation: str,
+                        duration_ms: float,
+                        **kwargs):
+        """Log performance metrics"""
+        self.info(
+            f"Performance: {operation} took {duration_ms:.2f}ms",
+            category=LogCategory.PERFORMANCE,
+            operation=operation,
+            duration_ms=duration_ms,
+            **kwargs
+        )
+    
+    def log_security_event(self,
+                           event_type: str,
+                           severity: str,
+                           details: Dict[str, Any],
+                           **kwargs):
+        """Log security events"""
+        level = LogLevel.WARNING if severity == "medium" else LogLevel.ERROR
+        
+        self._log(
+            level,
+            LogCategory.SECURITY,
+            f"Security event: {event_type}",
+            event_type=event_type,
+            severity=severity,
+            security_details=details,
+            **kwargs
+        )
+    
+    def log_audit(self,
+                  action: str,
+                  resource: str,
+                  user_id: str,
+                  result: str,
+                  **kwargs):
+        """Log audit events"""
+        self.info(
+            f"Audit: {user_id} {action} {resource} -> {result}",
+            category=LogCategory.AUDIT,
+            action=action,
+            resource=resource,
+            user_id=user_id,
+            result=result,
+            **kwargs
+        )
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get logging statistics"""
+        recent_error_rate = 0
+        if self.recent_logs:
+            recent_errors = sum(1 for log in self.recent_logs 
+                                if log.level in ['ERROR', 'CRITICAL'])
+            recent_error_rate = recent_errors / len(self.recent_logs)
+        
+        return {
+            "total_logs": self.log_stats["total_logs"],
+            "logs_by_level": dict(self.log_stats["logs_by_level"]),
+            "logs_by_category": dict(self.log_stats["logs_by_category"]),
+            "recent_error_rate": recent_error_rate,
+            "performance_log_count": len(self.performance_logs),
+            "recent_log_count": len(self.recent_logs)
+        }
+    
+    def search_logs(self,
+                    query: str,
+                    level: Optional[str] = None,
+                    category: Optional[str] = None,
+                    time_range_minutes: Optional[int] = None) -> List[LogContext]:
+        """Search recent logs"""
+        
+        results = []
+        cutoff_time = time.time() - (time_range_minutes * 60) if time_range_minutes else 0
+        
+        for log in self.recent_logs:
+            # Time filter
+            if log.timestamp < cutoff_time:
+                continue
+            
+            # Level filter
+            if level and log.level != level:
+                continue
+            
+            # Category filter
+            if category and log.category != category:
+                continue
+            
+            # Text search in message and metadata
+            message = log.metadata.get('message', '')
+            metadata_text = json.dumps(log.metadata, default=str)
+            
+            if query.lower() in message.lower() or query.lower() in metadata_text.lower():
+                results.append(log)
+        
+        return results[-100:]  # Return last 100 matches
+    
+    def export_logs(self,
+                    format: str = "json",
+                    time_range_minutes: Optional[int] = None) -> str:
+        """Export logs in specified format"""
+        
+        logs_to_export = self.recent_logs
+        
+        if time_range_minutes:
+            cutoff_time = time.time() - (time_range_minutes * 60)
+            logs_to_export = [log for log in self.recent_logs 
+                              if log.timestamp >= cutoff_time]
+        
+        if format == "json":
+            return json.dumps([asdict(log) for log in logs_to_export], indent=2)
+        elif format == "csv":
+            import csv
+            import io
+            
+            output = io.StringIO()
+            if logs_to_export:
+                fieldnames = list(asdict(logs_to_export[0]).keys())
+                writer = csv.DictWriter(output, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for log in logs_to_export:
+                    writer.writerow(asdict(log))
+            
+            return output.getvalue()
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
+
+class JsonFormatter(logging.Formatter):
+    """JSON formatter for structured logs"""
+    
+    def format(self, record):
+        log_data = {
+            'timestamp': datetime.fromtimestamp(record.created).isoformat(),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+        }
+        
+        # Add structured data if available
+        if hasattr(record, 'structured_data'):
+            log_data.update(record.structured_data)
+        
+        # Add exception info if present
+        if record.exc_info:
+            log_data['exception'] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_data, default=str)
+
+class StructuredFormatter(logging.Formatter):
+    """Structured text formatter"""
+    
+    def __init__(self):
+        super().__init__(
+            fmt='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+    
+    def format(self, record):
+        base_format = super().format(record)
+        
+        # Add structured data if available
+        if hasattr(record, 'log_context'):
+            context = record.log_context
+            base_format += f" | category={context.category}"
+            
+            if context.request_id:
+                base_format += f" | request_id={context.request_id}"
+            
+            if context.duration_ms:
+                base_format += f" | duration_ms={context.duration_ms}"
+        
+        return base_format
+
+# Usage example
+logger = DynamoLogger("dynamo-frontend", LogLevel.INFO)
+
+# Set global context
+logger.set_global_context(
+    component="frontend",
+    worker_id="worker-1",
+    version="1.0.0"
+)
+
+# Set request context
+logger.set_context(
+    request_id="req_123",
+    user_id="user_456",
+    model="llama-8b"
+)
+
+# Log various events
+logger.log_request("req_123", "POST", "/v1/completions", "llama-8b", user_id="user_456")
+logger.log_performance("token_generation", 150.5, tokens_processed=100)
+logger.log_response("req_123", 200, 150.5, tokens_processed=100)
+
+# Log errors
+try:
+    raise ValueError("Test error")
+except Exception as e:
+    logger.error("Request processing failed", exception=str(e))
+
+# Get statistics
+stats = logger.get_statistics()
+print(f"Logging statistics: {stats}")
+
+# Search logs
+error_logs = logger.search_logs("error", level="ERROR", time_range_minutes=60)
+print(f"Found {len(error_logs)} error logs")
+```
+
+## Distributed Tracing
+
+### OpenTelemetry Integration
+```python
+# dynamo_tracing.py - Advanced distributed tracing
+from typing import Dict, Optional, Any, List
+import time
+import uuid
+from dataclasses import dataclass, field
+from contextlib import contextmanager
+import threading
+from collections import defaultdict, deque
+from enum import Enum
+
+# OpenTelemetry imports (install: pip install opentelemetry-api opentelemetry-sdk)
+from opentelemetry import trace, context, propagate
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.trace import Status, StatusCode
+from opentelemetry.propagators.b3 import B3MultiFormat
+
+class SpanType(Enum):
+    REQUEST = "request"
+    MODEL_INFERENCE = "model_inference"
+    CACHE_OPERATION = "cache_operation"
+    NETWORK_CALL = "network_call"
+    DATABASE_QUERY = "database_query"
+    SYSTEM_OPERATION = "system_operation"
+
+@dataclass
+class TraceContext:
+    """Enhanced trace context"""
+    trace_id: str
+    span_id: str
+    parent_span_id: Optional[str]
+    baggage: Dict[str, str] = field(default_factory=dict)
+    
+    # Dynamo-specific context
+    request_id: Optional[str] = None
+    user_id: Optional[str] = None
+    model: Optional[str] = None
+    engine: Optional[str] = None
+    worker_id: Optional[str] = None
+
+class DynamoTracer:
+    """Advanced distributed tracing for Dynamo"""
+    
+    def __init__(self,
+                 service_name: str,
+                 service_version: str = "1.0.0",
+                 jaeger_endpoint: Optional[str] = None,
+                 sampling_rate: float = 1.0):
+        
+        self.service_name = service_name
+        self.service_version = service_version
+        self.sampling_rate = sampling_rate
+        
+        # Setup OpenTelemetry
+        self._setup_tracer(jaeger_endpoint)
+        
+        # Trace analytics
+        self.trace_stats = {
+            "total_spans": 0,
+            "spans_by_type": defaultdict(int),
+            "avg_span_duration": 0.0,
+            "error_count": 0,
+        }
+        
+        # Recent traces for analysis
+        self.recent_traces = deque(maxlen=1000)
+        self.active_spans = {}  # span_id -> span_info
+        
+        # Performance tracking
+        self.slow_operations = deque(maxlen=100)  # Track slow operations
+        self.error_traces = deque(maxlen=100)     # Track error traces
+        
+    def _setup_tracer(self, jaeger_endpoint: Optional[str]):
+        """Setup OpenTelemetry tracer"""
+        
+        # Create resource
+        resource = Resource.create({
+            "service.name": self.service_name,
+            "service.version": self.service_version,
+            "deployment.environment": "production"
+        })
+        
+        # Create tracer provider
+        trace.set_tracer_provider(TracerProvider(resource=resource))
+        
+        # Setup exporter (Jaeger)
+        if jaeger_endpoint:
+            jaeger_exporter = JaegerExporter(
+                agent_host_name="localhost",
+                agent_port=14268,
+                collector_endpoint=jaeger_endpoint,
+            )
+            
+            span_processor = BatchSpanProcessor(jaeger_exporter)
+            trace.get_tracer_provider().add_span_processor(span_processor)
+        
+        # Get tracer
+        self.tracer = trace.get_tracer(self.service_name, self.service_version)
+        
+        # Setup propagators
+        propagate.set_global_textmap(B3MultiFormat())
+    
+    def start_trace(self,
+                    operation_name: str,
+                    span_type: SpanType = SpanType.SYSTEM_OPERATION,
+                    parent_context: Optional[context.Context] = None,
+                    **attributes) -> trace.Span:
+        """Start a new trace span"""
+        
+        # Create span
+        with self.tracer.start_as_current_span(
+            operation_name,
+            context=parent_context,
+            kind=trace.SpanKind.SERVER
+        ) as span:
+            
+            # Set standard attributes
+            span.set_attribute("span.type", span_type.value)
+            span.set_attribute("service.name", self.service_name)
+            
+            # Set custom attributes
+            for key, value in attributes.items():
+                span.set_attribute(key, str(value))
+            
+            # Update statistics
+            self.trace_stats["total_spans"] += 1
+            self.trace_stats["spans_by_type"][span_type.value] += 1
+            
+            # Track active span
+            span_id = span.get_span_context().span_id
+            self.active_spans[span_id] = {
+                "start_time": time.time(),
+                "operation_name": operation_name,
+                "span_type": span_type,
+                "attributes": attributes
+            }
+            
+            return span
+    
+    @contextmanager
+    def trace_operation(self,
+                        operation_name: str,
+                        span_type: SpanType = SpanType.SYSTEM_OPERATION,
+                        **attributes):
+        """Context manager for tracing operations"""
+        
+        span = self.start_trace(operation_name, span_type, **attributes)
+        start_time = time.time()
+        
+        try:
+            yield span
+            
+        except Exception as e:
+            # Record error
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            
+            self.trace_stats["error_count"] += 1
+            
+            # Store error trace
+            self.error_traces.append({
+                "operation_name": operation_name,
+                "error": str(e),
+                "timestamp": time.time(),
+                "span_type": span_type.value
+            })
+            
+            raise
+            
+        finally:
+            # Calculate duration
+            duration = time.time() - start_time
+            
+            # Update average duration
+            total_spans = self.trace_stats["total_spans"]
+            current_avg = self.trace_stats["avg_span_duration"]
+            new_avg = ((current_avg * (total_spans - 1)) + duration) / total_spans
+            self.trace_stats["avg_span_duration"] = new_avg
+            
+            # Track slow operations (>1 second)
+            if duration > 1.0:
+                self.slow_operations.append({
+                    "operation_name": operation_name,
+                    "duration": duration,
+                    "timestamp": time.time(),
+                    "span_type": span_type.value,
+                    "attributes": attributes
+                })
+            
+            # Set duration attribute
+            span.set_attribute("duration_ms", duration * 1000)
+            
+            # Clean up active spans
+            span_id = span.get_span_context().span_id
+            if span_id in self.active_spans:
+                del self.active_spans[span_id]
+            
+            # Store trace info
+            self.recent_traces.append({
+                "operation_name": operation_name,
+                "duration": duration,
+                "timestamp": time.time(),
+                "span_type": span_type.value,
+                "success": True  # If we reach here without exception
+            })
+            
+            span.end()
+    
+    def trace_request(self,
+                      request_id: str,
+                      method: str,
+                      endpoint: str,
+                      user_id: Optional[str] = None,
+                      **attributes):
+        """Trace HTTP request"""
+        
+        operation_name = f"{method} {endpoint}"
+        
+        return self.trace_operation(
+            operation_name,
+            SpanType.REQUEST,
+            request_id=request_id,
+            http_method=method,
+            http_endpoint=endpoint,
+            user_id=user_id,
+            **attributes
+        )
+    
+    def trace_model_inference(self,
+                              model: str,
+                              engine: str,
+                              input_tokens: int,
+                              **attributes):
+        """Trace model inference operation"""
+        
+        operation_name = f"inference_{model}"
+        
+        return self.trace_operation(
+            operation_name,
+            SpanType.MODEL_INFERENCE,
+            model=model,
+            engine=engine,
+            input_tokens=input_tokens,
+            **attributes
+        )
+    
+    def trace_cache_operation(self,
+                              operation: str,  # hit, miss, evict, store
+                              cache_type: str,
+                              cache_key: Optional[str] = None,
+                              **attributes):
+        """Trace cache operations"""
+        
+        operation_name = f"cache_{operation}"
+        
+        return self.trace_operation(
+            operation_name,
+            SpanType.CACHE_OPERATION,
+            cache_operation=operation,
+            cache_type=cache_type,
+            cache_key=cache_key,
+            **attributes
+        )
+    
+    def trace_network_call(self,
+                           target_service: str,
+                           method: str,
+                           endpoint: str,
+                           **attributes):
+        """Trace network calls between services"""
+        
+        operation_name = f"{method} {target_service}{endpoint}"
+        
+        return self.trace_operation(
+            operation_name,
+            SpanType.NETWORK_CALL,
+            target_service=target_service,
+            method=method,
+            endpoint=endpoint,
+            **attributes
+        )
+    
+    def inject_context(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Inject trace context into headers"""
+        propagate.inject(headers)
+        return headers
+    
+    def extract_context(self, headers: Dict[str, str]) -> Optional[context.Context]:
+        """Extract trace context from headers"""
+        return propagate.extract(headers)
+    
+    def get_current_trace_context(self) -> Optional[TraceContext]:
+        """Get current trace context"""
+        
+        current_span = trace.get_current_span()
+        if not current_span or not current_span.is_recording():
+            return None
+        
+        span_context = current_span.get_span_context()
+        
+        return TraceContext(
+            trace_id=hex(span_context.trace_id)[2:],  # Remove '0x' prefix
+            span_id=hex(span_context.span_id)[2:],   # Remove '0x' prefix
+            parent_span_id=None  # Would need to track parent separately
+        )
+    
+    def add_span_attributes(self, **attributes):
+        """Add attributes to current span"""
+        current_span = trace.get_current_span()
+        if current_span and current_span.is_recording():
+            for key, value in attributes.items():
+                current_span.set_attribute(key, str(value))
+    
+    def add_span_event(self, name: str, attributes: Optional[Dict[str, str]] = None):
+        """Add event to current span"""
+        current_span = trace.get_current_span()
+        if current_span and current_span.is_recording():
+            current_span.add_event(name, attributes or {})
+    
+    def get_trace_statistics(self) -> Dict[str, Any]:
+        """Get tracing statistics"""
+        
+        slow_ops_by_type = defaultdict(int)
+        for op in self.slow_operations:
+            slow_ops_by_type[op["span_type"]] += 1
+        
+        error_ops_by_type = defaultdict(int)
+        for error in self.error_traces:
+            error_ops_by_type[error["span_type"]] += 1
+        
+        return {
+            "total_spans": self.trace_stats["total_spans"],
+            "spans_by_type": dict(self.trace_stats["spans_by_type"]),
+            "avg_span_duration_ms": self.trace_stats["avg_span_duration"] * 1000,
+            "error_count": self.trace_stats["error_count"],
+            "slow_operations_count": len(self.slow_operations),
+            "slow_operations_by_type": dict(slow_ops_by_type),
+            "error_operations_by_type": dict(error_ops_by_type),
+            "active_spans_count": len(self.active_spans),
+            "recent_traces_count": len(self.recent_traces)
+        }
+    
+    def analyze_performance(self) -> Dict[str, Any]:
+        """Analyze trace performance patterns"""
+        
+        if not self.recent_traces:
+            return {"error": "No trace data available"}
+        
+        # Operation performance analysis
+        operations_perf = defaultdict(list)
+        for trace in self.recent_traces:
+            operations_perf[trace["operation_name"]].append(trace["duration"])
+        
+        perf_analysis = {}
+        for operation, durations in operations_perf.items():
+            if durations:
+                perf_analysis[operation] = {
+                    "count": len(durations),
+                    "avg_duration_ms": (sum(durations) / len(durations)) * 1000,
+                    "max_duration_ms": max(durations) * 1000,
+                    "min_duration_ms": min(durations) * 1000,
+                }
+        
+        # Error rate analysis
+        total_traces = len(self.recent_traces)
+        error_rate = len(self.error_traces) / max(total_traces, 1)
+        
+        return {
+            "performance_by_operation": perf_analysis,
+            "error_rate": error_rate,
+            "slow_operations_threshold_ms": 1000,
+            "slow_operations_count": len(self.slow_operations),
+            "analysis_window_traces": total_traces
+        }
+
+# Usage example
+tracer = DynamoTracer(
+    service_name="dynamo-frontend",
+    service_version="1.0.0",
+    jaeger_endpoint="http://jaeger:14268/api/traces"
+)
+
+# Trace a request
+with tracer.trace_request("req_123", "POST", "/v1/completions", user_id="user_456") as span:
+    # Trace model inference
+    with tracer.trace_model_inference("llama-8b", "vllm", 100) as inference_span:
+        # Simulate inference work
+        time.sleep(0.1)
+        
+        # Add custom attributes
+        tracer.add_span_attributes(
+            batch_size=4,
+            max_tokens=150,
+            temperature=0.7
+        )
+        
+        # Add events
+        tracer.add_span_event("tokenization_complete", {"token_count": "100"})
+        tracer.add_span_event("generation_start")
+    
+    # Trace cache operation
+    with tracer.trace_cache_operation("hit", "kv_cache", cache_key="prefix_123"):
+        time.sleep(0.01)  # Simulate cache lookup
+
+# Get statistics
+stats = tracer.get_trace_statistics()
+print(f"Tracing statistics: {stats}")
+
+# Analyze performance
+perf_analysis = tracer.analyze_performance()
+print(f"Performance analysis: {perf_analysis}")
+```
+
+This comprehensive monitoring, debugging, and troubleshooting guide provides enterprise-grade observability for NVIDIA Dynamo deployments with advanced analytics and diagnostics capabilities.

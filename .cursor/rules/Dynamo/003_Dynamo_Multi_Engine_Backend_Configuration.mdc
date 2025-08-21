@@ -1,0 +1,648 @@
+---
+description: NVIDIA Dynamo Multi-Engine Backend Configuration - Complete guide for vLLM, SGLang, TensorRT-LLM, and LLaMA.cpp backends
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo multi-engine backend configuration and optimization.
+
+## Backend Architecture Overview
+
+NVIDIA Dynamo supports multiple inference engines with a unified orchestration layer, enabling seamless switching and optimization based on workload characteristics.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Dynamo Backend Ecosystem                    │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
+│  │    vLLM     │  │   SGLang    │  │ TensorRT    │  │LLaMA.cpp│  │
+│  │  Backend    │  │  Backend    │  │    -LLM     │  │ Backend │  │
+│  │ (GPU Opt)   │  │ (Research)  │  │ (NVIDIA)    │  │  (CPU)  │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────┘  │
+│         │                │                │              │       │
+│         └────────────────┼────────────────┼──────────────┘       │
+│                          │                │                      │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Dynamo Runtime Layer                          │  │
+│  │  - Service Discovery  - Load Balancing  - Request Routing │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                │                │              │       │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 NATS + etcd                                │  │
+│  │         (Message Bus + Service Registry)                  │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## vLLM Backend Configuration
+
+### Basic vLLM Setup
+```bash
+# Install vLLM-optimized Dynamo
+uv pip install "ai-dynamo[vllm]"
+
+# Basic vLLM worker startup
+python -m dynamo.vllm \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --trust-remote-code \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.9
+```
+
+### Advanced vLLM Configuration
+```bash
+# Multi-GPU vLLM configuration
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m dynamo.vllm \
+  --model meta-llama/Llama-3.1-70B-Instruct \
+  --tensor-parallel-size 4 \
+  --pipeline-parallel-size 1 \
+  --trust-remote-code \
+  --max-model-len 8192 \
+  --block-size 32 \
+  --swap-space 4 \
+  --gpu-memory-utilization 0.85 \
+  --max-num-batched-tokens 8192 \
+  --max-num-seqs 256 \
+  --enable-chunked-prefill \
+  --max-chunked-prefill-tokens 4096
+```
+
+### vLLM Engine Tuning Parameters
+```python
+# Python configuration for vLLM backend
+vllm_config = {
+    # Model Configuration
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "tokenizer": None,  # Auto-detect
+    "tokenizer_mode": "auto",
+    "trust_remote_code": True,
+    "dtype": "auto",  # Uses bfloat16 for newer models
+    "max_model_len": 8192,
+    "guided_decoding_backend": "outlines",
+    
+    # GPU Configuration
+    "tensor_parallel_size": 2,
+    "pipeline_parallel_size": 1,
+    "gpu_memory_utilization": 0.90,
+    "swap_space": 4,  # GiB
+    "block_size": 32,
+    
+    # Performance Tuning
+    "max_num_batched_tokens": 8192,
+    "max_num_seqs": 256,
+    "max_paddings": 256,
+    "enable_chunked_prefill": True,
+    "max_chunked_prefill_tokens": 4096,
+    "use_v2_block_manager": True,
+    "enable_prefix_caching": True,
+    
+    # Scheduling
+    "scheduler_delay_factor": 0.0,
+    "enable_chunked_prefill": True,
+    
+    # Quantization
+    "quantization": None,  # or "awq", "gptq", "squeezellm"
+    "enforce_eager": False,
+    "max_context_len_to_capture": 8192,
+}
+```
+
+## SGLang Backend Configuration
+
+### Basic SGLang Setup
+```bash
+# Install SGLang dependencies
+sudo apt install -y libnuma-dev
+
+# Install SGLang-optimized Dynamo
+uv pip install "ai-dynamo[sglang]"
+
+# Basic SGLang worker startup
+python -m dynamo.sglang.worker \
+  --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B \
+  --trust-remote-code \
+  --mem-fraction-static 0.85 \
+  --enable-torch-compile
+```
+
+### Multi-Node SGLang Configuration
+```bash
+# Node 1 (Prefill)
+python -m dynamo.sglang.worker \
+  --model deepseek-ai/DeepSeek-R1-Distill-Llama-70B \
+  --tp-size 4 \
+  --node-rank 0 \
+  --nnodes 2 \
+  --nproc-per-node 4 \
+  --master-addr 192.168.1.100 \
+  --master-port 12345 \
+  --mem-fraction-static 0.8 \
+  --disable-radix-cache \
+  --chunked-prefill-size 4096
+
+# Node 2 (Decode)  
+python -m dynamo.sglang.worker \
+  --model deepseek-ai/DeepSeek-R1-Distill-Llama-70B \
+  --tp-size 4 \
+  --node-rank 1 \
+  --nnodes 2 \
+  --nproc-per-node 4 \
+  --master-addr 192.168.1.100 \
+  --master-port 12345 \
+  --mem-fraction-static 0.8 \
+  --enable-mixed-chunk \
+  --max-running-requests 512
+```
+
+### SGLang Optimization Parameters
+```python
+# Python configuration for SGLang backend
+sglang_config = {
+    # Model Configuration
+    "model_path": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    "tokenizer_path": None,  # Same as model by default
+    "trust_remote_code": True,
+    "context_length": 32768,
+    "quantization": None,
+    
+    # Memory Management
+    "mem_fraction_static": 0.85,
+    "max_running_requests": 2048,
+    "max_total_tokens": 163840,
+    "chunked_prefill_size": 4096,
+    "max_prefill_tokens": 16384,
+    
+    # Performance Features
+    "enable_torch_compile": True,
+    "disable_radix_cache": False,
+    "enable_mixed_chunk": True,
+    "dp_size": 1,
+    "tp_size": 2,
+    
+    # Advanced Features
+    "attention_reduce_in_fp32": False,
+    "random_seed": 42,
+    "log_level": "info",
+    "disable_log_stats": False,
+    "show_time_cost": True,
+}
+```
+
+## TensorRT-LLM Backend Configuration
+
+### Prerequisites for TensorRT-LLM
+```bash
+# Use NGC PyTorch container (recommended)
+docker run --gpus all -it --shm-size=1g --ulimit memlock=-1 \
+  nvcr.io/nvidia/pytorch:25.05-py3 bash
+
+# Install prerequisites
+uv pip install torch==2.7.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip install "cuda-python>=12,<13"
+sudo apt-get install -y libopenmpi-dev
+
+# Install TensorRT-LLM Dynamo
+uv pip install "ai-dynamo[trtllm]"
+```
+
+### TensorRT-LLM Engine Building
+```bash
+# Build TensorRT-LLM engine for Llama model
+python -m dynamo.trtllm.build \
+  --model_path meta-llama/Llama-3.1-8B-Instruct \
+  --output_dir /models/llama-3.1-8b-trt \
+  --dtype float16 \
+  --max_input_len 2048 \
+  --max_output_len 1024 \
+  --max_batch_size 8 \
+  --max_beam_width 1 \
+  --use_gpt_attention_plugin \
+  --use_gemm_plugin \
+  --use_layernorm_plugin \
+  --enable_context_fmha \
+  --paged_kv_cache enable
+```
+
+### TensorRT-LLM Worker Configuration
+```bash
+# Single-GPU TensorRT-LLM worker
+python -m dynamo.trtllm \
+  --engine-dir /models/llama-3.1-8b-trt \
+  --tokenizer meta-llama/Llama-3.1-8B-Instruct \
+  --max-attention-window-size 4096 \
+  --sink-token-length 4 \
+  --max-batch-size 8 \
+  --max-input-len 2048 \
+  --max-output-len 1024
+
+# Multi-GPU TensorRT-LLM with pipeline parallelism
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m dynamo.trtllm \
+  --engine-dir /models/llama-3.1-70b-trt-pp4 \
+  --tokenizer meta-llama/Llama-3.1-70B-Instruct \
+  --world-size 4 \
+  --tp-size 1 \
+  --pp-size 4 \
+  --max-batch-size 16 \
+  --max-input-len 4096 \
+  --max-output-len 2048 \
+  --enable-chunked-context \
+  --streaming-llm-param sink_token_length:4,window_size:2048
+```
+
+### TensorRT-LLM Configuration Parameters
+```python
+# TensorRT-LLM backend configuration
+trtllm_config = {
+    # Engine Configuration
+    "engine_dir": "/models/llama-3.1-8b-trt",
+    "tokenizer_dir": "meta-llama/Llama-3.1-8B-Instruct",
+    "tokenizer_type": "auto",
+    
+    # Runtime Configuration
+    "max_batch_size": 16,
+    "max_input_len": 4096,
+    "max_output_len": 2048,
+    "max_attention_window_size": 4096,
+    "sink_token_length": 4,
+    
+    # Multi-GPU Setup
+    "world_size": 2,
+    "tp_size": 2,  # Tensor parallelism
+    "pp_size": 1,  # Pipeline parallelism
+    
+    # Advanced Features
+    "enable_chunked_context": True,
+    "enable_trt_overlap": True,
+    "exclude_input_in_output": True,
+    "streaming_llm": True,
+    
+    # Performance Tuning
+    "max_tokens_in_paged_kv_cache": 16384,
+    "kv_cache_free_gpu_mem_fraction": 0.9,
+    "enable_kv_cache_reuse": True,
+    "normalize_log_probs": True,
+}
+```
+
+## Multi-Engine Deployment Strategies
+
+### Engine Selection by Workload
+```python
+# Dynamic engine selection based on request characteristics
+def select_optimal_engine(request_params):
+    """Select best engine based on request characteristics"""
+    
+    input_length = len(request_params.get('prompt', ''))
+    max_tokens = request_params.get('max_tokens', 100)
+    batch_size = request_params.get('batch_size', 1)
+    requires_streaming = request_params.get('stream', False)
+    
+    # Decision matrix
+    if input_length > 8192:  # Long context
+        return "sglang"  # Best for long contexts
+    elif max_tokens < 50 and batch_size > 16:  # Short generation, high throughput
+        return "vllm"    # Best for batched short generation
+    elif requires_streaming and input_length < 2048:  # Real-time streaming
+        return "trtllm"  # Lowest latency
+    else:
+        return "vllm"    # Default choice for balanced workloads
+
+# Route requests to appropriate backends
+engines = {
+    'vllm': 'nats://vllm-workers',
+    'sglang': 'nats://sglang-workers', 
+    'trtllm': 'nats://trtllm-workers'
+}
+```
+
+### Load Balancing Configuration
+```yaml
+# Docker Compose for multi-engine deployment
+version: '3.8'
+services:
+  # vLLM workers for general workloads
+  vllm-worker-1:
+    image: dynamo:vllm-latest
+    command: python -m dynamo.vllm --model meta-llama/Llama-3.1-8B-Instruct
+    environment:
+      - DYNAMO_WORKER_ID=vllm-1
+      - DYNAMO_ENGINE_TYPE=vllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+    
+  vllm-worker-2:
+    image: dynamo:vllm-latest 
+    command: python -m dynamo.vllm --model meta-llama/Llama-3.1-8B-Instruct
+    environment:
+      - DYNAMO_WORKER_ID=vllm-2
+      - DYNAMO_ENGINE_TYPE=vllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+
+  # SGLang workers for long-context workloads
+  sglang-worker-1:
+    image: dynamo:sglang-latest
+    command: python -m dynamo.sglang.worker --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+    environment:
+      - DYNAMO_WORKER_ID=sglang-1
+      - DYNAMO_ENGINE_TYPE=sglang
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+
+  # TensorRT-LLM workers for low-latency workloads
+  trtllm-worker-1:
+    image: dynamo:trtllm-latest
+    command: python -m dynamo.trtllm --engine-dir /models/llama-trt
+    environment:
+      - DYNAMO_WORKER_ID=trtllm-1
+      - DYNAMO_ENGINE_TYPE=trtllm
+    volumes:
+      - /models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+
+  # Smart frontend with engine selection
+  dynamo-frontend:
+    image: dynamo:latest
+    command: python -m dynamo.frontend --http-port 8080 --enable-smart-routing
+    ports:
+      - "8080:8080"
+    environment:
+      - DYNAMO_ROUTING_STRATEGY=workload_based
+    depends_on:
+      - vllm-worker-1
+      - vllm-worker-2
+      - sglang-worker-1
+      - trtllm-worker-1
+```
+
+## Performance Optimization by Engine
+
+### vLLM Optimization Tips
+```bash
+# Enable all vLLM optimizations
+python -m dynamo.vllm \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --enable-chunked-prefill \
+  --max-chunked-prefill-tokens 4096 \
+  --use-v2-block-manager \
+  --enable-prefix-caching \
+  --kv-cache-dtype auto \
+  --quantization-param-path ./quantization.json \
+  --gpu-memory-utilization 0.95 \
+  --enforce-eager false \
+  --max-model-len 8192 \
+  --block-size 32 \
+  --max-num-batched-tokens 8192 \
+  --max-num-seqs 256
+```
+
+### SGLang Memory Optimization
+```python
+# SGLang memory configuration
+sglang_memory_config = {
+    # Static memory allocation (faster startup)
+    "mem_fraction_static": 0.8,
+    
+    # Dynamic batching parameters
+    "max_running_requests": 1024,
+    "max_total_tokens": 65536,
+    
+    # Chunked prefill for long contexts
+    "chunked_prefill_size": 8192,
+    "max_prefill_tokens": 32768,
+    
+    # Mixed precision and attention
+    "attention_reduce_in_fp32": False,
+    "flashinfer_workspace_size": 256 * 1024 * 1024,  # 256MB
+    
+    # Radix cache for prefix sharing
+    "disable_radix_cache": False,
+    "radix_cache_config": {
+        "enable": True,
+        "max_size": 1024 * 1024 * 1024,  # 1GB
+    }
+}
+```
+
+### TensorRT-LLM Engine Optimization
+```bash
+# Build optimized TensorRT-LLM engine
+python -m dynamo.trtllm.build \
+  --model_path meta-llama/Llama-3.1-8B-Instruct \
+  --output_dir /models/llama-optimized \
+  --dtype float16 \
+  --max_input_len 4096 \
+  --max_output_len 2048 \
+  --max_batch_size 32 \
+  --max_beam_width 1 \
+  --use_gpt_attention_plugin float16 \
+  --use_gemm_plugin float16 \
+  --use_layernorm_plugin float16 \
+  --use_rmsnorm_plugin float16 \
+  --enable_context_fmha \
+  --paged_kv_cache enable \
+  --remove_input_padding enable \
+  --use_custom_all_reduce disable \
+  --multi_block_mode enable \
+  --enable_xqa enable \
+  --tokens_per_block 128 \
+  --max_prompt_embedding_table_size 0 \
+  --gather_context_logits \
+  --gather_generation_logits
+```
+
+## Monitoring and Health Checks
+
+### Engine Health Monitoring
+```python
+# Health check implementation for all engines
+import asyncio
+import aiohttp
+from typing import Dict, List
+
+class EngineHealthMonitor:
+    """Monitor health of all Dynamo backends"""
+    
+    def __init__(self, engines: Dict[str, str]):
+        self.engines = engines
+        self.health_status = {}
+    
+    async def check_engine_health(self, engine_type: str, endpoint: str) -> Dict:
+        """Check health of specific engine"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Send simple completion request
+                test_request = {
+                    "model": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_tokens": 5,
+                    "temperature": 0.1
+                }
+                
+                async with session.post(
+                    f"{endpoint}/v1/chat/completions",
+                    json=test_request,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "status": "healthy",
+                            "response_time": response.headers.get("X-Response-Time"),
+                            "engine": engine_type,
+                            "endpoint": endpoint
+                        }
+                    else:
+                        return {
+                            "status": "unhealthy", 
+                            "error": f"HTTP {response.status}",
+                            "engine": engine_type
+                        }
+                        
+        except asyncio.TimeoutError:
+            return {"status": "timeout", "engine": engine_type}
+        except Exception as e:
+            return {"status": "error", "error": str(e), "engine": engine_type}
+    
+    async def monitor_all_engines(self) -> Dict[str, Dict]:
+        """Monitor all registered engines"""
+        tasks = []
+        for engine_type, endpoint in self.engines.items():
+            task = self.check_engine_health(engine_type, endpoint)
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Update health status
+        for result in results:
+            if isinstance(result, dict) and "engine" in result:
+                self.health_status[result["engine"]] = result
+        
+        return self.health_status
+
+# Usage
+monitor = EngineHealthMonitor({
+    "vllm": "http://localhost:8001",
+    "sglang": "http://localhost:8002", 
+    "trtllm": "http://localhost:8003"
+})
+
+# health_status = asyncio.run(monitor.monitor_all_engines())
+```
+
+### Performance Metrics Collection
+```python
+# Metrics collection for backend performance
+from prometheus_client import Counter, Histogram, Gauge
+import time
+
+# Define metrics
+REQUEST_COUNT = Counter('dynamo_requests_total', 'Total requests', ['engine', 'model', 'status'])
+REQUEST_DURATION = Histogram('dynamo_request_duration_seconds', 'Request duration', ['engine', 'model'])
+ACTIVE_REQUESTS = Gauge('dynamo_active_requests', 'Active requests', ['engine'])
+THROUGHPUT = Gauge('dynamo_throughput_tokens_per_second', 'Throughput in tokens/sec', ['engine'])
+GPU_UTILIZATION = Gauge('dynamo_gpu_utilization_percent', 'GPU utilization', ['engine', 'gpu_id'])
+
+class BackendMetrics:
+    """Collect and expose backend performance metrics"""
+    
+    def __init__(self):
+        self.start_times = {}
+    
+    def record_request_start(self, request_id: str, engine: str, model: str):
+        """Record request start"""
+        self.start_times[request_id] = time.time()
+        ACTIVE_REQUESTS.labels(engine=engine).inc()
+    
+    def record_request_end(self, request_id: str, engine: str, model: str, status: str, token_count: int = 0):
+        """Record request completion"""
+        if request_id in self.start_times:
+            duration = time.time() - self.start_times[request_id]
+            del self.start_times[request_id]
+            
+            REQUEST_COUNT.labels(engine=engine, model=model, status=status).inc()
+            REQUEST_DURATION.labels(engine=engine, model=model).observe(duration)
+            ACTIVE_REQUESTS.labels(engine=engine).dec()
+            
+            if token_count > 0 and duration > 0:
+                throughput = token_count / duration
+                THROUGHPUT.labels(engine=engine).set(throughput)
+
+# Integrate with backends
+metrics = BackendMetrics()
+```
+
+## Troubleshooting Common Issues
+
+### Engine-Specific Issues
+
+#### vLLM Issues
+```bash
+# OOM errors
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+python -m dynamo.vllm --gpu-memory-utilization 0.8
+
+# Slow tokenization
+python -m dynamo.vllm --tokenizer-mode auto --trust-remote-code
+
+# Context length issues  
+python -m dynamo.vllm --max-model-len 4096 --enable-chunked-prefill
+```
+
+#### SGLang Issues
+```bash
+# Memory allocation issues
+python -m dynamo.sglang.worker --mem-fraction-static 0.7
+
+# Compilation errors
+python -m dynamo.sglang.worker --disable-torch-compile
+
+# Multi-node connectivity
+python -m dynamo.sglang.worker --master-addr 0.0.0.0 --master-port 29500
+```
+
+#### TensorRT-LLM Issues
+```bash
+# Engine build failures
+python -m dynamo.trtllm.build --dtype float16 --verbose
+
+# Runtime shape mismatches
+python -m dynamo.trtllm --max-input-len 2048 --max-output-len 1024
+
+# Multi-GPU issues
+python -m dynamo.trtllm --world-size 2 --tp-size 2 --pp-size 1
+```
+
+### Cross-Engine Compatibility
+```bash
+# Ensure consistent model formats
+python -m dynamo.model.convert \
+  --source-engine vllm \
+  --target-engine trtllm \
+  --model-path meta-llama/Llama-3.1-8B-Instruct \
+  --output-path /models/converted
+
+# Validate engine compatibility
+python -m dynamo.validate \
+  --engines vllm,sglang,trtllm \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --test-prompts prompts.jsonl
+```
+
+This comprehensive backend configuration guide enables optimal performance across all supported NVIDIA Dynamo inference engines.

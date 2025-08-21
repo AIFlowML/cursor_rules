@@ -1,0 +1,510 @@
+---
+description: NVIDIA Dynamo Docker Container Management - Complete containerization strategy for development and production
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo Docker containerization and container orchestration.
+
+## Container Architecture Overview
+
+NVIDIA Dynamo provides sophisticated Docker container support for both development and production deployments with multi-stage builds and optimized runtime environments.
+
+### Container Structure
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Dynamo Container                         │
+├─────────────────────────────────────────────────────────────────┤
+│  Base Image: nvidia/cuda-dl-base:25.01-cuda12.8-devel-ubuntu   │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│  │   Build Stage   │  │  Runtime Stage  │  │   Dev Stage     │  │
+│  │  - Rust Build   │  │  - Python Env   │  │  - Debug Tools  │  │
+│  │  - NIXL Build   │  │  - Dynamo Core  │  │  - Dev Deps     │  │
+│  │  - UCX Build    │  │  - Engine Deps  │  │  - Source Mount │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Base Container Images
+
+### Official Dynamo Image
+```bash
+# Pull official pre-built image
+docker pull nvcr.io/nvidia/dynamo:latest
+
+# Pull specific engine variants
+docker pull nvcr.io/nvidia/dynamo:vllm-latest
+docker pull nvcr.io/nvidia/dynamo:sglang-latest  
+docker pull nvcr.io/nvidia/dynamo:trtllm-latest
+```
+
+### Building from Source
+```dockerfile
+# Build multi-arch container
+docker build \
+  --build-arg ARCH=amd64 \
+  --build-arg ARCH_ALT=x86_64 \
+  --build-arg RELEASE_BUILD=true \
+  --target dev \
+  -t dynamo:dev-amd64 \
+  -f container/Dockerfile .
+
+# Build ARM64 variant
+docker build \
+  --build-arg ARCH=arm64 \
+  --build-arg ARCH_ALT=aarch64 \
+  --build-arg RELEASE_BUILD=true \
+  --target dev \
+  -t dynamo:dev-arm64 \
+  -f container/Dockerfile .
+```
+
+## Container Configuration
+
+### Environment Variables
+```bash
+# Core Dynamo configuration
+export DYNAMO_HOME=/opt/dynamo
+export CARGO_TARGET_DIR=/opt/dynamo/target
+export PYTHONPATH=/opt/dynamo:$PYTHONPATH
+
+# NVIDIA runtime configuration
+export NVIDIA_VISIBLE_DEVICES=all
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+# Network configuration
+export DYNAMO_NATS_URL=nats://nats-server:4222
+export DYNAMO_ETCD_ENDPOINTS=http://etcd-server:2379
+
+# Logging configuration
+export DYN_LOG=info
+export RUST_LOG=dynamo=debug
+```
+
+### Volume Mounts
+```bash
+# Model cache volume
+docker volume create dynamo-models
+
+# Data persistence volume  
+docker volume create dynamo-data
+
+# Configuration volume
+docker volume create dynamo-config
+
+# Log volume
+docker volume create dynamo-logs
+```
+
+## Docker Compose Deployments
+
+### Development Stack
+```yaml
+# docker-compose.dev.yml
+version: '3.8'
+
+networks:
+  dynamo-network:
+    driver: bridge
+
+volumes:
+  dynamo-models:
+  dynamo-data:
+  dynamo-config:
+
+services:
+  etcd:
+    image: bitnami/etcd:3.6.1
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+    ports:
+      - "2379:2379"
+    networks:
+      - dynamo-network
+
+  nats:
+    image: nats:2.11.4  
+    command: ["-js", "--trace", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - dynamo-network
+
+  dynamo-dev:
+    build:
+      context: .
+      dockerfile: container/Dockerfile
+      target: dev
+      args:
+        - RELEASE_BUILD=false
+        - ENABLE_KVBM=true
+    volumes:
+      - dynamo-models:/opt/dynamo/models
+      - dynamo-data:/opt/dynamo/data
+      - dynamo-config:/opt/dynamo/config
+      - .:/opt/dynamo/src:ro
+    environment:
+      - DYNAMO_NATS_URL=nats://nats:4222
+      - DYNAMO_ETCD_ENDPOINTS=http://etcd:2379
+      - CUDA_VISIBLE_DEVICES=all
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - dynamo-network
+    depends_on:
+      - etcd
+      - nats
+```
+
+### Production Stack
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+
+networks:
+  dynamo-network:
+    external: true
+
+services:
+  dynamo-frontend:
+    image: nvcr.io/nvidia/dynamo:latest
+    command: python -m dynamo.frontend --http-port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      - DYNAMO_NATS_URL=nats://nats-cluster:4222
+      - DYNAMO_ETCD_ENDPOINTS=http://etcd-cluster:2379
+      - DYN_LOG=warn
+    networks:
+      - dynamo-network
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  dynamo-worker-vllm:
+    image: nvcr.io/nvidia/dynamo:vllm-latest
+    command: python -m dynamo.vllm --model meta-llama/Llama-3.1-8B-Instruct
+    environment:
+      - DYNAMO_NATS_URL=nats://nats-cluster:4222
+      - DYNAMO_ETCD_ENDPOINTS=http://etcd-cluster:2379
+      - CUDA_VISIBLE_DEVICES=0,1
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+      restart_policy:
+        condition: on-failure
+    networks:
+      - dynamo-network
+```
+
+## Container Runtime Management
+
+### Development Containers
+```bash
+# Start development environment
+docker compose -f docker-compose.dev.yml up -d
+
+# Access development shell
+docker compose -f docker-compose.dev.yml exec dynamo-dev bash
+
+# Live development with mounted source
+docker run -it \
+  --runtime nvidia \
+  -v $(pwd):/opt/dynamo/src \
+  -v dynamo-models:/opt/dynamo/models \
+  -p 8080:8080 \
+  dynamo:dev-amd64 bash
+```
+
+### Production Containers
+```bash
+# Deploy production stack
+docker compose -f docker-compose.prod.yml up -d
+
+# Scale workers dynamically
+docker compose -f docker-compose.prod.yml up -d --scale dynamo-worker-vllm=4
+
+# Rolling updates
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-deps dynamo-frontend
+```
+
+### Health Check Implementation
+```bash
+# Container health check script
+#!/bin/bash
+# /opt/dynamo/healthcheck.sh
+
+# Check NATS connectivity
+python -c "
+import nats
+import asyncio
+
+async def check():
+    try:
+        nc = await nats.connect('${DYNAMO_NATS_URL}')
+        await nc.close()
+        print('NATS: OK')
+        return True
+    except:
+        print('NATS: FAILED')
+        return False
+
+asyncio.run(check())
+" || exit 1
+
+# Check etcd connectivity
+python -c "
+import etcd3
+try:
+    client = etcd3.client(host='etcd', port=2379)
+    client.get('health')
+    print('etcd: OK')
+except:
+    print('etcd: FAILED')
+    exit(1)
+" || exit 1
+
+# Check GPU availability (if required)
+if [ "$CUDA_VISIBLE_DEVICES" != "" ]; then
+    nvidia-smi --query-gpu=name --format=csv,noheader,nounits > /dev/null || exit 1
+    echo "GPU: OK"
+fi
+
+echo "Health check: PASSED"
+```
+
+## Multi-Node Container Deployment
+
+### Docker Swarm Configuration
+```bash
+# Initialize Docker Swarm
+docker swarm init --advertise-addr $(hostname -I | awk '{print $1}')
+
+# Join worker nodes
+docker swarm join --token SWMTKN-xxx manager-ip:2377
+
+# Deploy stack across cluster
+docker stack deploy -c docker-compose.swarm.yml dynamo-cluster
+```
+
+### Kubernetes Deployment
+```yaml
+# dynamo-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamo-frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: dynamo-frontend
+  template:
+    metadata:
+      labels:
+        app: dynamo-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: nvcr.io/nvidia/dynamo:latest
+        command: ["python", "-m", "dynamo.frontend"]
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DYNAMO_NATS_URL
+          value: "nats://nats-service:4222"
+        - name: DYNAMO_ETCD_ENDPOINTS  
+          value: "http://etcd-service:2379"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+---
+apiVersion: apps/v1
+kind: Deployment  
+metadata:
+  name: dynamo-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dynamo-worker
+  template:
+    metadata:
+      labels:
+        app: dynamo-worker
+    spec:
+      containers:
+      - name: worker
+        image: nvcr.io/nvidia/dynamo:vllm-latest
+        command: ["python", "-m", "dynamo.vllm"]
+        args: ["--model", "meta-llama/Llama-3.1-8B-Instruct"]
+        env:
+        - name: DYNAMO_NATS_URL
+          value: "nats://nats-service:4222"
+        - name: DYNAMO_ETCD_ENDPOINTS
+          value: "http://etcd-service:2379"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            memory: "16Gi"
+          limits:
+            nvidia.com/gpu: 1
+            memory: "24Gi"
+```
+
+## Container Optimization
+
+### Build Optimization
+```dockerfile
+# Optimized multi-stage Dockerfile
+FROM nvidia/cuda-dl-base:25.01-cuda12.8-devel-ubuntu24.04 AS base
+
+# Use build cache for dependencies
+RUN --mount=type=cache,target=/var/cache/apt \
+    apt-get update && apt-get install -y \
+    build-essential cmake git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Cache Rust dependencies
+FROM base AS rust-deps
+COPY Cargo.toml Cargo.lock ./
+RUN cargo fetch
+
+# Cache Python dependencies  
+FROM base AS python-deps
+COPY requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# Final build stage
+FROM base AS final
+COPY --from=rust-deps /usr/local/cargo /usr/local/cargo
+COPY --from=python-deps /usr/local/lib/python3.12 /usr/local/lib/python3.12
+```
+
+### Runtime Optimization
+```bash
+# Optimize container startup time
+docker run \
+  --runtime nvidia \
+  --shm-size=2g \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -e PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
+  dynamo:optimized
+
+# Use memory-mapped volumes for model sharing
+docker run \
+  --runtime nvidia \
+  -v /models:/models:ro \
+  -v /tmp/dynamo-cache:/tmp/dynamo-cache:rw \
+  --tmpfs /tmp/working:rw,size=1G \
+  dynamo:latest
+```
+
+## Monitoring and Logging
+
+### Container Metrics Collection
+```yaml
+# Add monitoring to docker-compose
+version: '3.8'
+services:
+  dynamo-worker:
+    # ... other config
+    labels:
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=9090" 
+      - "prometheus.io/path=/metrics"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=dynamo
+```
+
+### Log Aggregation
+```bash
+# Centralized logging with ELK stack
+docker run -d \
+  --name filebeat \
+  --user root \
+  --volume="$(pwd)/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro" \
+  --volume="/var/lib/docker/containers:/var/lib/docker/containers:ro" \
+  --volume="/var/run/docker.sock:/var/run/docker.sock:ro" \
+  elastic/filebeat:8.5.0
+```
+
+## Troubleshooting Containers
+
+### Common Container Issues
+```bash
+# Check container resource usage
+docker stats dynamo-frontend dynamo-worker
+
+# Debug container startup issues
+docker logs --follow --tail 100 dynamo-worker
+
+# Access container shell for debugging
+docker exec -it dynamo-worker bash
+
+# Check GPU accessibility in container
+docker exec dynamo-worker nvidia-smi
+
+# Verify network connectivity between containers
+docker exec dynamo-frontend ping nats-server
+docker exec dynamo-frontend ping etcd-server
+```
+
+### Container Cleanup
+```bash
+# Clean up stopped containers
+docker container prune -f
+
+# Remove unused images
+docker image prune -f
+
+# Clean up volumes
+docker volume prune -f
+
+# Complete system cleanup
+docker system prune -af --volumes
+```
+
+This comprehensive container management guide ensures efficient, scalable, and maintainable Dynamo deployments across all environments.

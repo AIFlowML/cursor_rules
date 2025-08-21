@@ -1,0 +1,1043 @@
+---
+description: NVIDIA Dynamo KV Cache Management (KVBM) - Advanced memory management and offloading strategies for optimal performance
+alwaysApply: false
+---
+
+> You are an expert in NVIDIA Dynamo KV Cache Block Manager (KVBM) and advanced memory management strategies.
+
+## KVBM Architecture Overview
+
+The KV Cache Block Manager (KVBM) is Dynamo's intelligent memory management system that optimizes KV cache storage across multiple memory tiers for maximum throughput and minimal latency.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    KVBM Memory Hierarchy                       │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
+│  │   L1 Cache  │───►│   L2 Cache  │───►│   L3 Cache  │         │
+│  │ GPU HBM     │    │ System RAM  │    │  NVMe SSD   │         │
+│  │ (Fastest)   │    │ (Medium)    │    │ (Storage)   │         │
+│  │ ~40GB       │    │ ~500GB      │    │ ~10TB       │         │
+│  └─────────────┘    └─────────────┘    └─────────────┘         │
+│         │                   │                   │               │
+│         └───────────────────┼───────────────────┘               │
+│                             │                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              KV Cache Block Manager                         │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐           │  │
+│  │  │   Radix     │ │  Eviction   │ │ Prefetching │           │  │
+│  │  │    Tree     │ │  Policy     │ │  Strategy   │           │  │
+│  │  │ (Global)    │ │   (LRU+)    │ │ (Semantic)  │           │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘           │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│         │                   │                   │               │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 NIXL Transfer Engine                        │  │
+│  │      (High-speed data movement between tiers)              │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## KVBM Configuration and Setup
+
+### Basic KVBM Enablement
+```bash
+# Enable KVBM in Dynamo build
+docker build --build-arg ENABLE_KVBM=true -t dynamo:kvbm .
+
+# Install KVBM-enabled Dynamo
+uv pip install "ai-dynamo[kvbm]"
+
+# Verify KVBM availability
+python -c "
+import dynamo
+print('KVBM available:', hasattr(dynamo, 'kvbm'))
+"
+```
+
+### KVBM Configuration Parameters
+```python
+# kvbm_config.py - Comprehensive KVBM configuration
+kvbm_config = {
+    # Memory Tier Configuration
+    "memory_tiers": {
+        "gpu_memory": {
+            "enabled": True,
+            "max_size_gb": 40,  # GPU HBM capacity
+            "priority": 1,      # Highest priority (fastest)
+            "allocation_strategy": "eager",
+        },
+        "system_memory": {
+            "enabled": True,
+            "max_size_gb": 500,  # System RAM for KV cache
+            "priority": 2,       # Medium priority
+            "allocation_strategy": "lazy",
+        },
+        "nvme_storage": {
+            "enabled": True,
+            "max_size_gb": 10000,  # NVMe SSD storage
+            "priority": 3,         # Lowest priority (storage)
+            "path": "/fast/kv_cache",
+            "allocation_strategy": "on_demand",
+        }
+    },
+    
+    # Block Management Configuration
+    "block_manager": {
+        "block_size": 512,        # KV cache block size in tokens
+        "prefetch_window": 1024,  # Tokens to prefetch ahead
+        "eviction_policy": "lru_with_semantic_hints",
+        "compression_enabled": True,
+        "compression_algorithm": "lz4",
+    },
+    
+    # Global Radix Tree Configuration
+    "radix_tree": {
+        "enabled": True,
+        "max_nodes": 1000000,     # Maximum tree nodes
+        "node_cache_size": 10000, # In-memory node cache
+        "persistence_enabled": True,
+        "persistence_path": "/data/radix_tree",
+    },
+    
+    # Eviction Policy Configuration
+    "eviction": {
+        "policy": "lru_with_recency_bias",
+        "semantic_hints_enabled": True,
+        "temperature_based": True,  # Consider request temperature
+        "frequency_threshold": 5,   # Min access count for retention
+        "recency_weight": 0.7,     # Weight for recent access
+        "frequency_weight": 0.3,   # Weight for access frequency
+    },
+    
+    # Prefetching Strategy
+    "prefetching": {
+        "enabled": True,
+        "strategy": "semantic_prediction",
+        "lookahead_tokens": 2048,
+        "confidence_threshold": 0.8,
+        "max_concurrent_prefetch": 4,
+        "prefetch_on_pattern_match": True,
+    },
+    
+    # NIXL Transfer Configuration
+    "nixl": {
+        "enabled": True,
+        "batch_size": 64,          # Blocks per transfer batch
+        "async_transfers": True,
+        "compression_in_flight": True,
+        "transport_protocol": "rdma",  # rdma, tcp, or auto
+    },
+    
+    # Performance Monitoring
+    "monitoring": {
+        "enabled": True,
+        "metrics_interval": 30,    # Seconds
+        "detailed_tracing": False,
+        "export_to_prometheus": True,
+    },
+    
+    # Debug and Development
+    "debug": {
+        "log_level": "info",       # debug, info, warn, error
+        "trace_cache_hits": False,
+        "dump_statistics": True,
+        "statistics_interval": 300, # Seconds
+    }
+}
+```
+
+### KVBM Runtime Configuration
+```bash
+# Start vLLM worker with KVBM enabled
+python -m dynamo.vllm \
+  --model meta-llama/Llama-3.1-70B-Instruct \
+  --enable-kvbm \
+  --kvbm-gpu-memory-gb 40 \
+  --kvbm-system-memory-gb 500 \
+  --kvbm-nvme-path /fast/kv_cache \
+  --kvbm-nvme-size-gb 10000 \
+  --kvbm-block-size 512 \
+  --kvbm-eviction-policy lru_semantic \
+  --kvbm-prefetch-enabled \
+  --kvbm-compression lz4
+
+# Start SGLang worker with advanced KVBM
+python -m dynamo.sglang.worker \
+  --model deepseek-ai/DeepSeek-R1-Distill-Llama-70B \
+  --enable-kvbm \
+  --kvbm-config-path /config/kvbm_advanced.yaml \
+  --kvbm-radix-tree-enabled \
+  --kvbm-semantic-prefetch \
+  --kvbm-nixl-transport rdma
+```
+
+## Advanced Memory Management
+
+### Semantic-Aware Eviction Policy
+```python
+# semantic_eviction.py - Advanced eviction with semantic understanding
+from typing import Dict, List, Tuple, Optional
+import time
+import json
+import numpy as np
+from dataclasses import dataclass
+
+@dataclass
+class KVCacheBlock:
+    """Represents a KV cache block with metadata"""
+    block_id: str
+    tokens: List[int]
+    access_count: int
+    last_access_time: float
+    creation_time: float
+    semantic_embedding: Optional[np.ndarray]
+    temperature: float  # Request temperature when created
+    model_name: str
+    context_length: int
+    is_prefetch: bool
+
+class SemanticEvictionPolicy:
+    """Advanced eviction policy with semantic awareness"""
+    
+    def __init__(self, 
+                 recency_weight: float = 0.4,
+                 frequency_weight: float = 0.3,
+                 semantic_weight: float = 0.3,
+                 temperature_bias: float = 0.1):
+        
+        self.recency_weight = recency_weight
+        self.frequency_weight = frequency_weight
+        self.semantic_weight = semantic_weight
+        self.temperature_bias = temperature_bias
+        
+        # Semantic similarity cache
+        self.embedding_cache = {}
+        self.similarity_threshold = 0.85
+        
+        # Usage pattern tracking
+        self.access_patterns = {}
+        self.pattern_decay = 0.95
+    
+    def calculate_eviction_score(self, block: KVCacheBlock, current_context: str = "") -> float:
+        """Calculate eviction score (higher = more likely to evict)"""
+        
+        current_time = time.time()
+        
+        # Recency component (age-based)
+        age_seconds = current_time - block.last_access_time
+        age_hours = age_seconds / 3600.0
+        recency_score = min(age_hours / 24.0, 1.0)  # Normalize to 24 hours
+        
+        # Frequency component (access count)
+        # Normalize access count with log scaling
+        frequency_score = 1.0 / (1.0 + np.log1p(block.access_count))
+        
+        # Semantic similarity component
+        semantic_score = 0.5  # Default neutral score
+        if block.semantic_embedding is not None and current_context:
+            context_embedding = self._get_context_embedding(current_context)
+            if context_embedding is not None:
+                similarity = self._cosine_similarity(
+                    block.semantic_embedding, 
+                    context_embedding
+                )
+                # Higher similarity = lower eviction score
+                semantic_score = 1.0 - similarity
+        
+        # Temperature-based adjustment
+        # Higher temperature requests are more likely to be evicted
+        temperature_score = block.temperature / 2.0  # Normalize assuming max temp = 2.0
+        
+        # Combine all factors
+        total_score = (
+            self.recency_weight * recency_score +
+            self.frequency_weight * frequency_score +
+            self.semantic_weight * semantic_score +
+            self.temperature_bias * temperature_score
+        )
+        
+        return total_score
+    
+    def select_eviction_candidates(self, 
+                                   blocks: List[KVCacheBlock],
+                                   num_to_evict: int,
+                                   current_context: str = "") -> List[KVCacheBlock]:
+        """Select blocks for eviction based on scoring"""
+        
+        # Calculate scores for all blocks
+        block_scores = []
+        for block in blocks:
+            score = self.calculate_eviction_score(block, current_context)
+            block_scores.append((block, score))
+        
+        # Sort by eviction score (highest first)
+        block_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Apply semantic clustering to avoid evicting similar blocks
+        eviction_candidates = []
+        remaining_blocks = [bs[0] for bs in block_scores]
+        
+        while len(eviction_candidates) < num_to_evict and remaining_blocks:
+            # Select highest scoring block
+            candidate = remaining_blocks.pop(0)
+            eviction_candidates.append(candidate)
+            
+            # Remove semantically similar blocks from immediate consideration
+            remaining_blocks = self._filter_similar_blocks(
+                remaining_blocks, candidate
+            )
+        
+        return eviction_candidates[:num_to_evict]
+    
+    def _get_context_embedding(self, context: str) -> Optional[np.ndarray]:
+        """Get or compute embedding for context"""
+        if context in self.embedding_cache:
+            return self.embedding_cache[context]
+        
+        # In a real implementation, this would use a sentence transformer
+        # For now, return a mock embedding
+        embedding = np.random.rand(768)  # Mock 768-dim embedding
+        self.embedding_cache[context] = embedding
+        return embedding
+    
+    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        """Calculate cosine similarity between embeddings"""
+        dot_product = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        
+        return dot_product / (norm_a * norm_b)
+    
+    def _filter_similar_blocks(self, 
+                               blocks: List[KVCacheBlock], 
+                               reference: KVCacheBlock) -> List[KVCacheBlock]:
+        """Filter out blocks too similar to reference"""
+        filtered = []
+        
+        for block in blocks:
+            if (block.semantic_embedding is not None and 
+                reference.semantic_embedding is not None):
+                
+                similarity = self._cosine_similarity(
+                    block.semantic_embedding,
+                    reference.semantic_embedding
+                )
+                
+                if similarity < self.similarity_threshold:
+                    filtered.append(block)
+            else:
+                filtered.append(block)
+        
+        return filtered
+
+# Usage example
+policy = SemanticEvictionPolicy()
+blocks = []  # List of KVCacheBlock objects
+candidates = policy.select_eviction_candidates(blocks, num_to_evict=10)
+```
+
+### Intelligent Prefetching System
+```python
+# intelligent_prefetch.py - Semantic-aware prefetching
+from typing import Dict, List, Optional, Tuple
+import asyncio
+import time
+from dataclasses import dataclass
+from collections import defaultdict, deque
+import heapq
+
+@dataclass
+class PrefetchPrediction:
+    """Prediction for prefetching"""
+    token_sequence: List[int]
+    confidence: float
+    priority: int
+    estimated_access_time: float
+    context_hash: str
+    model_name: str
+
+class IntelligentPrefetcher:
+    """Advanced prefetching system with pattern recognition"""
+    
+    def __init__(self,
+                 max_concurrent_prefetch: int = 4,
+                 confidence_threshold: float = 0.7,
+                 pattern_history_size: int = 10000):
+        
+        self.max_concurrent_prefetch = max_concurrent_prefetch
+        self.confidence_threshold = confidence_threshold
+        self.pattern_history_size = pattern_history_size
+        
+        # Pattern recognition state
+        self.access_patterns = defaultdict(list)  # context -> sequence patterns
+        self.sequence_frequency = defaultdict(int)  # sequence -> count
+        self.temporal_patterns = defaultdict(deque)  # time-based patterns
+        
+        # Prefetch queue and tracking
+        self.prefetch_queue = []  # Priority queue of predictions
+        self.active_prefetch = {}  # track_id -> asyncio.Task
+        self.prefetch_history = deque(maxlen=1000)
+        
+        # Performance metrics
+        self.prefetch_stats = {
+            "predictions_made": 0,
+            "prefetch_hits": 0,
+            "prefetch_misses": 0,
+            "total_prefetched": 0,
+        }
+    
+    def record_access_pattern(self, 
+                              context_tokens: List[int],
+                              accessed_tokens: List[int],
+                              timestamp: float,
+                              model_name: str):
+        """Record access pattern for learning"""
+        
+        context_hash = self._hash_tokens(context_tokens)
+        
+        # Update pattern history
+        pattern_entry = {
+            "timestamp": timestamp,
+            "context": context_tokens,
+            "accessed": accessed_tokens,
+            "model": model_name
+        }
+        
+        self.access_patterns[context_hash].append(pattern_entry)
+        
+        # Limit history size
+        if len(self.access_patterns[context_hash]) > 100:
+            self.access_patterns[context_hash].pop(0)
+        
+        # Update sequence frequency
+        sequence_key = self._hash_tokens(accessed_tokens)
+        self.sequence_frequency[sequence_key] += 1
+        
+        # Update temporal patterns
+        self.temporal_patterns[context_hash].append({
+            "timestamp": timestamp,
+            "sequence": accessed_tokens
+        })
+        
+        if len(self.temporal_patterns[context_hash]) > 50:
+            self.temporal_patterns[context_hash].popleft()
+    
+    def predict_next_access(self, 
+                            current_context: List[int],
+                            model_name: str) -> List[PrefetchPrediction]:
+        """Predict next likely token sequences to access"""
+        
+        predictions = []
+        context_hash = self._hash_tokens(current_context)
+        current_time = time.time()
+        
+        # Pattern-based predictions
+        if context_hash in self.access_patterns:
+            patterns = self.access_patterns[context_hash]
+            
+            # Analyze recent patterns
+            recent_patterns = [p for p in patterns 
+                               if current_time - p["timestamp"] < 3600]  # Last hour
+            
+            if recent_patterns:
+                # Frequency-based prediction
+                sequence_counts = defaultdict(int)
+                for pattern in recent_patterns:
+                    seq_key = self._hash_tokens(pattern["accessed"])
+                    sequence_counts[seq_key] += 1
+                
+                # Create predictions from frequent sequences
+                for seq_key, count in sequence_counts.items():
+                    if count >= 2:  # Minimum frequency threshold
+                        # Reconstruct sequence (simplified)
+                        sequence = self._reconstruct_sequence(seq_key, recent_patterns)
+                        if sequence:
+                            confidence = min(count / len(recent_patterns), 1.0)
+                            
+                            if confidence >= self.confidence_threshold:
+                                prediction = PrefetchPrediction(
+                                    token_sequence=sequence,
+                                    confidence=confidence,
+                                    priority=int(confidence * 100),
+                                    estimated_access_time=current_time + 60,  # 1 minute ahead
+                                    context_hash=context_hash,
+                                    model_name=model_name
+                                )
+                                predictions.append(prediction)
+        
+        # Temporal pattern predictions
+        temporal_predictions = self._predict_from_temporal_patterns(
+            context_hash, current_time, model_name
+        )
+        predictions.extend(temporal_predictions)
+        
+        # Global frequency predictions
+        global_predictions = self._predict_from_global_frequency(
+            current_context, model_name
+        )
+        predictions.extend(global_predictions)
+        
+        # Sort by priority and confidence
+        predictions.sort(key=lambda p: (p.priority, p.confidence), reverse=True)
+        
+        return predictions[:5]  # Top 5 predictions
+    
+    async def schedule_prefetch(self, predictions: List[PrefetchPrediction]):
+        """Schedule prefetch operations based on predictions"""
+        
+        for prediction in predictions:
+            # Check if we have capacity
+            if len(self.active_prefetch) >= self.max_concurrent_prefetch:
+                break
+            
+            # Create prefetch task
+            task_id = f"{prediction.context_hash}_{int(time.time())}"
+            task = asyncio.create_task(
+                self._execute_prefetch(prediction, task_id)
+            )
+            self.active_prefetch[task_id] = task
+            
+            self.prefetch_stats["predictions_made"] += 1
+    
+    async def _execute_prefetch(self, 
+                                prediction: PrefetchPrediction,
+                                task_id: str):
+        """Execute actual prefetch operation"""
+        try:
+            # Simulate prefetch operation
+            await asyncio.sleep(0.1)  # Mock prefetch time
+            
+            # In real implementation, this would:
+            # 1. Check if sequence is already cached
+            # 2. Load/compute KV cache for the sequence
+            # 3. Store in appropriate memory tier
+            
+            self.prefetch_history.append({
+                "task_id": task_id,
+                "prediction": prediction,
+                "completion_time": time.time(),
+                "success": True
+            })
+            
+            self.prefetch_stats["total_prefetched"] += 1
+            
+        except Exception as e:
+            self.prefetch_history.append({
+                "task_id": task_id,
+                "prediction": prediction,
+                "completion_time": time.time(),
+                "success": False,
+                "error": str(e)
+            })
+            
+        finally:
+            # Clean up task
+            if task_id in self.active_prefetch:
+                del self.active_prefetch[task_id]
+    
+    def record_prefetch_outcome(self, 
+                                context_hash: str,
+                                accessed_sequence: List[int],
+                                was_cache_hit: bool):
+        """Record whether prefetch was successful"""
+        
+        if was_cache_hit:
+            self.prefetch_stats["prefetch_hits"] += 1
+        else:
+            self.prefetch_stats["prefetch_misses"] += 1
+        
+        # Update pattern confidence based on outcomes
+        self._update_pattern_confidence(context_hash, accessed_sequence, was_cache_hit)
+    
+    def _predict_from_temporal_patterns(self, 
+                                        context_hash: str,
+                                        current_time: float,
+                                        model_name: str) -> List[PrefetchPrediction]:
+        """Predict based on temporal access patterns"""
+        
+        predictions = []
+        
+        if context_hash in self.temporal_patterns:
+            patterns = list(self.temporal_patterns[context_hash])
+            
+            # Look for time-based patterns
+            if len(patterns) >= 3:
+                # Check for regular intervals
+                intervals = []
+                for i in range(1, len(patterns)):
+                    interval = patterns[i]["timestamp"] - patterns[i-1]["timestamp"]
+                    intervals.append(interval)
+                
+                # If we have consistent intervals, predict next access
+                if len(intervals) >= 2:
+                    avg_interval = sum(intervals) / len(intervals)
+                    last_access = patterns[-1]["timestamp"]
+                    next_predicted = last_access + avg_interval
+                    
+                    if abs(next_predicted - current_time) < avg_interval * 0.5:
+                        # We're close to predicted next access
+                        last_sequence = patterns[-1]["sequence"]
+                        
+                        prediction = PrefetchPrediction(
+                            token_sequence=last_sequence,
+                            confidence=0.8,
+                            priority=80,
+                            estimated_access_time=next_predicted,
+                            context_hash=context_hash,
+                            model_name=model_name
+                        )
+                        predictions.append(prediction)
+        
+        return predictions
+    
+    def _predict_from_global_frequency(self,
+                                       context: List[int],
+                                       model_name: str) -> List[PrefetchPrediction]:
+        """Predict based on global sequence frequency"""
+        
+        predictions = []
+        
+        # Get most frequent sequences
+        frequent_sequences = sorted(
+            self.sequence_frequency.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:3]
+        
+        for seq_hash, frequency in frequent_sequences:
+            if frequency >= 5:  # Minimum global frequency
+                # Reconstruct sequence (simplified)
+                sequence = self._mock_reconstruct_sequence(seq_hash)
+                
+                if sequence and len(sequence) <= 100:  # Reasonable length
+                    confidence = min(frequency / 100.0, 0.6)  # Cap at 60%
+                    
+                    prediction = PrefetchPrediction(
+                        token_sequence=sequence,
+                        confidence=confidence,
+                        priority=int(confidence * 50),  # Lower priority than pattern-based
+                        estimated_access_time=time.time() + 300,  # 5 minutes ahead
+                        context_hash=self._hash_tokens(context),
+                        model_name=model_name
+                    )
+                    predictions.append(prediction)
+        
+        return predictions
+    
+    def _hash_tokens(self, tokens: List[int]) -> str:
+        """Create hash from token sequence"""
+        return str(hash(tuple(tokens)))
+    
+    def _reconstruct_sequence(self, seq_key: str, patterns: List[Dict]) -> Optional[List[int]]:
+        """Reconstruct token sequence from hash and patterns"""
+        # Simplified reconstruction - in real implementation would use proper mapping
+        for pattern in patterns:
+            if self._hash_tokens(pattern["accessed"]) == seq_key:
+                return pattern["accessed"]
+        return None
+    
+    def _mock_reconstruct_sequence(self, seq_hash: str) -> List[int]:
+        """Mock sequence reconstruction"""
+        # In real implementation, would maintain proper hash->sequence mapping
+        return [1, 2, 3, 4, 5]  # Mock sequence
+    
+    def _update_pattern_confidence(self, 
+                                   context_hash: str,
+                                   accessed_sequence: List[int],
+                                   was_hit: bool):
+        """Update pattern confidence based on prefetch outcomes"""
+        # Implementation would update internal confidence scores
+        pass
+    
+    def get_statistics(self) -> Dict:
+        """Get prefetching statistics"""
+        total_predictions = self.prefetch_stats["prefetch_hits"] + self.prefetch_stats["prefetch_misses"]
+        hit_rate = 0.0
+        if total_predictions > 0:
+            hit_rate = self.prefetch_stats["prefetch_hits"] / total_predictions
+        
+        return {
+            **self.prefetch_stats,
+            "hit_rate": hit_rate,
+            "active_prefetch_count": len(self.active_prefetch),
+            "pattern_count": len(self.access_patterns),
+        }
+
+# Usage
+prefetcher = IntelligentPrefetcher()
+
+# Record access patterns
+prefetcher.record_access_pattern(
+    context_tokens=[1, 2, 3, 4],
+    accessed_tokens=[5, 6, 7],
+    timestamp=time.time(),
+    model_name="llama-8b"
+)
+
+# Generate predictions
+predictions = prefetcher.predict_next_access([1, 2, 3, 4], "llama-8b")
+
+# Schedule prefetch
+# asyncio.run(prefetcher.schedule_prefetch(predictions))
+```
+
+## Memory Tier Management
+
+### Dynamic Tier Allocation
+```python
+# memory_tier_manager.py - Dynamic memory tier management
+import psutil
+import GPUtil
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from enum import Enum
+import threading
+import time
+
+class MemoryTier(Enum):
+    GPU_HBM = 1
+    SYSTEM_RAM = 2
+    NVME_SSD = 3
+    NETWORK_STORAGE = 4
+
+@dataclass
+class MemoryTierStats:
+    tier: MemoryTier
+    total_capacity_gb: float
+    used_capacity_gb: float
+    available_capacity_gb: float
+    access_latency_ms: float
+    bandwidth_gbps: float
+    utilization_percent: float
+    temperature: Optional[float]
+
+class DynamicTierManager:
+    """Dynamic memory tier management with adaptive allocation"""
+    
+    def __init__(self):
+        self.tier_configs = {
+            MemoryTier.GPU_HBM: {
+                "max_capacity_gb": 80,
+                "target_utilization": 0.85,
+                "priority_weight": 1.0,
+                "access_latency_ms": 0.01,
+                "bandwidth_gbps": 2000,
+            },
+            MemoryTier.SYSTEM_RAM: {
+                "max_capacity_gb": 500,
+                "target_utilization": 0.75,
+                "priority_weight": 0.7,
+                "access_latency_ms": 0.1,
+                "bandwidth_gbps": 100,
+            },
+            MemoryTier.NVME_SSD: {
+                "max_capacity_gb": 10000,
+                "target_utilization": 0.80,
+                "priority_weight": 0.3,
+                "access_latency_ms": 0.5,
+                "bandwidth_gbps": 7,
+            },
+            MemoryTier.NETWORK_STORAGE: {
+                "max_capacity_gb": 100000,
+                "target_utilization": 0.90,
+                "priority_weight": 0.1,
+                "access_latency_ms": 5.0,
+                "bandwidth_gbps": 1,
+            }
+        }
+        
+        self.current_allocations = {tier: 0.0 for tier in MemoryTier}
+        self.tier_stats_cache = {}
+        self.last_stats_update = 0
+        self.stats_cache_duration = 30  # seconds
+        
+        # Start monitoring thread
+        self.monitoring_active = True
+        self.monitor_thread = threading.Thread(target=self._continuous_monitoring)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+    
+    def get_tier_statistics(self, force_refresh: bool = False) -> Dict[MemoryTier, MemoryTierStats]:
+        """Get current statistics for all memory tiers"""
+        
+        current_time = time.time()
+        if (not force_refresh and 
+            self.tier_stats_cache and 
+            current_time - self.last_stats_update < self.stats_cache_duration):
+            return self.tier_stats_cache
+        
+        stats = {}
+        
+        # GPU HBM statistics
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu = gpus[0]  # Primary GPU
+                total_memory_gb = gpu.memoryTotal / 1024
+                used_memory_gb = gpu.memoryUsed / 1024
+                available_memory_gb = gpu.memoryFree / 1024
+                utilization = (used_memory_gb / total_memory_gb) * 100
+                
+                stats[MemoryTier.GPU_HBM] = MemoryTierStats(
+                    tier=MemoryTier.GPU_HBM,
+                    total_capacity_gb=total_memory_gb,
+                    used_capacity_gb=used_memory_gb,
+                    available_capacity_gb=available_memory_gb,
+                    access_latency_ms=0.01,
+                    bandwidth_gbps=2000,
+                    utilization_percent=utilization,
+                    temperature=gpu.temperature
+                )
+        except Exception as e:
+            print(f"Error getting GPU stats: {e}")
+        
+        # System RAM statistics
+        memory = psutil.virtual_memory()
+        system_total_gb = memory.total / (1024**3)
+        system_used_gb = memory.used / (1024**3)
+        system_available_gb = memory.available / (1024**3)
+        
+        stats[MemoryTier.SYSTEM_RAM] = MemoryTierStats(
+            tier=MemoryTier.SYSTEM_RAM,
+            total_capacity_gb=system_total_gb,
+            used_capacity_gb=system_used_gb,
+            available_capacity_gb=system_available_gb,
+            access_latency_ms=0.1,
+            bandwidth_gbps=100,
+            utilization_percent=memory.percent,
+            temperature=None
+        )
+        
+        # NVMe SSD statistics (mock implementation)
+        disk = psutil.disk_usage('/')
+        nvme_total_gb = disk.total / (1024**3)
+        nvme_used_gb = disk.used / (1024**3)
+        nvme_free_gb = disk.free / (1024**3)
+        nvme_utilization = (nvme_used_gb / nvme_total_gb) * 100
+        
+        stats[MemoryTier.NVME_SSD] = MemoryTierStats(
+            tier=MemoryTier.NVME_SSD,
+            total_capacity_gb=nvme_total_gb,
+            used_capacity_gb=nvme_used_gb,
+            available_capacity_gb=nvme_free_gb,
+            access_latency_ms=0.5,
+            bandwidth_gbps=7,
+            utilization_percent=nvme_utilization,
+            temperature=None
+        )
+        
+        # Network storage (mock)
+        stats[MemoryTier.NETWORK_STORAGE] = MemoryTierStats(
+            tier=MemoryTier.NETWORK_STORAGE,
+            total_capacity_gb=100000,
+            used_capacity_gb=10000,
+            available_capacity_gb=90000,
+            access_latency_ms=5.0,
+            bandwidth_gbps=1,
+            utilization_percent=10.0,
+            temperature=None
+        )
+        
+        self.tier_stats_cache = stats
+        self.last_stats_update = current_time
+        return stats
+    
+    def recommend_allocation_tier(self, 
+                                  block_size_mb: float,
+                                  access_frequency: float,
+                                  access_latency_requirement_ms: float) -> MemoryTier:
+        """Recommend optimal tier for a KV cache block"""
+        
+        stats = self.get_tier_statistics()
+        
+        # Calculate score for each tier
+        tier_scores = {}
+        
+        for tier, stat in stats.items():
+            if tier not in self.tier_configs:
+                continue
+                
+            config = self.tier_configs[tier]
+            
+            # Check capacity constraint
+            required_gb = block_size_mb / 1024
+            if stat.available_capacity_gb < required_gb:
+                continue  # Skip if insufficient capacity
+            
+            # Calculate performance score
+            latency_score = 1.0 / (stat.access_latency_ms + 0.001)
+            bandwidth_score = stat.bandwidth_gbps / 1000  # Normalize
+            
+            # Calculate utilization penalty
+            utilization_penalty = max(0, stat.utilization_percent - config["target_utilization"] * 100) / 100
+            
+            # Calculate frequency benefit
+            frequency_bonus = min(access_frequency / 100, 1.0)  # Cap at 1.0
+            
+            # Latency requirement constraint
+            latency_constraint = 1.0 if stat.access_latency_ms <= access_latency_requirement_ms else 0.1
+            
+            # Combined score
+            score = (
+                config["priority_weight"] * 
+                (latency_score + bandwidth_score) * 
+                frequency_bonus * 
+                latency_constraint * 
+                (1.0 - utilization_penalty)
+            )
+            
+            tier_scores[tier] = score
+        
+        # Return tier with highest score
+        if tier_scores:
+            return max(tier_scores.keys(), key=lambda t: tier_scores[t])
+        else:
+            return MemoryTier.NVME_SSD  # Default fallback
+    
+    def plan_tier_migration(self, 
+                            current_distribution: Dict[MemoryTier, float]) -> Dict[MemoryTier, float]:
+        """Plan optimal redistribution of data across tiers"""
+        
+        stats = self.get_tier_statistics()
+        total_data_gb = sum(current_distribution.values())
+        
+        if total_data_gb == 0:
+            return current_distribution
+        
+        # Calculate optimal distribution
+        optimal_distribution = {}
+        remaining_data = total_data_gb
+        
+        # Prioritize by tier performance and availability
+        tier_priorities = []
+        for tier in MemoryTier:
+            if tier in stats and tier in self.tier_configs:
+                stat = stats[tier]
+                config = self.tier_configs[tier]
+                
+                # Calculate tier attractiveness
+                attractiveness = (
+                    config["priority_weight"] * 
+                    (config["target_utilization"] - stat.utilization_percent / 100)
+                )
+                
+                tier_priorities.append((tier, attractiveness, stat.available_capacity_gb))
+        
+        # Sort by attractiveness
+        tier_priorities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Distribute data optimally
+        for tier, attractiveness, available_gb in tier_priorities:
+            if remaining_data <= 0:
+                break
+                
+            # Calculate how much to allocate to this tier
+            config = self.tier_configs[tier]
+            target_allocation = min(
+                remaining_data,
+                available_gb * config["target_utilization"],
+                config["max_capacity_gb"] * config["target_utilization"]
+            )
+            
+            optimal_distribution[tier] = target_allocation
+            remaining_data -= target_allocation
+        
+        # Handle any remaining data (put in lowest tier with capacity)
+        if remaining_data > 0:
+            for tier in reversed(MemoryTier):
+                if tier in stats and remaining_data > 0:
+                    stat = stats[tier]
+                    additional_capacity = min(remaining_data, stat.available_capacity_gb)
+                    optimal_distribution[tier] = optimal_distribution.get(tier, 0) + additional_capacity
+                    remaining_data -= additional_capacity
+        
+        return optimal_distribution
+    
+    def estimate_migration_cost(self, 
+                                from_tier: MemoryTier,
+                                to_tier: MemoryTier,
+                                data_size_gb: float) -> Dict[str, float]:
+        """Estimate cost of migrating data between tiers"""
+        
+        stats = self.get_tier_statistics()
+        
+        if from_tier not in stats or to_tier not in stats:
+            return {"error": "Invalid tier"}
+        
+        from_stat = stats[from_tier]
+        to_stat = stats[to_tier]
+        
+        # Calculate transfer time
+        bottleneck_bandwidth = min(from_stat.bandwidth_gbps, to_stat.bandwidth_gbps)
+        transfer_time_seconds = (data_size_gb * 8) / bottleneck_bandwidth  # Convert GB to Gb
+        
+        # Calculate access latency difference
+        latency_delta_ms = to_stat.access_latency_ms - from_stat.access_latency_ms
+        
+        # Estimate energy cost (rough approximation)
+        energy_cost_joules = transfer_time_seconds * 100  # 100W during transfer
+        
+        return {
+            "transfer_time_seconds": transfer_time_seconds,
+            "latency_delta_ms": latency_delta_ms,
+            "bandwidth_mbps": bottleneck_bandwidth * 1000,
+            "energy_cost_joules": energy_cost_joules,
+            "recommended": latency_delta_ms <= 1.0 and transfer_time_seconds <= 60
+        }
+    
+    def _continuous_monitoring(self):
+        """Continuous monitoring thread"""
+        while self.monitoring_active:
+            try:
+                stats = self.get_tier_statistics(force_refresh=True)
+                
+                # Log warnings for high utilization
+                for tier, stat in stats.items():
+                    if tier in self.tier_configs:
+                        config = self.tier_configs[tier]
+                        if stat.utilization_percent > config["target_utilization"] * 100 + 10:
+                            print(f"Warning: {tier.name} utilization high: {stat.utilization_percent:.1f}%")
+                
+                time.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                print(f"Error in tier monitoring: {e}")
+                time.sleep(60)
+    
+    def shutdown(self):
+        """Shutdown the tier manager"""
+        self.monitoring_active = False
+        if self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=5)
+
+# Usage
+tier_manager = DynamicTierManager()
+
+# Get current statistics
+stats = tier_manager.get_tier_statistics()
+for tier, stat in stats.items():
+    print(f"{tier.name}: {stat.utilization_percent:.1f}% utilized, {stat.available_capacity_gb:.1f}GB available")
+
+# Get recommendation for a block
+recommended_tier = tier_manager.recommend_allocation_tier(
+    block_size_mb=100,
+    access_frequency=50,
+    access_latency_requirement_ms=1.0
+)
+print(f"Recommended tier: {recommended_tier.name}")
+
+# Plan migration
+current_dist = {
+    MemoryTier.GPU_HBM: 30,
+    MemoryTier.SYSTEM_RAM: 200,
+    MemoryTier.NVME_SSD: 1000
+}
+optimal_dist = tier_manager.plan_tier_migration(current_dist)
+print(f"Optimal distribution: {optimal_dist}")
+```
+
+This comprehensive KVBM guide provides advanced memory management capabilities for optimal NVIDIA Dynamo performance across all memory hierarchies.
